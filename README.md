@@ -56,15 +56,49 @@ volumes:
 | `/workflow` | Pick a workflow template |
 | `/upload` | Upload a new workflow `.json` file |
 
-## Workflow Templates
+## Adding Workflows
 
-Templates are ComfyUI API-format JSON files with placeholder tokens:
+### 1. Export from ComfyUI as API format
 
-- `<PROMPT>` — the user's prompt text
-- `<LORA_1_NAME>`, `<LORA_2_NAME>`, … — LoRA file paths
-- `<LORA_1_STRENGTH>`, `<LORA_2_STRENGTH>`, … — LoRA strengths (numeric, unquoted)
+Open your workflow in ComfyUI, then in the menu enable **"Dev Mode Options"** (Settings → Enable Dev Mode Options). A new **"Save (API Format)"** button will appear. Use this — not the regular Save — to export the file. The regular format includes UI layout data that the chatbot cannot execute directly.
 
-Unused LoRA slots are stripped from the graph automatically.
+### 2. Add placeholder tokens
+
+The exported JSON is a static snapshot; you need to replace the values you want the chatbot to substitute at generation time with placeholder tokens. Open the file in a text editor and replace:
+
+| What to replace | Token to use | Notes |
+|---|---|---|
+| The prompt string | `<PROMPT>` | Inside the existing quotes in the JSON |
+| A LoRA filename | `<LORA_1_NAME>` | Use `<LORA_2_NAME>` for a second LoRA, etc. |
+| A LoRA strength | `<LORA_1_STRENGTH>` | **Remove the surrounding quotes** — this must be a bare number in the JSON |
+
+For example, a KSampler node's prompt input might look like this before and after:
+
+```json
+// Before
+"text": "a photo of a cat"
+
+// After
+"text": "<PROMPT>"
+```
+
+And a LoRA loader node:
+
+```json
+// Before
+"lora_name": "my-lora.safetensors",
+"strength_model": 0.8,
+
+// After
+"lora_name": "<LORA_1_NAME>",
+"strength_model": <LORA_1_STRENGTH>,
+```
+
+LoRA placeholders are optional — any slots not filled by the user's prompt are automatically removed from the workflow graph before submission.
+
+### 3. Add to the chatbot
+
+Either drop the file into your workflow directory (`COMFY_WORKFLOW_DIR`) or use the `/upload` command in the chat UI. Then select it with `/workflow`.
 
 ## Local Development
 
