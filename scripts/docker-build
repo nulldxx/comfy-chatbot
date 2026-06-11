@@ -1,0 +1,31 @@
+#!/bin/bash
+# Build the comfy-chatbot image, stamping it with the current git build number.
+#
+# Neither Docker nor Docker Compose can run git themselves, so this wrapper
+# computes the version and passes it through as the BUILD_VERSION build-arg.
+# The running container logs this value on startup (see app.py).
+#
+# Usage:
+#   ./scripts/docker-build                 # build via docker-compose
+#   ./scripts/docker-build --push          # also push the image to the registry
+
+set -e
+
+# Move to the repository root so the build context is correct regardless of CWD.
+cd "$(dirname "$0")/.."
+
+# Describe the current commit: latest tag, commits-since, short hash, +dirty.
+# Falls back to the short hash alone if no tags exist.
+BUILD_VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+
+echo "Building comfy-chatbot — build ${BUILD_VERSION}"
+
+export BUILD_VERSION
+docker compose build
+
+if [[ "$1" == "--push" ]]; then
+  echo "Pushing image…"
+  docker compose push
+fi
+
+echo "Done. The container will log 'build ${BUILD_VERSION}' on startup."
