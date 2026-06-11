@@ -27,7 +27,7 @@ COMFY_WORKFLOW = os.environ.get('COMFY_WORKFLOW', 'z_image_turbo_api')
 COMFY_WORKFLOW_DIR = Path(os.environ.get('COMFY_WORKFLOW_DIR', '/app/workflows'))
 COMFY_LORAS_FILE = Path(os.environ.get('COMFY_LORAS_FILE', '/app/workflows/loras.json'))
 
-IMAGES_DIR = Path('/tmp/comfy-images')
+IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 # In-memory job tracking
@@ -293,6 +293,43 @@ def api_servers():
         host, _, port = COMFY_SERVER.rpartition(":")
         servers = [{"name": "default", "host": host or COMFY_SERVER, "port": int(port or 8000), "os": COMFY_SERVER_OS}]
     return jsonify(servers)
+
+
+@app.route("/api/add-server", methods=["POST"])
+@login_required
+def api_add_server():
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    host = (data.get("host") or "").strip()
+    os_type = (data.get("os") or "").strip().lower()
+    try:
+        port = int(data.get("port", 0))
+        if port < 1 or port > 65535:
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({"error": "Port must be a number between 1 and 65535"}), 400
+
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    if not host:
+        return jsonify({"error": "Host is required"}), 400
+    if os_type not in ("unix", "windows"):
+        return jsonify({"error": "OS must be 'unix' or 'windows'"}), 400
+
+    servers_file = COMFY_WORKFLOW_DIR / "servers.json"
+    servers = load_server_catalogue()
+
+    # Replace existing entry with the same name, otherwise append
+    entry = {"name": name, "host": host, "port": port, "os": os_type}
+    servers = [s for s in servers if s.get("name") != name]
+    servers.append(entry)
+
+    try:
+        servers_file.write_text(json.dumps({"servers": servers}, indent=2))
+    except OSError as e:
+        return jsonify({"error": f"Could not save servers.json: {e}"}), 500
+
+    return jsonify(entry)
 
 
 @app.route("/api/workflows")

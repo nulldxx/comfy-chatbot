@@ -21,11 +21,15 @@ services:
       - COMFY_WORKFLOW_DIR=/app/workflows
       # Path inside the container to loras.json
       - COMFY_LORAS_FILE=/app/workflows/loras.json
+      # Directory where generated images are saved inside the container
+      - COMFY_OUTPUT_DIR=/app/output
 
     volumes:
       # Mount your existing dot-files comfyui directory so workflow templates
       # and loras.json are available without being baked into the image.
       - ~/dot-files/comfyui:/app/workflows:ro
+      # Persist generated images across container restarts.
+      - ~/Pictures/ComfyUI:/app/output
 
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health', timeout=5)"]

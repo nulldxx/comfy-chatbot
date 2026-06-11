@@ -386,6 +386,13 @@ function handleSlashCommand(raw) {
       <div class="sel-list" style="margin-top:10px;gap:4px">
         <div style="font-size:0.85rem;color:#94a3b8"><code>/help</code> — show this message</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/server</code> — choose a ComfyUI server</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/addserver &lt;name&gt; &lt;host:port:os&gt;</code> — add a server
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">
+            OS types: <code>unix</code> (Linux/macOS) &nbsp;·&nbsp; <code>windows</code> (Windows path separators)<br>
+            e.g. <code>/addserver mordor mordor:8000:windows</code><br>
+            e.g. <code>/addserver mybox 192.168.1.50:8188:unix</code>
+          </div>
+        </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
       </div>
@@ -477,6 +484,40 @@ function handleSlashCommand(raw) {
     });
 
     scrollBottom();
+    return;
+  }
+
+  if (cmd === '/addserver') {
+    // Expected: /addserver <name> <host:port:os>
+    const name = parts[1];
+    const connStr = parts[2];
+    if (!name || !connStr) {
+      addMessage('bot', `Usage: <code>/addserver &lt;name&gt; &lt;host:port:os&gt;</code><br>
+        e.g. <code>/addserver mordor mordor:8000:windows</code>`);
+      return;
+    }
+    const connParts = connStr.split(':');
+    if (connParts.length !== 3) {
+      addMessage('bot', `<span style="color:#f87171">⚠ Expected <code>host:port:os</code> — e.g. <code>mordor:8000:windows</code></span>`);
+      return;
+    }
+    const [host, portStr, os] = connParts;
+    const port = parseInt(portStr, 10);
+    if (!host || isNaN(port) || !os) {
+      addMessage('bot', `<span style="color:#f87171">⚠ Invalid format. Expected <code>host:port:os</code></span>`);
+      return;
+    }
+    fetch('/api/add-server', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, host, port, os }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      addMessage('bot', `Server <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> added (<code>${escapeHtml(data.host)}:${data.port}</code>, OS: <code>${escapeHtml(data.os)}</code>).<br>Use <code>/server</code> to select it.`);
+    })
+    .catch(err => addMessage('bot', `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`));
     return;
   }
 
