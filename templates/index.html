@@ -114,7 +114,18 @@
     max-width: 100%;
     word-break: break-word;
   }
-  .message.user .bubble { background: #7c3aed; color: #fff; border-bottom-right-radius: 4px; }
+  .message.user .bubble { background: #7c3aed; color: #fff; border-bottom-right-radius: 4px; position: relative; cursor: pointer; }
+
+  .message.user .bubble .edit-icon {
+    position: absolute; top: 5px; right: 8px;
+    font-size: 0.68rem; opacity: 0;
+    transition: opacity 0.15s; pointer-events: none;
+    color: rgba(255,255,255,0.85);
+  }
+  .message.user .bubble:hover .edit-icon { opacity: 1; }
+  @media (hover: none) {
+    .message.user .bubble .edit-icon { opacity: 0.45; }
+  }
   .message.bot  .bubble { background: #1e293b; color: #e2e8f0; border-bottom-left-radius: 4px; border: 1px solid #334155; overflow: hidden; }
 
   .bubble img {
@@ -246,7 +257,7 @@
     <textarea id="prompt-input" placeholder="Describe the image you want to generate…" rows="1"></textarea>
     <button id="send-btn">Generate</button>
   </div>
-  <div class="hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line &nbsp;·&nbsp; Click a chip to insert a LoRA</div>
+  <div class="hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line &nbsp;·&nbsp; Tap a message to re-edit &nbsp;·&nbsp; Click a chip to insert a LoRA</div>
 </div>
 
 <div id="lightbox">
@@ -358,6 +369,22 @@ document.addEventListener('click', e => {
 document.getElementById('lightbox-close').addEventListener('click', () => lightbox.classList.remove('open'));
 lightbox.addEventListener('click', e => { if (e.target === lightbox) lightbox.classList.remove('open'); });
 
+// Tap a user bubble to re-edit that prompt
+messagesEl.addEventListener('click', e => {
+  if (e.target.tagName === 'IMG') return;
+  const bubble = e.target.closest('.message.user .bubble');
+  if (!bubble || !bubble.dataset.prompt) return;
+  const text = bubble.dataset.prompt;
+  inputEl.value = text;
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
+  historyIdx = -1;
+  savedDraft = '';
+  inputEl.focus();
+  inputEl.setSelectionRange(text.length, text.length);
+  inputEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
+
 // Load LoRA chips
 fetch('/api/loras')
   .then(r => r.json())
@@ -383,7 +410,7 @@ fetch('/api/loras')
 
 function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
-function addMessage(role, contentHtml) {
+function addMessage(role, contentHtml, rawText) {
   const wrap   = document.createElement('div');
   wrap.className = `message ${role}`;
   const avatar = document.createElement('div');
@@ -392,6 +419,13 @@ function addMessage(role, contentHtml) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   bubble.innerHTML = contentHtml;
+  if (role === 'user' && rawText != null) {
+    bubble.dataset.prompt = rawText;
+    const icon = document.createElement('span');
+    icon.className = 'edit-icon';
+    icon.textContent = '✏';
+    bubble.appendChild(icon);
+  }
   wrap.appendChild(avatar);
   wrap.appendChild(bubble);
   messagesEl.appendChild(wrap);
@@ -407,7 +441,7 @@ function handleSlashCommand(raw) {
   const parts = raw.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
 
-  addMessage('user', escapeHtml(raw));
+  addMessage('user', escapeHtml(raw), raw);
 
   if (cmd === '/help') {
     addMessage('bot', `
@@ -632,7 +666,7 @@ function sendMessage() {
   historyIdx = -1;
   savedDraft = '';
 
-  addMessage('user', escapeHtml(raw));
+  addMessage('user', escapeHtml(raw), raw);
   inputEl.value = '';
   inputEl.style.height = 'auto';
   sendBtn.disabled = true;
