@@ -171,6 +171,40 @@
     100% { width: 0%;  margin-left: 100%; }
   }
 
+  /* Slideshow widget */
+  .slideshow { min-width: 160px; }
+  .ss-img-wrap {
+    position: relative; overflow: hidden; border-radius: 8px;
+    touch-action: pan-y; user-select: none;
+  }
+  .ss-image {
+    display: block; width: 100%; max-width: 480px;
+    border-radius: 8px; margin-top: 0;
+    -webkit-user-drag: none; pointer-events: none;
+  }
+  .ss-controls {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  }
+  .ss-btn {
+    background: #0f172a; border: 1px solid #334155; color: #a78bfa;
+    border-radius: 8px; padding: 4px 16px; font-size: 1.3rem;
+    cursor: pointer; line-height: 1; flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .ss-btn:hover { background: #1e293b; border-color: #7c3aed; }
+  .ss-counter { font-size: 0.8rem; color: #94a3b8; flex: 1; text-align: center; }
+  .ss-bar-wrap {
+    height: 2px; background: #334155;
+    border-radius: 2px; margin-top: 6px; overflow: hidden;
+  }
+  .ss-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #7c3aed, #a78bfa);
+    border-radius: 2px;
+    animation: ss-fill 3s linear forwards;
+  }
+  @keyframes ss-fill { from { width: 0% } to { width: 100% } }
+
   #bottom {
     background: #16213e;
     border-top: 1px solid #0f3460;
@@ -324,6 +358,16 @@ inputEl.addEventListener('input', () => {
   inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
 });
 
+// Active slideshow controller (keyboard navigation target)
+let activeSlideshowCtrl = null;
+
+document.addEventListener('keydown', e => {
+  if (!activeSlideshowCtrl) return;
+  if (document.activeElement === inputEl) return;
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); activeSlideshowCtrl.navigate(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); activeSlideshowCtrl.navigate(1); }
+});
+
 // Prompt history (shell-style up/down navigation)
 const history = [];
 let historyIdx = -1;   // -1 = at the live draft
@@ -361,7 +405,7 @@ sendBtn.addEventListener('click', sendMessage);
 
 // Lightbox
 document.addEventListener('click', e => {
-  if (e.target.tagName === 'IMG' && e.target.closest('.bubble')) {
+  if (e.target.tagName === 'IMG' && e.target.closest('.bubble') && !e.target.closest('.slideshow')) {
     lbImg.src = e.target.src;
     lightbox.classList.add('open');
   }
@@ -460,6 +504,9 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow</code> — browse all generated images
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">← → keys on desktop &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s</div>
+        </div>
       </div>
       <div style="margin-top:10px;font-size:0.8rem;color:#475569">
         Include LoRAs in any prompt with <code>&lt;lora:name:strength&gt;</code>
@@ -586,6 +633,18 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/slideshow') {
+    const bubble = addMessage('bot', '<div class="status-text">Loading images…</div>');
+    fetch('/api/images')
+      .then(r => r.json())
+      .then(images => {
+        if (!images.length) { bubble.innerHTML = 'No images yet — generate some first!'; return; }
+        activeSlideshowCtrl = createSlideshow(bubble, images);
+      })
+      .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
+    return;
+  }
+
   if (cmd === '/clear') {
     cancelAutoPurge();
     history.length = 0;
@@ -618,6 +677,59 @@ function handleSlashCommand(raw) {
   }
 
   addMessage('bot', `Unknown command <code>${escapeHtml(cmd)}</code> — type <code>/help</code> for available commands.`);
+}
+
+function createSlideshow(bubble, images) {
+  let idx = 0;
+  let timer = null;
+
+  bubble.innerHTML = `
+    <div class="slideshow">
+      <div class="ss-img-wrap"><img class="ss-image" src="" alt="Generated image"></div>
+      <div class="ss-controls">
+        <button class="ss-btn ss-prev">&#8249;</button>
+        <span class="ss-counter"></span>
+        <button class="ss-btn ss-next">&#8250;</button>
+      </div>
+      <div class="ss-bar-wrap"><div class="ss-bar"></div></div>
+    </div>`;
+
+  const img     = bubble.querySelector('.ss-image');
+  const counter = bubble.querySelector('.ss-counter');
+  const bar     = bubble.querySelector('.ss-bar');
+  const wrap    = bubble.querySelector('.ss-img-wrap');
+
+  function restartBar() {
+    bar.style.animation = 'none';
+    bar.offsetWidth;  // force reflow to restart CSS animation
+    bar.style.animation = '';
+  }
+
+  function show(i) {
+    idx = ((i % images.length) + images.length) % images.length;
+    img.src = images[idx];
+    counter.textContent = `${idx + 1} / ${images.length}`;
+    restartBar();
+    clearTimeout(timer);
+    timer = setTimeout(() => show(idx + 1), 3000);
+    scrollBottom();
+  }
+
+  function navigate(dir) { show(idx + dir); }
+
+  bubble.querySelector('.ss-prev').addEventListener('click', () => navigate(-1));
+  bubble.querySelector('.ss-next').addEventListener('click', () => navigate(1));
+
+  // Touch swipe
+  let touchStartX = 0;
+  wrap.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
+  wrap.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 40) navigate(dx < 0 ? 1 : -1);
+  });
+
+  show(0);
+  return { navigate };
 }
 
 function doUpload(file, bubble) {

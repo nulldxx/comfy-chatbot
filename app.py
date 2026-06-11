@@ -465,6 +465,20 @@ def serve_image(filename):
     return response
 
 
+@app.route("/api/images")
+@login_required
+def api_images():
+    if not IMAGES_DIR.is_dir():
+        return jsonify([])
+    exts = {".png", ".jpg", ".jpeg", ".webp"}
+    files = sorted(
+        (p for p in IMAGES_DIR.iterdir() if p.suffix.lower() in exts),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return jsonify([f"/images/{p.name}" for p in files])
+
+
 @app.route("/health")
 def health():
     return jsonify({"status": "healthy"})
