@@ -297,6 +297,27 @@ class ComfyServer:
             print(f"Error downloading {filename}: {e}", file=sys.stderr)
             return None
 
+    def free_memory(self, unload_models=True, free_memory=True):
+        """
+        Ask ComfyUI to release GPU memory.
+
+        Args:
+            unload_models: Unload loaded models from GPU/CPU memory
+            free_memory: Run garbage collection / free cached allocations
+
+        Raises:
+            requests.exceptions.RequestException: On connection error
+            RuntimeError: On server error response
+        """
+        url = f"http://{self.server}/free"
+        payload = {"unload_models": unload_models, "free_memory": free_memory}
+        try:
+            response = requests.post(url, json=payload, timeout=15)
+            if response.status_code not in (200, 204):
+                raise RuntimeError(f"Server returned {response.status_code}: {response.text}")
+        except requests.exceptions.RequestException as e:
+            raise requests.exceptions.RequestException(f"Error connecting to server: {e}")
+
     def download_images(self, images, output_path):
         """
         Download multiple images from server.

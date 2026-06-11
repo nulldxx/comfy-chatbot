@@ -355,6 +355,17 @@ def api_workflows():
     return jsonify(workflows)
 
 
+@app.route("/api/purge", methods=["POST"])
+@login_required
+def api_purge():
+    server_address = (request.get_json(force=True, silent=True) or {}).get("server") or COMFY_SERVER
+    try:
+        ComfyServer(server_address).free_memory()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+    return jsonify({"ok": True})
+
+
 def _fill_placeholders_for_validation(text):
     """Replace template tokens with dummy values so the file parses as JSON."""
     text = re.sub(r"<LORA_\d+_STRENGTH>", "1.0", text)   # unquoted numeric slots

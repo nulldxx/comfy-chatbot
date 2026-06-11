@@ -271,6 +271,35 @@ const DEFAULT_WORKFLOW  = {{ default_workflow | tojson }};
 let currentServer   = null;  // {address, os, name}
 let currentWorkflow = null;  // string
 
+// Auto-purge after inactivity
+const AUTO_PURGE_MS = 10 * 60 * 1000;
+let autoPurgeTimer = null;
+
+function scheduleAutoPurge() {
+  clearTimeout(autoPurgeTimer);
+  autoPurgeTimer = setTimeout(() => {
+    const server = currentServer ? currentServer.address : null;
+    fetch('/api/purge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(server ? { server } : {}),
+    })
+    .then(r => r.json())
+    .then(data => {
+      const msg = data.error
+        ? `<span style="color:#f87171">⚠ Auto-purge failed: ${escapeHtml(data.error)}</span>`
+        : '<span style="color:#475569">GPU memory freed after 10 min of inactivity.</span>';
+      addMessage('bot', msg);
+    })
+    .catch(() => {});
+  }, AUTO_PURGE_MS);
+}
+
+function cancelAutoPurge() {
+  clearTimeout(autoPurgeTimer);
+  autoPurgeTimer = null;
+}
+
 function updateHeaderStatus() {
   const srv = currentServer  ? currentServer.name  : DEFAULT_SERVER;
   const wf  = currentWorkflow ? currentWorkflow     : DEFAULT_WORKFLOW;
@@ -395,6 +424,7 @@ function handleSlashCommand(raw) {
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
       </div>
       <div style="margin-top:10px;font-size:0.8rem;color:#475569">
         Include LoRAs in any prompt with <code>&lt;lora:name:strength&gt;</code>
@@ -521,6 +551,27 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/purge') {
+    const bubble = addMessage('bot', '<div class="status-text">Freeing GPU memory…</div><div class="dots"><span></span><span></span><span></span></div>').parentElement.querySelector('.bubble');
+    const server = currentServer ? currentServer.address : null;
+    fetch('/api/purge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(server ? { server } : {}),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      bubble.innerHTML = 'GPU memory freed.';
+      scrollBottom();
+    })
+    .catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ Purge failed: ${escapeHtml(err.message)}</span>`;
+      scrollBottom();
+    });
+    return;
+  }
+
   addMessage('bot', `Unknown command <code>${escapeHtml(cmd)}</code> — type <code>/help</code> for available commands.`);
 }
 
@@ -585,6 +636,8 @@ function sendMessage() {
   const dotsEl     = botBubble.querySelector('.dots');
   const barWrap    = botBubble.querySelector('.progress-bar-wrap');
 
+  cancelAutoPurge();
+
   fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -620,6 +673,7 @@ function sendMessage() {
         });
         sendBtn.disabled = false;
         scrollBottom();
+        scheduleAutoPurge();
 
       } else if (msg.type === 'error') {
         es.close();
@@ -629,6 +683,7 @@ function sendMessage() {
         botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
         sendBtn.disabled = false;
         scrollBottom();
+        scheduleAutoPurge();
       }
       // 'tick' and 'ping' need no UI update
     };
