@@ -403,7 +403,9 @@ def api_progress(job_id):
 @app.route("/images/<job_id>/<filename>")
 @login_required
 def serve_image(job_id, filename):
-    return send_from_directory(str(IMAGES_DIR / job_id), filename)
+    response = send_from_directory(str(IMAGES_DIR / job_id), filename)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/health")
