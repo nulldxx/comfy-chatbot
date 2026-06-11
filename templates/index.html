@@ -218,7 +218,7 @@
   .slideshow:-webkit-full-screen,
   .slideshow.ss-faux-fullscreen {
     background: #000;
-    width: 100%; height: 100%;
+    position: fixed; inset: 0;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     padding: max(16px, env(safe-area-inset-top))
@@ -227,7 +227,7 @@
              max(16px, env(safe-area-inset-left));
   }
   .slideshow.ss-faux-fullscreen {
-    position: fixed; inset: 0; z-index: 200;
+    z-index: 200;
   }
   .slideshow:fullscreen .ss-img-wrap,
   .slideshow:-webkit-full-screen .ss-img-wrap,
