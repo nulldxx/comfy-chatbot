@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(docker compose:*)",
+      "Bash(npm test:*)",
+      "Bash(bash scripts/test-all:*)",
+      "Bash(timeout 300 bash scripts/test-all)",
+      "Bash(./scripts/test-all)",
+      "Bash(docker build:*)",
+      "Bash(docker run:*)",
+      "Bash(curl:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker-compose build:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

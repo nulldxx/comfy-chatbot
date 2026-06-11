@@ -1,0 +1,18 @@
+services:
+  flask-app:
+    build: .
+    container_name: flask-app
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    environment:
+      - FLASK_ENV=production
+      - APP_USERNAME=user
+      - APP_PASSWORD=password
+      - SECRET_KEY=your-super-secret-key-change-this-in-production
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
