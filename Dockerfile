@@ -26,6 +26,7 @@ COPY --from=builder /root/.local /usr/local
 
 # Copy application code
 COPY app.py .
+COPY ComfyServer.py .
 COPY gunicorn.conf.py .
 COPY templates/ templates/
 

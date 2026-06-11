@@ -1,7 +1,7 @@
 services:
   flask-app:
     build: .
-    container_name: flask-app
+    container_name: comfy-chatbot
     ports:
       - "5000:5000"
     restart: unless-stopped
@@ -10,6 +10,23 @@ services:
       - APP_USERNAME=user
       - APP_PASSWORD=password
       - SECRET_KEY=your-super-secret-key-change-this-in-production
+
+      # ComfyUI server — set host:port of your running ComfyUI instance
+      - COMFY_SERVER=192.168.1.135:8000
+      # "unix" or "windows" (controls LoRA path separator sent to the server)
+      - COMFY_SERVER_OS=unix
+      # Workflow template name (without .json) inside COMFY_WORKFLOW_DIR
+      - COMFY_WORKFLOW=z_image_turbo_api
+      # Path inside the container where workflow templates live
+      - COMFY_WORKFLOW_DIR=/app/workflows
+      # Path inside the container to loras.json
+      - COMFY_LORAS_FILE=/app/workflows/loras.json
+
+    volumes:
+      # Mount your existing dot-files comfyui directory so workflow templates
+      # and loras.json are available without being baked into the image.
+      - ~/dot-files/comfyui:/app/workflows:ro
+
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health', timeout=5)"]
       interval: 30s

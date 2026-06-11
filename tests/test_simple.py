@@ -7,113 +7,98 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import app
 
-class TestSimple(unittest.TestCase):
-    
+
+class TestComfyChatbot(unittest.TestCase):
+
     def setUp(self):
-        """Set up test client"""
-        self.app = app.test_client()
-        self.app.testing = True
-    
+        app.testing = True
+        self.client = app.test_client()
+
     def test_health_endpoint(self):
-        """Test that the health endpoint works correctly"""
-        response = self.app.get('/health')
+        response = self.client.get('/health')
         self.assertEqual(response.status_code, 200)
-        
-        # Check that response is JSON
         data = response.get_json()
-        self.assertIsNotNone(data)
-        
-        # Check required fields are present
         self.assertIn('status', data)
         self.assertEqual(data['status'], 'healthy')
-    
+
     def test_login_page_loads(self):
-        """Test that login page loads correctly"""
-        response = self.app.get('/login')
+        response = self.client.get('/login')
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'Flask App', response.data)
         self.assertIn(b'username', response.data)
         self.assertIn(b'password', response.data)
-    
+
     def test_main_page_requires_auth(self):
-        """Test that main page redirects to login when not authenticated"""
-        response = self.app.get('/')
+        response = self.client.get('/')
         self.assertEqual(response.status_code, 302)
         self.assertIn('/login', response.location)
-    
-    def test_api_endpoint_requires_auth(self):
-        """Test that API endpoint requires authentication"""
-        response = self.app.get('/api/data')
+
+    def test_api_loras_requires_auth(self):
+        response = self.client.get('/api/loras')
         self.assertEqual(response.status_code, 302)
         self.assertIn('/login', response.location)
-    
+
     def test_login_with_valid_credentials(self):
-        """Test login with valid credentials"""
-        response = self.app.post('/login', data={
+        response = self.client.post('/login', data={
             'username': 'user',
-            'password': 'password'
+            'password': 'password',
         })
         self.assertEqual(response.status_code, 302)
         self.assertIn('/', response.location)
-    
+
     def test_login_with_invalid_credentials(self):
-        """Test login with invalid credentials"""
-        response = self.app.post('/login', data={
+        response = self.client.post('/login', data={
             'username': 'wrong',
-            'password': 'credentials'
+            'password': 'credentials',
         })
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Invalid username or password', response.data)
-    
+
     def test_authenticated_main_page(self):
-        """Test main page when authenticated"""
-        with self.app.session_transaction() as sess:
+        with self.client.session_transaction() as sess:
             sess['authenticated'] = True
-        
-        response = self.app.get('/')
+        response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'Flask Application', response.data)
-        self.assertIn(b'Welcome to your Flask App!', response.data)
-    
-    def test_authenticated_api_endpoint(self):
-        """Test API endpoint when authenticated"""
-        with self.app.session_transaction() as sess:
+        self.assertIn(b'ComfyUI', response.data)
+
+    def test_authenticated_loras_endpoint(self):
+        with self.client.session_transaction() as sess:
             sess['authenticated'] = True
-        
-        response = self.app.get('/api/data')
+        response = self.client.get('/api/loras')
         self.assertEqual(response.status_code, 200)
-        
         data = response.get_json()
-        self.assertIsNotNone(data)
-        self.assertIn('message', data)
-        self.assertIn('status', data)
-        self.assertEqual(data['status'], 'success')
-    
-    def test_logout(self):
-        """Test logout functionality"""
-        # First authenticate
-        with self.app.session_transaction() as sess:
+        self.assertIsInstance(data, list)
+
+    def test_generate_requires_auth(self):
+        response = self.client.post('/api/generate',
+                                    json={'prompt': 'a cat'},
+                                    content_type='application/json')
+        self.assertEqual(response.status_code, 302)
+
+    def test_generate_requires_prompt(self):
+        with self.client.session_transaction() as sess:
             sess['authenticated'] = True
-        
-        # Then logout
-        response = self.app.get('/logout')
+        response = self.client.post('/api/generate',
+                                    json={},
+                                    content_type='application/json')
+        self.assertEqual(response.status_code, 400)
+        data = response.get_json()
+        self.assertIn('error', data)
+
+    def test_logout(self):
+        with self.client.session_transaction() as sess:
+            sess['authenticated'] = True
+        response = self.client.get('/logout')
         self.assertEqual(response.status_code, 302)
         self.assertIn('/login', response.location)
-        
-        # Verify we can't access protected pages anymore
-        response = self.app.get('/')
+        response = self.client.get('/')
         self.assertEqual(response.status_code, 302)
         self.assertIn('/login', response.location)
-    
+
     def test_requests_module_available(self):
-        """Test that requests module is available for health checks"""
-        try:
-            import requests
-            # Test that we can create a session (basic functionality)
-            session = requests.Session()
-            self.assertIsNotNone(session)
-        except ImportError:
-            self.fail("requests module is not available - required for Docker health checks")
+        import requests
+        session = requests.Session()
+        self.assertIsNotNone(session)
+
 
 if __name__ == '__main__':
     unittest.main()
