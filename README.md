@@ -2,6 +2,10 @@
 
 A self-hosted web chat interface for generating images with [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Type a prompt, watch progress stream in real time, and see the generated image appear inline in the conversation.
 
+## Screenshot
+
+<img width="1412" height="1613" alt="image" src="https://github.com/user-attachments/assets/2227c42b-5471-41f7-85a5-7388e5a89697" />
+
 ## Features
 
 - **Chat UI** — prompt history (↑/↓), LoRA chip shortcuts, lightbox image viewer
