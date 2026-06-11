@@ -425,6 +425,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
       </div>
       <div style="margin-top:10px;font-size:0.8rem;color:#475569">
         Include LoRAs in any prompt with <code>&lt;lora:name:strength&gt;</code>
@@ -548,6 +549,16 @@ function handleSlashCommand(raw) {
       addMessage('bot', `Server <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> added (<code>${escapeHtml(data.host)}:${data.port}</code>, OS: <code>${escapeHtml(data.os)}</code>).<br>Use <code>/server</code> to select it.`);
     })
     .catch(err => addMessage('bot', `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`));
+    return;
+  }
+
+  if (cmd === '/clear') {
+    cancelAutoPurge();
+    history.length = 0;
+    historyIdx = -1;
+    savedDraft = '';
+    messagesEl.innerHTML = '';
+    addMessage('bot', 'Chat cleared. Describe the image you\'d like to generate.');
     return;
   }
 
