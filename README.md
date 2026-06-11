@@ -18,13 +18,19 @@ A self-hosted web chat interface for generating images with [ComfyUI](https://gi
 
 ## Quick Start
 
-```bash
-# 1. Edit docker-compose.yml — set COMFY_SERVER to your ComfyUI address
-# 2. Build and run
-docker-compose up --build -d
+The easiest way to run ComfyUI Chat is with the published image on Docker Hub ([nerwander/comfy-chatbot](https://hub.docker.com/r/nerwander/comfy-chatbot)).
 
-# 3. Open http://localhost:5000  (default login: user / password)
+1. **Download [`docker-compose.yml`](docker-compose.yml)** from this repo
+2. **Edit it** — set `COMFY_SERVER` to your ComfyUI address and adjust the volume mounts
+3. **Run it**
+
+```bash
+docker-compose up -d
 ```
+
+4. Open **http://localhost:5000** — default login: `user` / `password`
+
+To build from source instead, replace `image: nerwander/comfy-chatbot:latest` with `build: .` (or keep both — Docker Compose uses `build` when present and falls back to `image` for `docker pull`).
 
 ## Configuration
 
