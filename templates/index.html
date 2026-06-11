@@ -825,12 +825,14 @@ function handleSlashCommand(raw) {
 function createSlideshow(bubble, images) {
   let idx = 0;
   let timer = null;
+  let paused = false;
 
   bubble.innerHTML = `
     <div class="slideshow">
       <div class="ss-img-wrap"><img class="ss-image" src="" alt="Generated image"></div>
       <div class="ss-controls">
         <button class="ss-btn ss-prev">&#8249;</button>
+        <button class="ss-btn ss-pause" title="Pause">&#9646;&#9646;</button>
         <span class="ss-counter"></span>
         <button class="ss-btn ss-next">&#8250;</button>
         <button class="ss-fullscreen-btn" title="Toggle fullscreen">&#x26F6;</button>
@@ -838,15 +840,16 @@ function createSlideshow(bubble, images) {
       <div class="ss-bar-wrap"><div class="ss-bar"></div></div>
     </div>`;
 
-  const img     = bubble.querySelector('.ss-image');
-  const counter = bubble.querySelector('.ss-counter');
-  const bar     = bubble.querySelector('.ss-bar');
-  const wrap    = bubble.querySelector('.ss-img-wrap');
+  const img      = bubble.querySelector('.ss-image');
+  const counter  = bubble.querySelector('.ss-counter');
+  const bar      = bubble.querySelector('.ss-bar');
+  const wrap     = bubble.querySelector('.ss-img-wrap');
+  const pauseBtn = bubble.querySelector('.ss-pause');
 
   function restartBar() {
     bar.style.animation = 'none';
     bar.offsetWidth;  // force reflow to restart CSS animation
-    bar.style.animation = '';
+    bar.style.animation = paused ? 'none' : '';
   }
 
   function show(i) {
@@ -855,14 +858,28 @@ function createSlideshow(bubble, images) {
     counter.textContent = `${idx + 1} / ${images.length}`;
     restartBar();
     clearTimeout(timer);
-    timer = setTimeout(() => show(idx + 1), 3000);
+    if (!paused) timer = setTimeout(() => show(idx + 1), 3000);
     scrollBottom();
   }
 
   function navigate(dir) { show(idx + dir); }
 
+  function togglePause() {
+    paused = !paused;
+    pauseBtn.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
+    pauseBtn.title     = paused ? 'Play' : 'Pause';
+    if (paused) {
+      clearTimeout(timer);
+      bar.style.animationPlayState = 'paused';
+    } else {
+      bar.style.animationPlayState = 'running';
+      timer = setTimeout(() => show(idx + 1), 3000);
+    }
+  }
+
   bubble.querySelector('.ss-prev').addEventListener('click', () => navigate(-1));
   bubble.querySelector('.ss-next').addEventListener('click', () => navigate(1));
+  pauseBtn.addEventListener('click', togglePause);
 
   const fsBtn = bubble.querySelector('.ss-fullscreen-btn');
   const ssEl  = bubble.querySelector('.slideshow');
