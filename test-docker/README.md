@@ -1,6 +1,6 @@
 # Docker Container Testing
 
-This directory contains scripts to build and test the Flask application container.
+This directory contains scripts to build and test the ComfyUI Chat container.
 
 ## Test Script
 
@@ -63,7 +63,7 @@ If tests fail:
 2. **Container won't start**: Check port 5000 is available
 3. **Health check fails**: Wait longer or check container logs with `docker compose logs`
 4. **Authentication fails**: Verify default credentials (user/password) haven't changed
-5. **API tests fail**: Check that the Flask application is running correctly
+5. **API tests fail**: Check that the application is running correctly
 
 ### Customization
 

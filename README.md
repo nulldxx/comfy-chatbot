@@ -1,161 +1,104 @@
-# Flask Application Template
+# ComfyUI Chat
 
-A production-ready Flask application template with authentication, Docker support, and CI/CD infrastructure. This template provides a solid foundation for building web applications with modern deployment practices.
+A self-hosted web chat interface for generating images with [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Type a prompt, watch progress stream in real time, and see the generated image appear inline in the conversation.
 
-## ✨ Features
+## Features
 
-- **Session-based Authentication**: Secure login system with configurable credentials
-- **Docker Support**: Multi-stage Docker build for production deployment
-- **Production Ready**: Gunicorn WSGI server with optimized configuration
-- **Health Checks**: Built-in health endpoint for container orchestration
-- **CI/CD Ready**: GitHub Actions workflow templates included
-- **Testing Framework**: Unit tests and Docker container validation
-- **Security**: Non-root container execution, secure session management
+- **Chat UI** — prompt history (↑/↓), LoRA chip shortcuts, lightbox image viewer
+- **LoRA tags** — include `<lora:name:strength>` anywhere in a prompt
+- **Live progress** — Server-Sent Events stream status updates while ComfyUI runs
+- **Slash commands** — `/help`, `/server`, `/addserver`, `/workflow`, `/upload`
+- **Multi-server** — switch between ComfyUI instances at runtime; supports both Unix and Windows path conventions
+- **Workflow upload** — upload new workflow templates directly from the chat UI
+- **Persistent output** — generated images saved to a configurable host directory
 
-## 🚀 Quick Start
+## Quick Start
 
-### Prerequisites
-- Docker and Docker Compose
-- Python 3.11+ (for local development)
+```bash
+# 1. Edit docker-compose.yml — set COMFY_SERVER to your ComfyUI address
+# 2. Build and run
+docker-compose up --build -d
 
-### Using Docker (Recommended)
+# 3. Open http://localhost:5000  (default login: user / password)
+```
 
-1. **Clone the repository**
-   ```bash
-   git clone <your-repo-url>
-   cd flask-app-template
-   ```
+## Configuration
 
-2. **Start the application**
-   ```bash
-   docker-compose up --build -d
-   ```
-
-3. **Access the application**
-   - Open your browser to `http://localhost:5000`
-   - Login with default credentials: `user` / `password`
-
-### Local Development
-
-1. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Run the application**
-   ```bash
-   python app.py
-   ```
-
-## ⚙️ Configuration
-
-Configure the application using environment variables:
+All settings are environment variables in `docker-compose.yml`:
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `APP_USERNAME` | `user` | Authentication username |
-| `APP_PASSWORD` | `password` | Authentication password |
-| `SECRET_KEY` | `your-secret-key-change-this-in-production` | Flask session secret |
+|---|---|---|
+| `COMFY_SERVER` | `192.168.1.135:8000` | ComfyUI server address (`host:port`) |
+| `COMFY_SERVER_OS` | `unix` | Path style sent to server: `unix` or `windows` |
+| `COMFY_WORKFLOW` | `z_image_turbo_api` | Default workflow template name |
+| `COMFY_WORKFLOW_DIR` | `/app/workflows` | Directory of workflow `.json` templates |
+| `COMFY_LORAS_FILE` | `/app/workflows/loras.json` | LoRA catalogue |
+| `COMFY_OUTPUT_DIR` | `/app/output` | Where generated images are saved |
+| `APP_USERNAME` | `user` | Login username |
+| `APP_PASSWORD` | `password` | Login password |
+| `SECRET_KEY` | *(change this)* | Flask session secret |
 
-### Docker Compose Configuration
+### Volume mounts (docker-compose.yml)
 
 ```yaml
-environment:
-  - APP_USERNAME=myuser
-  - APP_PASSWORD=mypassword
-  - SECRET_KEY=your-very-secure-secret-key
+volumes:
+  - ~/dot-files/comfyui:/app/workflows:ro   # workflow templates + loras.json
+  - ~/Pictures/ComfyUI:/app/output           # generated image output
 ```
 
-## 🔧 API Endpoints
+## Slash Commands
 
-- `GET /` - Main application page (requires authentication)
-- `GET /login` - Login page
-- `POST /login` - Authentication endpoint
-- `GET /logout` - Logout endpoint
-- `GET /health` - Health check endpoint
-- `GET /api/data` - Sample API endpoint (requires authentication)
+| Command | Description |
+|---|---|
+| `/help` | List available commands |
+| `/server` | Pick a ComfyUI server from the catalogue |
+| `/addserver <name> <host:port:os>` | Add a server (`os`: `unix` or `windows`) |
+| `/workflow` | Pick a workflow template |
+| `/upload` | Upload a new workflow `.json` file |
 
-## 🐳 Docker Details
+## Workflow Templates
 
-### Multi-Stage Build
-- **Builder stage**: Compiles dependencies with build tools
-- **Runtime stage**: Minimal production image (~150MB)
-- **Base**: Python 3.11 slim for security and size optimization
+Templates are ComfyUI API-format JSON files with placeholder tokens:
 
-### Security Features
-- Non-root user execution
-- Read-only filesystem where possible
-- Minimal attack surface
-- Secure session management
+- `<PROMPT>` — the user's prompt text
+- `<LORA_1_NAME>`, `<LORA_2_NAME>`, … — LoRA file paths
+- `<LORA_1_STRENGTH>`, `<LORA_2_STRENGTH>`, … — LoRA strengths (numeric, unquoted)
 
-## 🧪 Testing
+Unused LoRA slots are stripped from the graph automatically.
 
-### Run All Tests
+## Local Development
+
 ```bash
-./scripts/test-all
+pip install -r requirements.txt
+
+COMFY_SERVER=myserver:8000 \
+COMFY_SERVER_OS=unix \
+COMFY_WORKFLOW=my_workflow \
+COMFY_WORKFLOW_DIR=~/dot-files/comfyui \
+COMFY_LORAS_FILE=~/dot-files/comfyui/loras.json \
+COMFY_OUTPUT_DIR=~/Pictures/ComfyUI \
+python app.py
 ```
 
-### Individual Test Components
+## Project Structure
+
+```
+app.py               # Flask app — routes, generation thread, SSE
+ComfyServer.py       # ComfyUI HTTP client (submit, poll, download)
+templates/
+  index.html         # Chat UI
+  login.html         # Login page
+docker-compose.yml
+Dockerfile
+gunicorn.conf.py     # gthread workers for SSE support
+```
+
+## Release / CI
+
+Push a version tag to trigger a Docker Hub build:
+
 ```bash
-# Python unit tests
-python -m pytest tests/ -v
-
-# Import verification
-python tests/test_imports.py
-
-# Docker container tests
-./test-docker/test-container.sh
+git tag v1.0.0 && git push origin v1.0.0
 ```
 
-## 📁 Project Structure
-
-```
-├── app.py                 # Main Flask application
-├── requirements.txt       # Python dependencies
-├── Dockerfile            # Multi-stage Docker build
-├── docker-compose.yml    # Development compose file
-├── gunicorn.conf.py      # Production server configuration
-├── templates/            # HTML templates
-│   ├── index.html       # Main page
-│   └── login.html       # Login page
-├── tests/               # Test suite
-├── scripts/             # Automation scripts
-└── test-docker/         # Container testing
-```
-
-## 🚀 Deployment
-
-### Production Deployment
-1. Set secure environment variables
-2. Use Docker Compose or container orchestration
-3. Configure reverse proxy (nginx, traefik, etc.)
-4. Set up SSL certificates
-
-### Environment Variables for Production
-```bash
-export APP_USERNAME="your-secure-username"
-export APP_PASSWORD="your-secure-password"
-export SECRET_KEY="your-very-long-random-secret-key"
-```
-
-## 🔒 Security Best Practices
-
-- Change default credentials before deployment
-- Use a strong, random secret key
-- Deploy behind HTTPS
-- Regularly update dependencies
-- Monitor container logs
-
-## 🆘 Support
-
-This template provides a solid foundation for Flask applications. Customize it according to your specific needs:
-
-1. Add your application logic to `app.py`
-2. Update templates in `templates/`
-3. Add additional routes and functionality
-4. Extend the test suite
-5. Configure deployment for your environment
-
-## 📝 License
-
-This template is provided as-is for educational and development purposes.
+Required GitHub secrets: `DOCKER_USERNAME`, `DOCKER_PASSWORD` (Docker Hub access token).

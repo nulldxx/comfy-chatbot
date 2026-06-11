@@ -1,5 +1,5 @@
 services:
-  flask-app:
+  comfy-chatbot:
     build: .
     container_name: comfy-chatbot
     ports:

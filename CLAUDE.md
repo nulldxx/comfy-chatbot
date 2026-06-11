@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Flask application template designed for containerized deployment. It provides a simple hello world application with authentication, Docker support, and production-ready infrastructure. The template includes session-based authentication, health checks, and is designed for production deployment using Gunicorn.
+This is a self-hosted web chat interface for generating images with ComfyUI. Users type prompts (with optional `<lora:name:strength>` tags) into a chat UI; the app submits a ComfyUI workflow via the ComfyUI HTTP API, streams progress back via Server-Sent Events, and displays the resulting image inline in the conversation. It uses Flask with Gunicorn (gthread workers for SSE), is containerised with Docker, and is configured entirely via environment variables.
 
 ## Development Commands
 
@@ -17,7 +17,7 @@ docker-compose up --build -d
 docker-compose down
 
 # View application logs
-docker-compose logs -f flask-app
+docker-compose logs -f comfy-chatbot
 ```
 
 ### Testing
@@ -85,7 +85,7 @@ gunicorn --config gunicorn.conf.py app:app
 ## Architecture Overview
 
 ### Core Application Structure
-- **app.py**: Main Flask application with authentication and basic routes
+- **app.py**: Main Flask application — chat API, generation threads, SSE streaming
 - **gunicorn.conf.py**: Production WSGI server configuration with optimized worker settings
 - **templates/**: HTML templates for web interface (index.html, login.html)
 

@@ -1,6 +1,6 @@
 # Scripts Directory
 
-This directory contains automation scripts for Flask application development and deployment.
+This directory contains automation scripts for ComfyUI Chat development and deployment.
 
 ## Scripts Overview
 

@@ -44,7 +44,7 @@ jobs:
         cat > docker-compose.test.yml << 'EOF'
         version: '3.8'
         services:
-          flask-app:
+          comfy-chatbot:
             image: comfy-chatbot:test
             ports:
               - "5000:5000"
@@ -87,7 +87,7 @@ jobs:
         # Show final logs if tests complete
         echo ""
         echo "=== Final container logs ==="
-        docker compose -f $COMPOSE_FILE logs flask-app --tail=20 || true
+        docker compose -f $COMPOSE_FILE logs comfy-chatbot --tail=20 || true
         
     - name: Login to Docker Hub
       if: success()  # Only login if tests passed

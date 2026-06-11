@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # Docker Container Test Script
-# Tests the Flask application container build and functionality
+# Tests the ComfyUI Chat container build and functionality
 
 set -e  # Exit on any error
 
-echo "🐳 Flask Application Container Test Suite"
-echo "========================================="
+echo "🐳 ComfyUI Chat Container Test Suite"
+echo "======================================"
 echo ""
 
 # Colors for output
@@ -17,7 +17,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
-CONTAINER_NAME="flask-app-test"
+CONTAINER_NAME="comfy-chatbot-test"
 TEST_PORT="5001"
 TEST_USERNAME="testuser"
 TEST_PASSWORD="testpass"
@@ -154,24 +154,18 @@ else
 fi
 echo ""
 
-# Test 6: Sample API endpoint
-echo -e "${BLUE}🔗 Test 6: Testing sample API endpoint...${NC}"
+# Test 6: LoRA API endpoint
+echo -e "${BLUE}🔗 Test 6: Testing LoRA API endpoint...${NC}"
 api_response=$(curl -s -w "%{http_code}" \
     -b cookies.txt \
-    http://localhost:5000/api/data \
+    http://localhost:5000/api/loras \
     -o api-response.json)
 
 if [ "$api_response" = "200" ]; then
-    echo -e "${GREEN}✅ Sample API working (HTTP $api_response)${NC}"
-    # Check if response contains expected data
-    if grep -q '"message"' api-response.json && grep -q '"status"' api-response.json; then
-        echo -e "${GREEN}   Response contains expected JSON structure${NC}"
-    else
-        echo -e "${YELLOW}   Warning: Response may not contain expected data structure${NC}"
-    fi
+    echo -e "${GREEN}✅ LoRA API working (HTTP $api_response)${NC}"
     rm -f api-response.json
 else
-    echo -e "${RED}❌ Sample API failed (HTTP $api_response)${NC}"
+    echo -e "${RED}❌ LoRA API failed (HTTP $api_response)${NC}"
     exit 1
 fi
 echo ""
@@ -183,14 +177,13 @@ app_response=$(curl -s -w "%{http_code}" \
 
 if [ "$app_response" = "200" ]; then
     echo -e "${GREEN}✅ Main application page accessible (HTTP $app_response)${NC}"
-    
-    # Check if page contains expected content
-    if grep -q "Flask Application" app-response.html; then
+
+    if grep -q "ComfyUI" app-response.html; then
         echo -e "${GREEN}   Page contains expected application content${NC}"
     else
         echo -e "${YELLOW}   Warning: Page may not contain expected content${NC}"
     fi
-    
+
     rm -f app-response.html
 else
     echo -e "${RED}❌ Main application page failed (HTTP $app_response)${NC}"
@@ -200,13 +193,13 @@ echo ""
 
 # Test 8: Container logs check
 echo -e "${BLUE}📋 Test 8: Checking container logs for errors...${NC}"
-error_count=$($COMPOSE_CMD logs flask-app 2>&1 | grep -i -c "error\|exception\|traceback" || true)
+error_count=$($COMPOSE_CMD logs comfy-chatbot 2>&1 | grep -i -c "error\|exception\|traceback" || true)
 if [ "$error_count" -eq 0 ]; then
     echo -e "${GREEN}✅ No errors found in container logs${NC}"
 else
     echo -e "${YELLOW}⚠️  Found $error_count potential error(s) in logs${NC}"
     echo "Recent logs:"
-    $COMPOSE_CMD logs --tail=10 flask-app
+    $COMPOSE_CMD logs --tail=10 comfy-chatbot
 fi
 echo ""
 
@@ -215,7 +208,7 @@ echo -e "${BLUE}⚡ Test 9: Basic performance test...${NC}"
 start_time=$(date +%s%N)
 perf_response=$(curl -s -w "%{http_code}" \
     -b cookies.txt \
-    http://localhost:5000/api/data \
+    http://localhost:5000/api/loras \
     -o /dev/null)
 end_time=$(date +%s%N)
 
