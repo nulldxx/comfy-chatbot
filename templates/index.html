@@ -205,6 +205,40 @@
   }
   @keyframes ss-fill { from { width: 0% } to { width: 100% } }
 
+  .ss-fullscreen-btn {
+    background: #0f172a; border: 1px solid #334155; color: #a78bfa;
+    border-radius: 8px; padding: 4px 10px; font-size: 1rem;
+    cursor: pointer; line-height: 1; flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .ss-fullscreen-btn:hover { background: #1e293b; border-color: #7c3aed; }
+
+  /* Fullscreen state */
+  .slideshow:fullscreen,
+  .slideshow:-webkit-full-screen {
+    background: #000;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .slideshow:fullscreen .ss-img-wrap,
+  .slideshow:-webkit-full-screen .ss-img-wrap {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    width: 100%;
+  }
+  .slideshow:fullscreen .ss-image,
+  .slideshow:-webkit-full-screen .ss-image {
+    max-width: 100%; max-height: calc(100vh - 80px); width: auto;
+  }
+  .slideshow:fullscreen .ss-controls,
+  .slideshow:-webkit-full-screen .ss-controls {
+    width: 100%; max-width: 600px;
+  }
+  .slideshow:fullscreen .ss-bar-wrap,
+  .slideshow:-webkit-full-screen .ss-bar-wrap {
+    width: 100%; max-width: 600px;
+  }
+
   #bottom {
     background: #16213e;
     border-top: 1px solid #0f3460;
@@ -799,6 +833,7 @@ function createSlideshow(bubble, images) {
         <button class="ss-btn ss-prev">&#8249;</button>
         <span class="ss-counter"></span>
         <button class="ss-btn ss-next">&#8250;</button>
+        <button class="ss-fullscreen-btn" title="Toggle fullscreen">&#x26F6;</button>
       </div>
       <div class="ss-bar-wrap"><div class="ss-bar"></div></div>
     </div>`;
@@ -828,6 +863,23 @@ function createSlideshow(bubble, images) {
 
   bubble.querySelector('.ss-prev').addEventListener('click', () => navigate(-1));
   bubble.querySelector('.ss-next').addEventListener('click', () => navigate(1));
+
+  const fsBtn = bubble.querySelector('.ss-fullscreen-btn');
+  const ssEl  = bubble.querySelector('.slideshow');
+  function updateFsIcon() {
+    const isFs = document.fullscreenElement === ssEl || document.webkitFullscreenElement === ssEl;
+    fsBtn.innerHTML = isFs ? '&#x2715;' : '&#x26F6;';
+    fsBtn.title     = isFs ? 'Exit fullscreen' : 'Toggle fullscreen';
+  }
+  fsBtn.addEventListener('click', () => {
+    if (document.fullscreenElement === ssEl || document.webkitFullscreenElement === ssEl) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      (ssEl.requestFullscreen || ssEl.webkitRequestFullscreen).call(ssEl);
+    }
+  });
+  ssEl.addEventListener('fullscreenchange', updateFsIcon);
+  ssEl.addEventListener('webkitfullscreenchange', updateFsIcon);
 
   // Touch swipe
   let touchStartX = 0;
