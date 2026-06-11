@@ -213,29 +213,38 @@
   }
   .ss-fullscreen-btn:hover { background: #1e293b; border-color: #7c3aed; }
 
-  /* Fullscreen state */
+  /* Fullscreen state — native API and faux-fullscreen fallback (iOS Safari) */
   .slideshow:fullscreen,
-  .slideshow:-webkit-full-screen {
+  .slideshow:-webkit-full-screen,
+  .slideshow.ss-faux-fullscreen {
     background: #000;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     padding: 16px;
   }
+  .slideshow.ss-faux-fullscreen {
+    position: fixed; inset: 0; z-index: 200;
+  }
   .slideshow:fullscreen .ss-img-wrap,
-  .slideshow:-webkit-full-screen .ss-img-wrap {
-    flex: 1; display: flex; align-items: center; justify-content: center;
+  .slideshow:-webkit-full-screen .ss-img-wrap,
+  .slideshow.ss-faux-fullscreen .ss-img-wrap {
+    flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
     width: 100%;
   }
   .slideshow:fullscreen .ss-image,
-  .slideshow:-webkit-full-screen .ss-image {
-    max-width: 100%; max-height: calc(100vh - 80px); width: auto;
+  .slideshow:-webkit-full-screen .ss-image,
+  .slideshow.ss-faux-fullscreen .ss-image {
+    width: auto; height: auto; max-width: 100%; max-height: 100%;
+    object-fit: contain;
   }
   .slideshow:fullscreen .ss-controls,
-  .slideshow:-webkit-full-screen .ss-controls {
+  .slideshow:-webkit-full-screen .ss-controls,
+  .slideshow.ss-faux-fullscreen .ss-controls {
     width: 100%; max-width: 600px;
   }
   .slideshow:fullscreen .ss-bar-wrap,
-  .slideshow:-webkit-full-screen .ss-bar-wrap {
+  .slideshow:-webkit-full-screen .ss-bar-wrap,
+  .slideshow.ss-faux-fullscreen .ss-bar-wrap {
     width: 100%; max-width: 600px;
   }
 
@@ -304,7 +313,7 @@
 
   #lightbox {
     display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.88); z-index: 100;
+    background: rgba(0,0,0,0.88); z-index: 300;
     align-items: center; justify-content: center;
   }
   #lightbox.open { display: flex; }
@@ -360,6 +369,18 @@ const loraChips  = document.getElementById('lora-chips');
 const lightbox   = document.getElementById('lightbox');
 const lbImg      = document.getElementById('lightbox-img');
 const slashAcEl  = document.getElementById('slash-ac');
+
+// Tracks which slideshow elements are currently in faux-fullscreen so that
+// body overflow is only unlocked when the last one exits.
+const fauxFullscreenEls = new Set();
+function enterFauxFs(el) {
+  fauxFullscreenEls.add(el);
+  document.body.style.overflow = 'hidden';
+}
+function exitFauxFs(el) {
+  fauxFullscreenEls.delete(el);
+  if (fauxFullscreenEls.size === 0) document.body.style.overflow = '';
+}
 
 // ---------------------------------------------------------------------------
 // Slash-command autocomplete
@@ -793,6 +814,8 @@ function handleSlashCommand(raw) {
     history.length = 0;
     historyIdx = -1;
     savedDraft = '';
+    fauxFullscreenEls.clear();
+    document.body.style.overflow = '';
     messagesEl.innerHTML = '';
     addMessage('bot', 'Chat cleared. Describe the image you\'d like to generate.');
     return;
@@ -883,16 +906,31 @@ function createSlideshow(bubble, images) {
 
   const fsBtn = bubble.querySelector('.ss-fullscreen-btn');
   const ssEl  = bubble.querySelector('.slideshow');
+  const nativeFs = !!(document.fullscreenEnabled ?? document.webkitFullscreenEnabled);
+
+  function isFsActive() {
+    return document.fullscreenElement === ssEl
+        || document.webkitFullscreenElement === ssEl
+        || ssEl.classList.contains('ss-faux-fullscreen');
+  }
   function updateFsIcon() {
-    const isFs = document.fullscreenElement === ssEl || document.webkitFullscreenElement === ssEl;
+    const isFs = isFsActive();
     fsBtn.innerHTML = isFs ? '&#x2715;' : '&#x26F6;';
     fsBtn.title     = isFs ? 'Exit fullscreen' : 'Toggle fullscreen';
   }
   fsBtn.addEventListener('click', () => {
-    if (document.fullscreenElement === ssEl || document.webkitFullscreenElement === ssEl) {
-      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    if (nativeFs) {
+      if (document.fullscreenElement === ssEl || document.webkitFullscreenElement === ssEl) {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      } else {
+        (ssEl.requestFullscreen || ssEl.webkitRequestFullscreen).call(ssEl);
+      }
     } else {
-      (ssEl.requestFullscreen || ssEl.webkitRequestFullscreen).call(ssEl);
+      // Faux fullscreen for iOS Safari
+      const entering = !ssEl.classList.contains('ss-faux-fullscreen');
+      ssEl.classList.toggle('ss-faux-fullscreen', entering);
+      entering ? enterFauxFs(ssEl) : exitFauxFs(ssEl);
+      updateFsIcon();
     }
   });
   ssEl.addEventListener('fullscreenchange', updateFsIcon);
