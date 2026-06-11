@@ -5,6 +5,7 @@ import uuid
 import queue
 import threading
 from pathlib import Path
+from datetime import datetime
 from functools import wraps
 from flask import (
     Flask, render_template, jsonify, request,
@@ -216,11 +217,19 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if not images:
             raise ValueError("No images produced by workflow")
 
-        job_dir = IMAGES_DIR / job_id
-        job_dir.mkdir(parents=True, exist_ok=True)
-        downloaded = server.download_images(images, job_dir)
+        # Download to a temp dir, then rename each file with a timestamp prefix
+        tmp_dir = IMAGES_DIR / job_id
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        downloaded = server.download_images(images, tmp_dir)
 
-        image_urls = [f"/images/{job_id}/{Path(fp).name}" for fp in downloaded]
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        image_urls = []
+        for fp in downloaded:
+            fp = Path(fp)
+            dest = IMAGES_DIR / f"{timestamp}_{fp.name}"
+            fp.rename(dest)
+            image_urls.append(f"/images/{dest.name}")
+        tmp_dir.rmdir()
 
         with jobs_lock:
             jobs[job_id]["status"] = "done"
@@ -437,10 +446,10 @@ def api_progress(job_id):
     )
 
 
-@app.route("/images/<job_id>/<filename>")
+@app.route("/images/<filename>")
 @login_required
-def serve_image(job_id, filename):
-    response = send_from_directory(str(IMAGES_DIR / job_id), filename)
+def serve_image(filename):
+    response = send_from_directory(str(IMAGES_DIR), filename)
     response.headers["Cache-Control"] = "no-store"
     return response
 
