@@ -37,6 +37,8 @@ jobs:
         file: ./Dockerfile
         load: true  # Load image locally for testing
         tags: comfy-chatbot:test
+        build-args: |
+          BUILD_VERSION=${{ github.ref_name }}
         cache-from: type=gha
         
     - name: Create test docker-compose file
@@ -106,6 +108,8 @@ jobs:
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         platforms: linux/amd64,linux/arm64
+        build-args: |
+          BUILD_VERSION=${{ github.ref_name }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
         

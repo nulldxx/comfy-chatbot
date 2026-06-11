@@ -14,18 +14,31 @@ set -e
 # Move to the repository root so the build context is correct regardless of CWD.
 cd "$(dirname "$0")/.."
 
+# Support both Docker Compose v2 ("docker compose") and v1 ("docker-compose").
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE="docker-compose"
+else
+  echo "Error: neither 'docker compose' nor 'docker-compose' is available." >&2
+  exit 1
+fi
+
 # Describe the current commit: latest tag, commits-since, short hash, +dirty.
 # Falls back to the short hash alone if no tags exist.
 BUILD_VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+if [[ "$BUILD_VERSION" == "unknown" ]]; then
+  echo "Warning: could not read a git version (is this a git checkout with tags?)." >&2
+fi
 
 echo "Building comfy-chatbot — build ${BUILD_VERSION}"
 
 export BUILD_VERSION
-docker compose build
+$COMPOSE build
 
 if [[ "$1" == "--push" ]]; then
   echo "Pushing image…"
-  docker compose push
+  $COMPOSE push
 fi
 
 echo "Done. The container will log 'build ${BUILD_VERSION}' on startup."
