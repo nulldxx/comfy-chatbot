@@ -192,7 +192,7 @@
     transition: background 0.15s, border-color 0.15s;
   }
   .ss-btn:hover { background: #1e293b; border-color: #7c3aed; }
-  .ss-counter { font-size: 0.8rem; color: #94a3b8; flex: 1; text-align: center; }
+  .ss-counter { font-size: 0.8rem; color: #94a3b8; flex: 1; text-align: center; white-space: nowrap; }
   .ss-bar-wrap {
     height: 2px; background: #334155;
     border-radius: 2px; margin-top: 6px; overflow: hidden;
@@ -212,6 +212,15 @@
     transition: background 0.15s, border-color 0.15s;
   }
   .ss-fullscreen-btn:hover { background: #1e293b; border-color: #7c3aed; }
+
+  /* Narrow screens: let bubbles use the full width and slim the slideshow
+     controls so their minimum width fits inside the bubble. */
+  @media (max-width: 600px) {
+    .message { max-width: 100%; }
+    .ss-controls { gap: 4px; }
+    .ss-btn { padding: 4px 10px; }
+    .ss-fullscreen-btn { padding: 4px 8px; }
+  }
 
   /* Fullscreen state — JS keeps .ss-fs in sync for both native fullscreen
      and the faux-fullscreen fallback (iOS Safari). Styling a plain class
