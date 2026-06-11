@@ -16,6 +16,11 @@ from ComfyServer import ComfyServer
 
 app = Flask(__name__)
 
+# Build/version info — baked in at image-build time via the BUILD_VERSION
+# build-arg (see Dockerfile / scripts/docker-build). Logged once on startup.
+BUILD_VERSION = os.environ.get('BUILD_VERSION', 'unknown')
+print(f"comfy-chatbot starting — build {BUILD_VERSION}", flush=True)
+
 # Auth
 USERNAME = os.environ.get('APP_USERNAME', 'user')
 PASSWORD = os.environ.get('APP_PASSWORD', 'password')

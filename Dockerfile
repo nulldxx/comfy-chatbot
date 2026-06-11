@@ -44,5 +44,11 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import requests; r=requests.get('http://localhost:5000/health', timeout=5); exit(0 if r.status_code == 200 else 1)" || exit 1
 
+# Build version (e.g. output of `git describe --tags --always --dirty`),
+# passed in at build time and exposed to the app so it logs it on startup.
+# Kept near the end so a changing version doesn't bust the cache above it.
+ARG BUILD_VERSION=unknown
+ENV BUILD_VERSION=$BUILD_VERSION
+
 # Run the application with Gunicorn
 CMD ["gunicorn", "--config", "gunicorn.conf.py", "app:app"]

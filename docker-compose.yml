@@ -1,6 +1,12 @@
 services:
   comfy-chatbot:
     image: nerwander/comfy-chatbot:latest
+    build:
+      context: .
+      args:
+        # Set on the host (e.g. via scripts/docker-build) so the running
+        # container can log which git build it was created from.
+        BUILD_VERSION: ${BUILD_VERSION:-unknown}
     container_name: comfy-chatbot
     ports:
       - "5000:5000"
