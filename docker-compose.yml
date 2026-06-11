@@ -1,7 +1,6 @@
 services:
   comfy-chatbot:
     image: nerwander/comfy-chatbot:latest
-    build: .
     container_name: comfy-chatbot
     ports:
       - "5000:5000"
