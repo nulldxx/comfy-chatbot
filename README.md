@@ -48,6 +48,23 @@ All settings are environment variables in `docker-compose.yml`:
 | `APP_PASSWORD` | `password` | Login password |
 | `SECRET_KEY` | *(change this)* | Flask session secret |
 
+### loras.json
+
+The LoRA catalogue controls which chips appear in the chat UI and provides default strengths. Each entry can be a plain filename string or an object with an explicit strength:
+
+```json
+{
+  "loras": [
+    { "name": "styles/cinematic.safetensors",   "strength": 0.8 },
+    { "name": "styles/anime-flat.safetensors",  "strength": 0.7 },
+    { "name": "characters/hero.safetensors",    "strength": 1.0 },
+    "detail-enhancer.safetensors"
+  ]
+}
+```
+
+Plain strings default to strength `1.0`. The `name` value is the path sent to the ComfyUI server — on Windows servers use backslashes (`styles\\cinematic.safetensors`) or set `COMFY_SERVER_OS=windows` and let the app convert them automatically.
+
 ### Volume mounts (docker-compose.yml)
 
 ```yaml
