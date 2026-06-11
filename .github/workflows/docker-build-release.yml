@@ -22,7 +22,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ secrets.DOCKER_USERNAME }}/flask-app-template
+        images: ${{ secrets.DOCKER_USERNAME }}/comfy-chatbot
         tags: |
           type=ref,event=tag
           type=semver,pattern={{version}}
@@ -36,7 +36,7 @@ jobs:
         context: .
         file: ./Dockerfile
         load: true  # Load image locally for testing
-        tags: flask-app-template:test
+        tags: comfy-chatbot:test
         cache-from: type=gha
         
     - name: Create test docker-compose file
@@ -45,7 +45,7 @@ jobs:
         version: '3.8'
         services:
           flask-app:
-            image: flask-app-template:test
+            image: comfy-chatbot:test
             ports:
               - "5000:5000"
             environment:
@@ -115,8 +115,8 @@ jobs:
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
-        repository: ${{ secrets.DOCKER_USERNAME }}/flask-app-template
-        short-description: "Flask Application Template with Docker Support"
+        repository: ${{ secrets.DOCKER_USERNAME }}/comfy-chatbot
+        short-description: "ComfyUI Chat — web chat interface for ComfyUI image generation"
         readme-filepath: ./README.md
         
     - name: Test Results Summary
