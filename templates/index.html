@@ -1138,7 +1138,8 @@ function doUpload(file, bubble) {
 // ---------------------------------------------------------------------------
 
 function sendMessage() {
-  const raw = inputEl.value.trim();
+  let raw = inputEl.value.trim();
+  if (!raw && history.length) raw = history[0]; // empty prompt redoes the last one
   if (!raw || sendBtn.disabled) return;
 
   if (raw.startsWith('/')) {
