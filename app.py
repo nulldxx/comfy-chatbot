@@ -41,6 +41,12 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 jobs: dict = {}
 jobs_lock = threading.Lock()
 
+# Auto-purge: free GPU memory on a ComfyUI server after a period of idleness.
+# Runs server-side so it fires even if the user closes their browser.
+AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
+purge_state: dict = {}  # server_address -> {"timer": threading.Timer | None, "active": int}
+purge_lock = threading.Lock()
+
 # Template placeholder constants (mirrors comfy-runworkflow)
 PLACEHOLDER_RE = re.compile(r"<[A-Z0-9_]+>")
 LORA_PLACEHOLDER_RE = re.compile(r"<LORA_\d+_(?:NAME|STRENGTH)>")
@@ -166,6 +172,56 @@ def parse_loras_from_prompt(text):
 
 
 # ---------------------------------------------------------------------------
+# Auto-purge timers
+# ---------------------------------------------------------------------------
+
+def _auto_purge(server_address):
+    with purge_lock:
+        state = purge_state.get(server_address)
+        if state:
+            state["timer"] = None
+    try:
+        ComfyServer(server_address).free_memory()
+        print(f"Auto-purged GPU memory on {server_address} after {AUTO_PURGE_SECONDS}s idle", flush=True)
+    except Exception as e:
+        print(f"Auto-purge failed for {server_address}: {e}", flush=True)
+
+
+def _cancel_purge_timer_locked(state):
+    if state["timer"] is not None:
+        state["timer"].cancel()
+        state["timer"] = None
+
+
+def purge_generation_started(server_address):
+    """Cancel any pending purge and mark a generation as running on this server."""
+    with purge_lock:
+        state = purge_state.setdefault(server_address, {"timer": None, "active": 0})
+        _cancel_purge_timer_locked(state)
+        state["active"] += 1
+
+
+def purge_generation_finished(server_address):
+    """Schedule a purge once the last running generation on this server ends."""
+    with purge_lock:
+        state = purge_state.setdefault(server_address, {"timer": None, "active": 0})
+        state["active"] = max(0, state["active"] - 1)
+        if state["active"] == 0:
+            _cancel_purge_timer_locked(state)
+            timer = threading.Timer(AUTO_PURGE_SECONDS, _auto_purge, args=(server_address,))
+            timer.daemon = True
+            timer.start()
+            state["timer"] = timer
+
+
+def cancel_auto_purge(server_address):
+    with purge_lock:
+        state = purge_state.get(server_address)
+        if state:
+            _cancel_purge_timer_locked(state)
+
+
+# ---------------------------------------------------------------------------
 # Background generation thread
 # ---------------------------------------------------------------------------
 
@@ -182,6 +238,7 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         else:
             send("progress", message=msg_str)
 
+    purge_generation_started(server_address)
     try:
         name_with_ext = workflow_name if workflow_name.endswith(".json") else f"{workflow_name}.json"
         workflow_path = COMFY_WORKFLOW_DIR / name_with_ext
@@ -262,6 +319,8 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         with jobs_lock:
             jobs[job_id]["status"] = "error"
         send("error", message=str(e))
+    finally:
+        purge_generation_finished(server_address)
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +443,7 @@ def api_purge():
         ComfyServer(server_address).free_memory()
     except Exception as e:
         return jsonify({"error": str(e)}), 502
+    cancel_auto_purge(server_address)
     return jsonify({"ok": True})
 
 

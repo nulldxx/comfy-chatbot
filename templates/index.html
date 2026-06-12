@@ -613,34 +613,8 @@ let currentServer   = null;  // {address, os, name}
 let currentWorkflow = null;  // string
 let iterations      = 1;     // images generated per prompt (set via /iterations)
 
-// Auto-purge after inactivity
-const AUTO_PURGE_MS = 10 * 60 * 1000;
-let autoPurgeTimer = null;
-
-function scheduleAutoPurge() {
-  clearTimeout(autoPurgeTimer);
-  autoPurgeTimer = setTimeout(() => {
-    const server = currentServer ? currentServer.address : null;
-    fetch('/api/purge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(server ? { server } : {}),
-    })
-    .then(r => r.json())
-    .then(data => {
-      const msg = data.error
-        ? `<span style="color:#f87171">⚠ Auto-purge failed: ${escapeHtml(data.error)}</span>`
-        : '<span style="color:#475569">GPU memory freed after 10 min of inactivity.</span>';
-      addMessage('bot', msg);
-    })
-    .catch(() => {});
-  }, AUTO_PURGE_MS);
-}
-
-function cancelAutoPurge() {
-  clearTimeout(autoPurgeTimer);
-  autoPurgeTimer = null;
-}
+// Auto-purge of idle GPU memory is handled server-side (see app.py),
+// so it fires even after the browser is closed.
 
 function updateHeaderStatus() {
   const srv = currentServer  ? currentServer.name  : DEFAULT_SERVER;
@@ -961,7 +935,6 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/clear') {
-    cancelAutoPurge();
     history.length = 0;
     historyIdx = -1;
     savedDraft = '';
@@ -1219,8 +1192,6 @@ function sendMessage() {
   inputEl.style.height = 'auto';
   sendBtn.disabled = true;
 
-  cancelAutoPurge();
-
   (async () => {
     for (let i = 0; i < iterations; i++) {
       const label = iterations > 1 ? ` (${i + 1}/${iterations})` : '';
@@ -1228,7 +1199,6 @@ function sendMessage() {
       if (!ok) break;   // a failed run would likely just fail again
     }
     sendBtn.disabled = false;
-    scheduleAutoPurge();
   })();
 }
 
