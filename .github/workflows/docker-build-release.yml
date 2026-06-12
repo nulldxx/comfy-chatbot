@@ -31,7 +31,7 @@ jobs:
           type=raw,value=latest,enable={{is_default_branch}}
           
     - name: Build Docker image for testing
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v6
       with:
         context: .
         file: ./Dockerfile
@@ -100,7 +100,7 @@ jobs:
         
     - name: Build and push Docker image
       if: success()  # Only push if tests passed
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v6
       with:
         context: .
         file: ./Dockerfile
@@ -112,6 +112,7 @@ jobs:
           BUILD_VERSION=${{ github.ref_name }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        ignore-build-cache-export-failure: true
         
     - name: Update Docker Hub description
       if: success()  # Only update if push was successful
