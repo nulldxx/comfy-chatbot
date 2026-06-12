@@ -262,12 +262,11 @@
     flex-shrink: 0;
   }
 
-  #lora-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-
   #slash-ac {
     display: none; flex-direction: column;
     background: #0f172a; border: 1px solid #334155;
-    border-radius: 10px; overflow: hidden;
+    border-radius: 10px; overflow: hidden auto;
+    max-height: 240px;
     margin-bottom: 8px;
   }
   #slash-ac.open { display: flex; }
@@ -281,15 +280,6 @@
   .slash-ac-item:hover, .slash-ac-item.ac-focused { background: #1e1040; }
   .slash-ac-cmd  { color: #a78bfa; font-family: monospace; flex-shrink: 0; }
   .slash-ac-desc { color: #64748b; font-size: 0.78rem; }
-
-  .lora-chip {
-    background: #1e293b; border: 1px solid #334155;
-    border-radius: 20px; padding: 3px 10px;
-    font-size: 0.72rem; color: #94a3b8;
-    cursor: pointer; white-space: nowrap;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  .lora-chip:hover { border-color: #a78bfa; color: #a78bfa; }
 
   #input-row { display: flex; gap: 10px; align-items: flex-end; }
 
@@ -349,20 +339,19 @@
     <div class="bubble">
       Hello! Describe the image you'd like to generate.<br>
       You can include LoRA tags like <code>&lt;lora:name:strength&gt;</code> directly in your prompt,
-      or click a chip below to insert one.<br>
+      or type <code>/lora</code> anywhere in a prompt to fuzzy-find one.<br>
       Type <code>/help</code> for available commands.
     </div>
   </div>
 </div>
 
 <div id="bottom">
-  <div id="lora-chips"></div>
   <div id="slash-ac"></div>
   <div id="input-row">
     <textarea id="prompt-input" placeholder="Describe the image you want to generate…" rows="1"></textarea>
     <button id="send-btn">Generate</button>
   </div>
-  <div class="hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line &nbsp;·&nbsp; Tap a message to re-edit &nbsp;·&nbsp; Click a chip to insert a LoRA</div>
+  <div class="hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line &nbsp;·&nbsp; Tap a message to re-edit &nbsp;·&nbsp; Type /lora to insert a LoRA</div>
 </div>
 
 <div id="lightbox">
@@ -374,7 +363,6 @@
 const messagesEl = document.getElementById('messages');
 const inputEl    = document.getElementById('prompt-input');
 const sendBtn    = document.getElementById('send-btn');
-const loraChips  = document.getElementById('lora-chips');
 const lightbox   = document.getElementById('lightbox');
 const lbImg      = document.getElementById('lightbox-img');
 
@@ -485,6 +473,7 @@ const SLASH_COMMANDS = [
   { cmd: '/addserver', desc: 'add a server  (name host:port:os)',  args: ' ' },
   { cmd: '/clear',     desc: 'clear the chat history',             args: ''  },
   { cmd: '/help',      desc: 'show available commands',            args: ''  },
+  { cmd: '/lora',      desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
   { cmd: '/purge',     desc: 'free GPU memory on active server',   args: ''  },
   { cmd: '/server',    desc: 'choose a ComfyUI server',            args: ''  },
   { cmd: '/slideshow', desc: 'browse all generated images',        args: ''  },
@@ -492,16 +481,59 @@ const SLASH_COMMANDS = [
   { cmd: '/workflow',  desc: 'choose a workflow template',         args: ''  },
 ];
 
+// LoRA catalogue for the /lora fuzzy finder
+let LORAS = [];
+fetch('/api/loras')
+  .then(r => r.json())
+  .then(loras => {
+    LORAS = loras.map(entry => {
+      const name     = typeof entry === 'string' ? entry : entry.name;
+      const strength = typeof entry === 'string' ? 1.0  : (entry.strength ?? 1.0);
+      return { name, strength, label: name.split('/').pop().replace(/\.safetensors$/i, '') };
+    });
+  })
+  .catch(() => {});
+
+// Subsequence fuzzy match: every query char must appear in order.
+// Returns a score (higher = better) or -1 for no match.
+function fuzzyScore(query, text) {
+  query = query.toLowerCase();
+  text  = text.toLowerCase();
+  if (!query) return 0;
+  let score = 0, from = 0, last = -2;
+  for (const ch of query) {
+    const idx = text.indexOf(ch, from);
+    if (idx === -1) return -1;
+    score += (idx === last + 1) ? 3 : 1;  // reward consecutive runs
+    if (idx === 0) score += 2;            // reward matching the start
+    last = idx;
+    from = idx + 1;
+  }
+  return score;
+}
+
+// Matches a "/lora" token (optionally followed by a space and a query)
+// ending at the caret, anywhere in the prompt.
+const LORA_TRIGGER_RE = /(?:^|\s)(\/lora(?: (\S*))?)$/i;
+
 let acMatches = [];
 let acFocused = -1;
+let acMode = 'cmd';          // 'cmd' | 'lora'
+let loraTriggerStart = -1;   // index in input where the /lora token begins
 
 function renderSlashAc() {
   slashAcEl.innerHTML = acMatches.map((c, i) =>
     `<div class="slash-ac-item${i === acFocused ? ' ac-focused' : ''}" data-idx="${i}">` +
-    `<span class="slash-ac-cmd">${c.cmd}</span>` +
-    `<span class="slash-ac-desc">${c.desc}</span></div>`
+    (acMode === 'lora'
+      ? `<span class="slash-ac-cmd">${escapeHtml(c.label)}</span>` +
+        `<span class="slash-ac-desc">strength ${c.strength}</span>`
+      : `<span class="slash-ac-cmd">${c.cmd}</span>` +
+        `<span class="slash-ac-desc">${c.desc}</span>`) +
+    `</div>`
   ).join('');
   slashAcEl.classList.add('open');
+  const focused = slashAcEl.querySelector('.ac-focused');
+  if (focused) focused.scrollIntoView({ block: 'nearest' });
 }
 
 function hideSlashAc() {
@@ -509,9 +541,30 @@ function hideSlashAc() {
   slashAcEl.innerHTML = '';
   acMatches = [];
   acFocused = -1;
+  acMode = 'cmd';
+  loraTriggerStart = -1;
 }
 
 function updateSlashAc() {
+  // /lora fuzzy finder takes priority and works anywhere in the prompt
+  const before = inputEl.value.slice(0, inputEl.selectionStart);
+  const m = before.match(LORA_TRIGGER_RE);
+  if (m && LORAS.length > 0) {
+    const query = m[2] || '';
+    acMode = 'lora';
+    loraTriggerStart = before.length - m[1].length;
+    acMatches = LORAS
+      .map(l => ({ ...l, score: Math.max(fuzzyScore(query, l.label), fuzzyScore(query, l.name)) }))
+      .filter(l => l.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8);
+    if (acMatches.length === 0) { hideSlashAc(); return; }
+    acFocused = -1;
+    renderSlashAc();
+    return;
+  }
+
+  acMode = 'cmd';
   const val = inputEl.value;
   if (!val.startsWith('/') || val.includes(' ')) { hideSlashAc(); return; }
   const typed = val.toLowerCase();
@@ -526,11 +579,22 @@ function updateSlashAc() {
 function selectSlashAcItem(idx) {
   const c = acMatches[idx];
   if (!c) return;
-  inputEl.value = c.cmd + c.args;
+  if (acMode === 'lora') {
+    const tag   = `<lora:${c.name}:${c.strength}> `;
+    const caret = inputEl.selectionStart;
+    inputEl.value = inputEl.value.slice(0, loraTriggerStart) + tag + inputEl.value.slice(caret);
+    const pos = loraTriggerStart + tag.length;
+    hideSlashAc();
+    inputEl.focus();
+    inputEl.setSelectionRange(pos, pos);
+  } else {
+    inputEl.value = c.cmd + c.args;
+    hideSlashAc();
+    inputEl.focus();
+    updateSlashAc();  // selecting /lora immediately opens the LoRA finder
+  }
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
-  hideSlashAc();
-  inputEl.focus();
 }
 
 slashAcEl.addEventListener('click', e => {
@@ -627,9 +691,9 @@ inputEl.addEventListener('keydown', e => {
       renderSlashAc();
       return;
     }
-    if (e.key === 'Enter' && !e.shiftKey && acFocused >= 0) {
+    if (e.key === 'Enter' && !e.shiftKey && (acFocused >= 0 || acMode === 'lora')) {
       e.preventDefault();
-      selectSlashAcItem(acFocused);
+      selectSlashAcItem(acFocused >= 0 ? acFocused : 0);
       return;
     }
   }
@@ -687,29 +751,6 @@ messagesEl.addEventListener('click', e => {
   inputEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 
-// Load LoRA chips
-fetch('/api/loras')
-  .then(r => r.json())
-  .then(loras => {
-    loras.forEach(entry => {
-      const name     = typeof entry === 'string' ? entry : entry.name;
-      const strength = typeof entry === 'string' ? 1.0  : (entry.strength ?? 1.0);
-      const chip     = document.createElement('button');
-      chip.className = 'lora-chip';
-      chip.textContent = name.split('/').pop().replace(/\.safetensors$/i, '');
-      chip.title = `${name}  (strength: ${strength})`;
-      chip.addEventListener('click', () => {
-        const tag = `<lora:${name}:${strength}>`;
-        const pos = inputEl.selectionStart;
-        inputEl.value = inputEl.value.slice(0, pos) + tag + inputEl.value.slice(pos);
-        inputEl.focus();
-        inputEl.setSelectionRange(pos + tag.length, pos + tag.length);
-      });
-      loraChips.appendChild(chip);
-    });
-  })
-  .catch(() => {});
-
 function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
 function addMessage(role, contentHtml, rawText) {
@@ -758,6 +799,7 @@ function handleSlashCommand(raw) {
             e.g. <code>/addserver mybox 192.168.1.50:8188:unix</code>
           </div>
         </div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
@@ -767,7 +809,8 @@ function handleSlashCommand(raw) {
         </div>
       </div>
       <div style="margin-top:10px;font-size:0.8rem;color:#475569">
-        Include LoRAs in any prompt with <code>&lt;lora:name:strength&gt;</code>
+        Include LoRAs in any prompt with <code>&lt;lora:name:strength&gt;</code>,
+        or type <code>/lora</code> while writing a prompt to search for one
       </div>
     `);
     return;
@@ -933,6 +976,11 @@ function handleSlashCommand(raw) {
       bubble.innerHTML = `<span style="color:#f87171">⚠ Purge failed: ${escapeHtml(err.message)}</span>`;
       scrollBottom();
     });
+    return;
+  }
+
+  if (cmd === '/lora') {
+    addMessage('bot', 'Type <code>/lora</code> followed by a search term while writing a prompt, then pick a LoRA from the list — it inserts a <code>&lt;lora:name:strength&gt;</code> tag at the cursor.');
     return;
   }
 
