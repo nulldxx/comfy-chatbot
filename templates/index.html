@@ -664,6 +664,7 @@ document.addEventListener('keydown', e => {
   if (document.activeElement === inputEl) return;
   if (e.key === 'ArrowLeft')  { e.preventDefault(); activeSlideshowCtrl.navigate(-1); }
   if (e.key === 'ArrowRight') { e.preventDefault(); activeSlideshowCtrl.navigate(1); }
+  if (e.key === 'Delete')     { e.preventDefault(); activeSlideshowCtrl.deleteCurrent(); }
 });
 
 // Prompt history (shell-style up/down navigation)
@@ -808,7 +809,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow [today]</code> — browse all generated images, or only today's
-          <div style="margin-top:2px;color:#475569;font-size:0.78rem">← → keys on desktop &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s</div>
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">← → keys on desktop &nbsp;·&nbsp; Del deletes the current image &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s</div>
         </div>
       </div>
       <div style="margin-top:10px;font-size:0.8rem;color:#475569">
@@ -1026,6 +1027,7 @@ function createSlideshow(bubble, images) {
       <div class="ss-controls">
         <button class="ss-btn ss-prev">&#8249;</button>
         <button class="ss-btn ss-pause" title="Pause">&#9646;&#9646;</button>
+        <button class="ss-btn ss-delete" title="Delete image">&#128465;&#xFE0E;</button>
         <span class="ss-counter"></span>
         <button class="ss-btn ss-next">&#8250;</button>
         <button class="ss-fullscreen-btn" title="Toggle fullscreen">&#x26F6;</button>
@@ -1057,6 +1059,32 @@ function createSlideshow(bubble, images) {
 
   function navigate(dir) { show(idx + dir); }
 
+  let deleting = false;
+  function deleteCurrent() {
+    if (deleting || !images.length) return;
+    deleting = true;
+    const filename = images[idx].split('/').pop();
+    fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
+      .then(r => r.json().then(data => {
+        if (!r.ok) throw new Error(data.error || 'Delete failed');
+        images.splice(idx, 1);
+        if (!images.length) {
+          clearTimeout(timer);
+          if (isFsActive()) fsBtn.click();
+          bubble.innerHTML = 'All images deleted.';
+          if (activeSlideshowCtrl === ctrl) activeSlideshowCtrl = null;
+          return;
+        }
+        show(idx);  // same index now points at the next image
+      }))
+      .catch(err => {
+        counter.textContent = '⚠ ' + err.message;
+        clearTimeout(timer);
+        if (!paused) timer = setTimeout(() => show(idx + 1), 3000);
+      })
+      .finally(() => { deleting = false; });
+  }
+
   function togglePause() {
     paused = !paused;
     pauseBtn.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
@@ -1072,6 +1100,7 @@ function createSlideshow(bubble, images) {
 
   bubble.querySelector('.ss-prev').addEventListener('click', () => navigate(-1));
   bubble.querySelector('.ss-next').addEventListener('click', () => navigate(1));
+  bubble.querySelector('.ss-delete').addEventListener('click', deleteCurrent);
   pauseBtn.addEventListener('click', togglePause);
 
   const fsBtn = bubble.querySelector('.ss-fullscreen-btn');
@@ -1134,7 +1163,8 @@ function createSlideshow(bubble, images) {
   });
 
   show(0);
-  return { navigate };
+  const ctrl = { navigate, deleteCurrent };
+  return ctrl;
 }
 
 function doUpload(file, bubble) {

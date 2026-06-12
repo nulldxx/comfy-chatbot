@@ -486,6 +486,21 @@ def serve_image(filename):
     return response
 
 
+@app.route("/api/images/<filename>", methods=["DELETE"])
+@login_required
+def api_delete_image(filename):
+    safe = secure_filename(filename)
+    if not safe or safe != filename:
+        return jsonify({"error": "Invalid filename"}), 400
+    path = IMAGES_DIR / safe
+    if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        return jsonify({"error": "Invalid filename"}), 400
+    if not path.is_file():
+        return jsonify({"error": "Image not found"}), 404
+    path.unlink()
+    return jsonify({"deleted": safe})
+
+
 @app.route("/api/images")
 @login_required
 def api_images():
