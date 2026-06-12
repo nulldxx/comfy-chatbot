@@ -137,6 +137,24 @@
   }
   .bubble img:hover { opacity: 0.9; }
 
+  /* Generated chat images: wrapper with a delete-button overlay */
+  .img-wrap { position: relative; max-width: 480px; margin-top: 8px; }
+  .img-wrap img { margin-top: 0; }
+  .img-del {
+    position: absolute; top: 8px; right: 8px;
+    background: rgba(15,23,42,0.75); border: 1px solid #334155;
+    color: #cbd5e1; border-radius: 8px;
+    padding: 5px 8px; font-size: 0.85rem;
+    cursor: pointer; line-height: 1;
+    opacity: 0;
+    transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .img-wrap:hover .img-del { opacity: 1; }
+  .img-del:hover { border-color: #f87171; color: #f87171; }
+  @media (hover: none) {
+    .img-del { opacity: 0.6; }
+  }
+
   .bubble code { background: #0f172a; padding: 1px 5px; border-radius: 4px; font-size: 0.82em; }
 
   .status-text { font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; }
@@ -1164,6 +1182,48 @@ function doUpload(file, bubble) {
     });
 }
 
+// Appends a generated image to a bubble with a trash-icon overlay that
+// deletes it from both the chat and the server's output folder.
+function appendChatImage(container, url) {
+  const wrap = document.createElement('div');
+  wrap.className = 'img-wrap';
+
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = 'Generated image';
+
+  const del = document.createElement('button');
+  del.className = 'img-del';
+  del.title = 'Delete image';
+  del.innerHTML = '&#128465;&#xFE0E;';
+  del.addEventListener('click', e => {
+    e.stopPropagation();
+    if (del.disabled) return;
+    del.disabled = true;
+    const filename = url.split('/').pop();
+    fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
+      .then(r => r.json().then(data => {
+        // 404 means it's already gone (e.g. deleted via /slideshow) —
+        // still remove the stale copy from the chat.
+        if (!r.ok && r.status !== 404) throw new Error(data.error || 'Delete failed');
+        wrap.remove();
+      }))
+      .catch(err => {
+        del.disabled = false;
+        del.innerHTML = '&#9888;&#xFE0E;';
+        del.title = 'Delete failed: ' + err.message + ' — click to retry';
+        setTimeout(() => {
+          del.innerHTML = '&#128465;&#xFE0E;';
+          del.title = 'Delete image';
+        }, 3000);
+      });
+  });
+
+  wrap.appendChild(img);
+  wrap.appendChild(del);
+  container.appendChild(wrap);
+}
+
 // ---------------------------------------------------------------------------
 // Send message
 // ---------------------------------------------------------------------------
@@ -1243,12 +1303,7 @@ function runGeneration(raw, label) {
         dotsEl.remove();
         barWrap.remove();
         statusLine.textContent = `Done — ${msg.images.length} image(s)${label}`;
-        msg.images.forEach(url => {
-          const img = document.createElement('img');
-          img.src = url;
-          img.alt = 'Generated image';
-          botBubble.appendChild(img);
-        });
+        msg.images.forEach(url => appendChatImage(botBubble, url));
         scrollBottom();
         resolve(true);
 
