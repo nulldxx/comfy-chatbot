@@ -492,11 +492,14 @@ def api_images():
     if not IMAGES_DIR.is_dir():
         return jsonify([])
     exts = {".png", ".jpg", ".jpeg", ".webp"}
-    files = sorted(
-        (p for p in IMAGES_DIR.iterdir() if p.suffix.lower() in exts),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    files = (p for p in IMAGES_DIR.iterdir() if p.suffix.lower() in exts)
+    if request.args.get("filter") == "today":
+        today = datetime.now().date()
+        files = (
+            p for p in files
+            if datetime.fromtimestamp(p.stat().st_mtime).date() == today
+        )
+    files = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
     return jsonify([f"/images/{p.name}" for p in files])
 
 
