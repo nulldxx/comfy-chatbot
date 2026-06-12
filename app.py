@@ -225,7 +225,16 @@ def cancel_auto_purge(server_address):
 # Background generation thread
 # ---------------------------------------------------------------------------
 
-def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name):
+def apply_resolution(workflow, width, height):
+    """Set width/height on every workflow node that exposes both as inputs."""
+    for node in workflow.values():
+        inputs = node.get("inputs", {})
+        if "width" in inputs and "height" in inputs:
+            inputs["width"] = width
+            inputs["height"] = height
+
+
+def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name, width=None, height=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
 
@@ -280,6 +289,10 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if "nodes" in workflow:
             send("progress", message="Converting UI-format workflow to API format...")
             workflow = server.convert_ui_to_api_format(workflow)
+
+        if width and height:
+            apply_resolution(workflow, width, height)
+            send("progress", message=f"Resolution set to {width}×{height}")
 
         if randomize_seeds(workflow):
             send("progress", message="Randomized seed values")
@@ -497,6 +510,19 @@ def api_generate():
     server_os      = data.get("server_os") or COMFY_SERVER_OS
     workflow_name  = data.get("workflow") or COMFY_WORKFLOW
 
+    width  = data.get("width")
+    height = data.get("height")
+    if width is not None:
+        try:
+            width = int(width)
+        except (ValueError, TypeError):
+            return jsonify({"error": "width must be an integer"}), 400
+    if height is not None:
+        try:
+            height = int(height)
+        except (ValueError, TypeError):
+            return jsonify({"error": "height must be an integer"}), 400
+
     job_id = str(uuid.uuid4())
     with jobs_lock:
         jobs[job_id] = {"status": "pending", "queue": queue.Queue(), "images": []}
@@ -504,6 +530,7 @@ def api_generate():
     t = threading.Thread(
         target=run_generation,
         args=(job_id, prompt, loras, server_address, server_os, workflow_name),
+        kwargs={"width": width, "height": height},
         daemon=True,
     )
     t.start()
