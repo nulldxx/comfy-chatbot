@@ -1,6 +1,7 @@
 import re
 import os
 import json
+import random
 import uuid
 import queue
 import threading
@@ -93,6 +94,18 @@ def _rewire_references(workflow, removed_id, passthrough):
                 replacement = passthrough.get(value[1])
                 if replacement is not None:
                     node["inputs"][key] = replacement
+
+
+def randomize_seeds(workflow):
+    """Replace every seed/noise_seed input in an API-format workflow with a random value."""
+    randomized = 0
+    for node in workflow.values():
+        inputs = node.get("inputs", {})
+        for key in ("seed", "noise_seed"):
+            if isinstance(inputs.get(key), (int, float)):
+                inputs[key] = random.randint(0, 2**64 - 1)
+                randomized += 1
+    return randomized
 
 
 def lora_path_for_os(path, os_type):
@@ -210,6 +223,9 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if "nodes" in workflow:
             send("progress", message="Converting UI-format workflow to API format...")
             workflow = server.convert_ui_to_api_format(workflow)
+
+        if randomize_seeds(workflow):
+            send("progress", message="Randomized seed values")
 
         send("progress", message=f"Submitting to {server_address}...")
         prompt_id = server.submit_workflow(workflow)
