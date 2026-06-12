@@ -490,6 +490,7 @@ function exitFauxFs(el) {
 const SLASH_COMMANDS = [
   { cmd: '/addserver', desc: 'add a server  (name host:port:os)',  args: ' ' },
   { cmd: '/clear',     desc: 'clear the chat history',             args: ''  },
+  { cmd: '/delete',    desc: 'delete last image ("session" for all this session)', args: '' },
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
@@ -799,6 +800,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/delete [session]</code> — delete the last image, or all images from this session (chat + output folder)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow [today]</code> — browse all generated images, or only today's
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">← → keys on desktop &nbsp;·&nbsp; Del deletes the current image &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s</div>
@@ -949,6 +951,33 @@ function handleSlashCommand(raw) {
         activeSlideshowCtrl = createSlideshow(bubble, images);
       })
       .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
+    return;
+  }
+
+  if (cmd === '/delete') {
+    const scope = (parts[1] || '').toLowerCase();
+    if (scope && scope !== 'session') {
+      addMessage('bot', `Usage: <code>/delete</code> — delete the last image, or <code>/delete session</code> — delete all images from this session`);
+      return;
+    }
+    if (!sessionImages.length) {
+      addMessage('bot', 'No images from this session left to delete.');
+      return;
+    }
+    const targets = scope === 'session'
+      ? [...sessionImages]
+      : [sessionImages[sessionImages.length - 1]];
+    const bubble = addMessage('bot', '<div class="status-text">Deleting…</div>');
+    Promise.allSettled(targets.map(url =>
+      deleteImageFile(url).then(() => removeImageFromChat(url))
+    )).then(results => {
+      const failed = results.filter(r => r.status === 'rejected');
+      const ok = results.length - failed.length;
+      bubble.innerHTML = failed.length
+        ? `Deleted ${ok} image(s). <span style="color:#f87171">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`
+        : `Deleted ${ok} image(s).`;
+      scrollBottom();
+    });
     return;
   }
 
@@ -1182,6 +1211,29 @@ function doUpload(file, bubble) {
     });
 }
 
+// URLs of images generated this session, oldest first. Used by /delete.
+const sessionImages = [];
+
+// Deletes an image file from the server's output folder. Resolves on
+// success; a 404 also resolves since the file is already gone (e.g.
+// deleted via /slideshow).
+function deleteImageFile(url) {
+  const filename = url.split('/').pop();
+  return fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
+    .then(r => r.json().then(data => {
+      if (!r.ok && r.status !== 404) throw new Error(data.error || 'Delete failed');
+    }));
+}
+
+// Removes every chat copy of an image and forgets it from session tracking.
+function removeImageFromChat(url) {
+  messagesEl.querySelectorAll('.img-wrap img').forEach(img => {
+    if (img.getAttribute('src') === url) img.closest('.img-wrap').remove();
+  });
+  const i = sessionImages.indexOf(url);
+  if (i !== -1) sessionImages.splice(i, 1);
+}
+
 // Appends a generated image to a bubble with a trash-icon overlay that
 // deletes it from both the chat and the server's output folder.
 function appendChatImage(container, url) {
@@ -1200,14 +1252,8 @@ function appendChatImage(container, url) {
     e.stopPropagation();
     if (del.disabled) return;
     del.disabled = true;
-    const filename = url.split('/').pop();
-    fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
-      .then(r => r.json().then(data => {
-        // 404 means it's already gone (e.g. deleted via /slideshow) —
-        // still remove the stale copy from the chat.
-        if (!r.ok && r.status !== 404) throw new Error(data.error || 'Delete failed');
-        wrap.remove();
-      }))
+    deleteImageFile(url)
+      .then(() => removeImageFromChat(url))
       .catch(err => {
         del.disabled = false;
         del.innerHTML = '&#9888;&#xFE0E;';
@@ -1303,7 +1349,10 @@ function runGeneration(raw, label) {
         dotsEl.remove();
         barWrap.remove();
         statusLine.textContent = `Done — ${msg.images.length} image(s)${label}`;
-        msg.images.forEach(url => appendChatImage(botBubble, url));
+        msg.images.forEach(url => {
+          sessionImages.push(url);
+          appendChatImage(botBubble, url);
+        });
         scrollBottom();
         resolve(true);
 
