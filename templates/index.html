@@ -472,8 +472,9 @@ function exitFauxFs(el) {
 const SLASH_COMMANDS = [
   { cmd: '/addserver', desc: 'add a server  (name host:port:os)',  args: ' ' },
   { cmd: '/clear',     desc: 'clear the chat history',             args: ''  },
-  { cmd: '/help',      desc: 'show available commands',            args: ''  },
-  { cmd: '/lora',      desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
+  { cmd: '/help',       desc: 'show available commands',            args: ''  },
+  { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
+  { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
   { cmd: '/purge',     desc: 'free GPU memory on active server',   args: ''  },
   { cmd: '/server',    desc: 'choose a ComfyUI server',            args: ''  },
   { cmd: '/slideshow', desc: 'browse all generated images',        args: ''  },
@@ -610,6 +611,7 @@ const DEFAULT_WORKFLOW  = {{ default_workflow | tojson }};
 // Current selections (null = use backend default)
 let currentServer   = null;  // {address, os, name}
 let currentWorkflow = null;  // string
+let iterations      = 1;     // images generated per prompt (set via /iterations)
 
 // Auto-purge after inactivity
 const AUTO_PURGE_MS = 10 * 60 * 1000;
@@ -799,6 +801,7 @@ function handleSlashCommand(raw) {
             e.g. <code>/addserver mybox 192.168.1.50:8188:unix</code>
           </div>
         </div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/iterations &lt;n&gt;</code> — generate n images per prompt (default 1)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
@@ -984,6 +987,21 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/iterations') {
+    if (!parts[1]) {
+      addMessage('bot', `Each prompt currently generates <strong style="color:#a78bfa">${iterations}</strong> image(s).<br>Usage: <code>/iterations &lt;n&gt;</code> — e.g. <code>/iterations 8</code>`);
+      return;
+    }
+    const n = parseInt(parts[1], 10);
+    if (isNaN(n) || n < 1 || n > 64) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Iterations must be a number between 1 and 64.</span>');
+      return;
+    }
+    iterations = n;
+    addMessage('bot', `Each prompt will now generate <strong style="color:#a78bfa">${iterations}</strong> image(s)${n > 1 ? ', one after another' : ''}.`);
+    return;
+  }
+
   addMessage('bot', `Unknown command <code>${escapeHtml(cmd)}</code> — type <code>/help</code> for available commands.`);
 }
 
@@ -1161,8 +1179,25 @@ function sendMessage() {
   inputEl.style.height = 'auto';
   sendBtn.disabled = true;
 
+  cancelAutoPurge();
+
+  (async () => {
+    for (let i = 0; i < iterations; i++) {
+      const label = iterations > 1 ? ` (${i + 1}/${iterations})` : '';
+      const ok = await runGeneration(raw, label);
+      if (!ok) break;   // a failed run would likely just fail again
+    }
+    sendBtn.disabled = false;
+    scheduleAutoPurge();
+  })();
+}
+
+// Runs one generation job in its own bot bubble. Resolves true on success,
+// false on any failure — it never rejects; errors are rendered in the bubble.
+function runGeneration(raw, label) {
+  return new Promise(resolve => {
   const botBubble = addMessage('bot', `
-    <div class="status-text" id="status-line">Connecting…</div>
+    <div class="status-text" id="status-line">Connecting…${label}</div>
     <div class="dots"><span></span><span></span><span></span></div>
     <div class="progress-bar-wrap"><div class="progress-bar"></div></div>
   `);
@@ -1170,8 +1205,6 @@ function sendMessage() {
   const statusLine = botBubble.querySelector('#status-line');
   const dotsEl     = botBubble.querySelector('.dots');
   const barWrap    = botBubble.querySelector('.progress-bar-wrap');
-
-  cancelAutoPurge();
 
   fetch('/api/generate', {
     method: 'POST',
@@ -1192,23 +1225,22 @@ function sendMessage() {
       const msg = JSON.parse(e.data);
 
       if (msg.type === 'progress') {
-        statusLine.textContent = msg.message;
+        statusLine.textContent = msg.message + label;
         scrollBottom();
 
       } else if (msg.type === 'done') {
         es.close();
         dotsEl.remove();
         barWrap.remove();
-        statusLine.textContent = `Done — ${msg.images.length} image(s)`;
+        statusLine.textContent = `Done — ${msg.images.length} image(s)${label}`;
         msg.images.forEach(url => {
           const img = document.createElement('img');
           img.src = url;
           img.alt = 'Generated image';
           botBubble.appendChild(img);
         });
-        sendBtn.disabled = false;
         scrollBottom();
-        scheduleAutoPurge();
+        resolve(true);
 
       } else if (msg.type === 'error') {
         es.close();
@@ -1216,9 +1248,8 @@ function sendMessage() {
         barWrap.remove();
         statusLine.textContent = '';
         botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
-        sendBtn.disabled = false;
         scrollBottom();
-        scheduleAutoPurge();
+        resolve(false);
       }
       // 'tick' and 'ping' need no UI update
     };
@@ -1228,7 +1259,7 @@ function sendMessage() {
       if (dotsEl.parentNode) dotsEl.remove();
       if (barWrap.parentNode) barWrap.remove();
       botBubble.innerHTML += `<span style="color:#f87171">⚠ Connection lost — check server logs.</span>`;
-      sendBtn.disabled = false;
+      resolve(false);
     };
   })
   .catch(err => {
@@ -1236,7 +1267,8 @@ function sendMessage() {
     if (barWrap.parentNode) barWrap.remove();
     statusLine.textContent = '';
     botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
-    sendBtn.disabled = false;
+    resolve(false);
+  });
   });
 }
 
