@@ -987,10 +987,20 @@ function handleSlashCommand(raw) {
     )).then(results => {
       const failed = results.filter(r => r.status === 'rejected');
       const ok = results.length - failed.length;
-      bubble.innerHTML = failed.length
-        ? `Deleted ${ok} image(s). <span style="color:#f87171">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`
-        : `Deleted ${ok} image(s).`;
-      scrollBottom();
+      if (scope === 'session' && !failed.length) {
+        history.length = 0;
+        historyIdx = -1;
+        savedDraft = '';
+        fauxFullscreenEls.clear();
+        document.body.style.overflow = '';
+        messagesEl.innerHTML = '';
+        addMessage('bot', 'Chat cleared. Describe the image you\'d like to generate.');
+      } else {
+        bubble.innerHTML = failed.length
+          ? `Deleted ${ok} image(s). <span style="color:#f87171">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`
+          : `Deleted ${ok} image(s).`;
+        scrollBottom();
+      }
     });
     return;
   }
