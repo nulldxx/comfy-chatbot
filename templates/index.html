@@ -385,7 +385,7 @@ const lightbox   = document.getElementById('lightbox');
 const lbImg      = document.getElementById('lightbox-img');
 
 // Lightbox pinch-to-zoom state
-let lbScale = 1, lbTx = 0, lbTy = 0;
+let lbScale = 1, lbTx = 0, lbTy = 0, lbDragY = 0;
 let lbNatLeft = 0, lbNatTop = 0;
 let lbPinchStart = null, lbPanStart = null, lbLastTap = 0;
 
@@ -395,8 +395,9 @@ function lbApplyTransform() {
   lbImg.style.cursor = lbScale > 1 ? 'grab' : 'zoom-in';
 }
 function lbReset() {
-  lbScale = 1; lbTx = 0; lbTy = 0; lbPinchStart = null; lbPanStart = null;
+  lbScale = 1; lbTx = 0; lbTy = 0; lbDragY = 0; lbPinchStart = null; lbPanStart = null;
   lbImg.style.transform = lbImg.style.transformOrigin = lbImg.style.cursor = '';
+  lightbox.style.background = '';
 }
 function openLightbox(src) {
   lbReset();
@@ -451,10 +452,16 @@ lbImg.addEventListener('touchmove', e => {
     lbTx = (lbPinchStart.mx - lbNatLeft) * (1 - ratio) + lbPinchStart.tx * ratio;
     lbTy = (lbPinchStart.my - lbNatTop)  * (1 - ratio) + lbPinchStart.ty * ratio;
     lbApplyTransform();
-  } else if (e.touches.length === 1 && lbPanStart && lbScale > 1) {
-    lbTx = lbPanStart.tx + e.touches[0].clientX - lbPanStart.x;
-    lbTy = lbPanStart.ty + e.touches[0].clientY - lbPanStart.y;
-    lbApplyTransform();
+  } else if (e.touches.length === 1 && lbPanStart) {
+    if (lbScale > 1) {
+      lbTx = lbPanStart.tx + e.touches[0].clientX - lbPanStart.x;
+      lbTy = lbPanStart.ty + e.touches[0].clientY - lbPanStart.y;
+      lbApplyTransform();
+    } else {
+      lbDragY = e.touches[0].clientY - lbPanStart.y;
+      lbImg.style.transform = `translateY(${lbDragY}px)`;
+      lightbox.style.background = `rgba(0,0,0,${Math.max(0, 0.88 - Math.abs(lbDragY) / 400)})`;
+    }
   }
 }, { passive: false });
 
@@ -465,8 +472,19 @@ lbImg.addEventListener('touchend', e => {
     const t = e.touches[0];
     lbPanStart = { x: t.clientX, y: t.clientY, tx: lbTx, ty: lbTy };
   } else if (e.touches.length === 0) {
+    const dy = lbDragY;
     lbPanStart = null;
-    if (lbScale < 1.05) lbReset();
+    if (lbScale < 1.05 && Math.abs(dy) > 80) {
+      closeLightbox();
+    } else if (lbScale < 1.05 && dy !== 0) {
+      // Snap back with animation
+      lbImg.style.transition = 'transform 0.2s ease-out';
+      lightbox.style.transition = 'background 0.2s ease-out';
+      lbReset();
+      setTimeout(() => { lbImg.style.transition = ''; lightbox.style.transition = ''; }, 220);
+    } else if (lbScale < 1.05) {
+      lbReset();
+    }
   }
 });
 const slashAcEl  = document.getElementById('slash-ac');
