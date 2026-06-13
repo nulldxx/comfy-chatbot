@@ -490,7 +490,8 @@ function exitFauxFs(el) {
 const SLASH_COMMANDS = [
   { cmd: '/addserver',  desc: 'add a server  (name host:port:os)',  args: ' ' },
   { cmd: '/clear',      desc: 'clear the chat history',             args: ''  },
-  { cmd: '/delete',     desc: 'delete last image ("session" for all this session)', args: '' },
+  { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
+  { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
@@ -835,7 +836,8 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/delete [session]</code> — delete the last image, or all images from this session (chat + output folder)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-session</code> — delete all images from this session (chat + output folder)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow [today]</code> — browse all generated images, or only today's
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">← → keys on desktop &nbsp;·&nbsp; Del deletes the current image &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s</div>
@@ -990,25 +992,36 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/delete') {
-    const scope = (parts[1] || '').toLowerCase();
-    if (scope && scope !== 'session') {
-      addMessage('bot', `Usage: <code>/delete</code> — delete the last image, or <code>/delete session</code> — delete all images from this session`);
-      return;
-    }
     if (!sessionImages.length) {
       addMessage('bot', 'No images from this session left to delete.');
       return;
     }
-    const targets = scope === 'session'
-      ? [...sessionImages]
-      : [sessionImages[sessionImages.length - 1]];
+    const url = sessionImages[sessionImages.length - 1];
+    const bubble = addMessage('bot', '<div class="status-text">Deleting…</div>');
+    deleteImageFile(url).then(() => {
+      removeImageFromChat(url);
+      bubble.innerHTML = 'Deleted 1 image.';
+      scrollBottom();
+    }).catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
+      scrollBottom();
+    });
+    return;
+  }
+
+  if (cmd === '/delete-session') {
+    if (!sessionImages.length) {
+      addMessage('bot', 'No images from this session left to delete.');
+      return;
+    }
+    const targets = [...sessionImages];
     const bubble = addMessage('bot', '<div class="status-text">Deleting…</div>');
     Promise.allSettled(targets.map(url =>
       deleteImageFile(url).then(() => removeImageFromChat(url))
     )).then(results => {
       const failed = results.filter(r => r.status === 'rejected');
       const ok = results.length - failed.length;
-      if (scope === 'session' && !failed.length) {
+      if (!failed.length) {
         history.length = 0;
         historyIdx = -1;
         savedDraft = '';
@@ -1017,9 +1030,7 @@ function handleSlashCommand(raw) {
         messagesEl.innerHTML = '';
         addMessage('bot', 'Chat cleared. Describe the image you\'d like to generate.');
       } else {
-        bubble.innerHTML = failed.length
-          ? `Deleted ${ok} image(s). <span style="color:#f87171">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`
-          : `Deleted ${ok} image(s).`;
+        bubble.innerHTML = `Deleted ${ok} image(s). <span style="color:#f87171">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`;
         scrollBottom();
       }
     });
