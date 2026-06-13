@@ -1120,14 +1120,15 @@ function handleSlashCommand(raw) {
     }
     if (arg === 'phone' || arg === 'iphone') {
       const dpr  = window.devicePixelRatio || 1;
-      const vp   = window.visualViewport;
-      const cssW = vp ? vp.width  : window.innerWidth;
-      const cssH = vp ? vp.height : window.innerHeight;
-      // Snap to nearest multiple of 8 (ComfyUI model requirement)
-      const snap = v => Math.round(v * dpr / 8) * 8;
-      const w = snap(cssW), h = snap(cssH);
+      // Use screen dimensions — unlike visualViewport/innerHeight these are
+      // unaffected by the on-screen keyboard being open when the command is typed.
+      const snap = v => Math.round(v / 8) * 8;
+      const physW = snap(window.screen.width  * dpr);
+      const physH = snap(window.screen.height * dpr);
+      // Always portrait (width < height)
+      const w = Math.min(physW, physH), h = Math.max(physW, physH);
       currentResolution = { width: w, height: h };
-      addMessage('bot', `Resolution set to <strong style="color:#a78bfa">${w}×${h}</strong> (measured from this device's viewport, ${dpr}× DPR).`);
+      addMessage('bot', `Resolution set to <strong style="color:#a78bfa">${w}×${h}</strong> (this device's screen in portrait, ${dpr}× DPR).`);
       return;
     }
     const preset = RESOLUTION_PRESETS[arg];
