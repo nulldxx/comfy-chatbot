@@ -632,7 +632,7 @@ const DEFAULT_WORKFLOW  = {{ default_workflow | tojson }};
 
 // Named resolution presets
 const RESOLUTION_PRESETS = {
-  iphone:  { width: 2556, height: 1179, label: 'iPhone 14 portrait (2556×1179)' },
+  iphone:  { width: 1179, height: 2556, label: 'iPhone 14 portrait (1179×2556)' },
   ipad:    { width: 2048, height: 2732, label: 'iPad Pro portrait (2048×2732)'   },
   hd:      { width: 1280, height:  720, label: 'HD 720p (1280×720)'              },
   fhd:     { width: 1920, height: 1080, label: 'Full HD 1080p (1920×1080)'       },
@@ -829,7 +829,7 @@ function handleSlashCommand(raw) {
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/iterations &lt;n&gt;</code> — generate n images per prompt (default 1)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/resolution &lt;WxH&gt;</code> — set output resolution, e.g. <code>/resolution 640x480</code> or <code>/resolution iphone</code>
-          <div style="margin-top:2px;color:#475569;font-size:0.78rem">Named presets: iphone, ipad, hd, fhd, square &nbsp;·&nbsp; <code>/resolution reset</code> restores workflow default</div>
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">Named presets: iphone, ipad, hd, fhd, square &nbsp;·&nbsp; <code>/resolution flip</code> swaps W/H &nbsp;·&nbsp; <code>/resolution reset</code> restores workflow default</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/multi</code> — generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)</div>
@@ -1083,12 +1083,22 @@ function handleSlashCommand(raw) {
       addMessage('bot', `Current resolution: ${cur}<br>
         Usage: <code>/resolution &lt;WxH&gt;</code> — e.g. <code>/resolution 640x480</code><br>
         Named presets: ${Object.keys(RESOLUTION_PRESETS).map(k => `<code>${k}</code>`).join(', ')}<br>
-        <code>/resolution reset</code> — restore workflow default`);
+        <code>/resolution flip</code> — swap width and height &nbsp;·&nbsp; <code>/resolution reset</code> — restore workflow default`);
       return;
     }
     if (arg === 'reset') {
       currentResolution = null;
       addMessage('bot', 'Resolution reset to workflow default.');
+      return;
+    }
+    if (arg === 'flip') {
+      if (!currentResolution) {
+        addMessage('bot', '<span style="color:#f87171">⚠ No resolution set — use <code>/resolution &lt;WxH&gt;</code> or a preset first.</span>');
+        return;
+      }
+      const { width: w, height: h } = currentResolution;
+      currentResolution = { width: h, height: w };
+      addMessage('bot', `Resolution flipped to <strong style="color:#a78bfa">${h}×${w}</strong>.`);
       return;
     }
     const preset = RESOLUTION_PRESETS[arg];
