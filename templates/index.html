@@ -494,6 +494,7 @@ const SLASH_COMMANDS = [
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
+  { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
   { cmd: '/purge',      desc: 'free GPU memory on active server',   args: ''  },
   { cmd: '/resolution', desc: 'set output resolution (e.g. 640x480 or iphone)', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
@@ -791,6 +792,25 @@ function handleSlashCommand(raw) {
   const parts = raw.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
 
+  if (cmd === '/multi') {
+    const lines = raw.slice('/multi'.length).split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length) {
+      addMessage('user', escapeHtml(raw), null);
+      addMessage('bot', '<span style="color:#f87171">⚠ Paste line-separated prompts after <code>/multi</code> (use Shift+Enter between lines)</span>');
+      return;
+    }
+    sendBtn.disabled = true;
+    (async () => {
+      for (const prompt of lines) {
+        addMessage('user', escapeHtml(prompt), prompt);
+        const ok = await runGeneration(prompt, '');
+        if (!ok) break;
+      }
+      sendBtn.disabled = false;
+    })();
+    return;
+  }
+
   addMessage('user', escapeHtml(raw), raw);
 
   if (cmd === '/help') {
@@ -811,6 +831,7 @@ function handleSlashCommand(raw) {
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">Named presets: iphone, ipad, hd, fhd, square &nbsp;·&nbsp; <code>/resolution reset</code> restores workflow default</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/multi</code> — generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
