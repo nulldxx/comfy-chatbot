@@ -515,7 +515,7 @@ const SLASH_COMMANDS = [
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
   { cmd: '/purge',      desc: 'free GPU memory on active server',   args: ''  },
-  { cmd: '/resolution', desc: 'set output resolution (e.g. 640x480 or iphone)', args: ' ' },
+  { cmd: '/resolution', desc: 'set output resolution (e.g. 640x480 or phone)', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
   { cmd: '/slideshow',  desc: 'browse generated images (all or today)', args: ' ' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
@@ -650,7 +650,6 @@ const DEFAULT_WORKFLOW  = {{ default_workflow | tojson }};
 
 // Named resolution presets
 const RESOLUTION_PRESETS = {
-  iphone:  { width: 1179, height: 2556, label: 'iPhone 14 portrait (1179×2556)' },
   ipad:    { width: 2048, height: 2732, label: 'iPad Pro portrait (2048×2732)'   },
   hd:      { width: 1280, height:  720, label: 'HD 720p (1280×720)'              },
   fhd:     { width: 1920, height: 1080, label: 'Full HD 1080p (1920×1080)'       },
@@ -846,8 +845,8 @@ function handleSlashCommand(raw) {
           </div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/iterations &lt;n&gt;</code> — generate n images per prompt (default 1)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/resolution &lt;WxH&gt;</code> — set output resolution, e.g. <code>/resolution 640x480</code> or <code>/resolution iphone</code>
-          <div style="margin-top:2px;color:#475569;font-size:0.78rem">Named presets: iphone, ipad, hd, fhd, square &nbsp;·&nbsp; <code>/resolution flip</code> swaps W/H &nbsp;·&nbsp; <code>/resolution reset</code> restores workflow default</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/resolution &lt;WxH&gt;</code> — set output resolution, e.g. <code>/resolution 640x480</code> or <code>/resolution phone</code>
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem"><code>phone</code> (or <code>iphone</code>) measures this device's viewport &nbsp;·&nbsp; presets: ipad, hd, fhd, square &nbsp;·&nbsp; <code>/resolution flip</code> swaps W/H &nbsp;·&nbsp; <code>/resolution reset</code> restores workflow default</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/multi</code> — generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)</div>
@@ -1100,7 +1099,7 @@ function handleSlashCommand(raw) {
         : 'workflow default';
       addMessage('bot', `Current resolution: ${cur}<br>
         Usage: <code>/resolution &lt;WxH&gt;</code> — e.g. <code>/resolution 640x480</code><br>
-        Named presets: ${Object.keys(RESOLUTION_PRESETS).map(k => `<code>${k}</code>`).join(', ')}<br>
+        <code>phone</code> — measures this device's viewport (alias: <code>iphone</code>) &nbsp;·&nbsp; presets: ${Object.keys(RESOLUTION_PRESETS).map(k => `<code>${k}</code>`).join(', ')}<br>
         <code>/resolution flip</code> — swap width and height &nbsp;·&nbsp; <code>/resolution reset</code> — restore workflow default`);
       return;
     }
@@ -1117,6 +1116,18 @@ function handleSlashCommand(raw) {
       const { width: w, height: h } = currentResolution;
       currentResolution = { width: h, height: w };
       addMessage('bot', `Resolution flipped to <strong style="color:#a78bfa">${h}×${w}</strong>.`);
+      return;
+    }
+    if (arg === 'phone' || arg === 'iphone') {
+      const dpr  = window.devicePixelRatio || 1;
+      const vp   = window.visualViewport;
+      const cssW = vp ? vp.width  : window.innerWidth;
+      const cssH = vp ? vp.height : window.innerHeight;
+      // Snap to nearest multiple of 8 (ComfyUI model requirement)
+      const snap = v => Math.round(v * dpr / 8) * 8;
+      const w = snap(cssW), h = snap(cssH);
+      currentResolution = { width: w, height: h };
+      addMessage('bot', `Resolution set to <strong style="color:#a78bfa">${w}×${h}</strong> (measured from this device's viewport, ${dpr}× DPR).`);
       return;
     }
     const preset = RESOLUTION_PRESETS[arg];
