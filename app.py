@@ -1,7 +1,6 @@
 import re
 import os
 import json
-import random
 import uuid
 import queue
 import threading
@@ -14,6 +13,12 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 from ComfyServer import ComfyServer
+from workflow import (
+    LORA_TAG_RE, LORA_PLACEHOLDER_RE,
+    apply_placeholders, find_placeholders, fill_lora_sentinels,
+    strip_lora_nodes, randomize_seeds, lora_path_for_os,
+    apply_resolution, fill_placeholders_for_validation,
+)
 
 app = Flask(__name__)
 
@@ -46,79 +51,6 @@ jobs_lock = threading.Lock()
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
 purge_state: dict = {}  # server_address -> {"timer": threading.Timer | None, "active": int}
 purge_lock = threading.Lock()
-
-# Template placeholder constants (mirrors comfy-runworkflow)
-PLACEHOLDER_RE = re.compile(r"<[A-Z0-9_]+>")
-LORA_PLACEHOLDER_RE = re.compile(r"<LORA_\d+_(?:NAME|STRENGTH)>")
-LORA_NAME_SENTINEL = "__LORA_UNSET__"
-
-# User-facing LoRA tag: <lora:name> or <lora:name:strength>
-LORA_TAG_RE = re.compile(r'<lora:([^:>\s]+)(?::([0-9.]+))?>', re.IGNORECASE)
-
-
-# ---------------------------------------------------------------------------
-# Workflow helper functions (ported from comfy-runworkflow)
-# ---------------------------------------------------------------------------
-
-def apply_placeholders(text, mapping):
-    for key, value in mapping.items():
-        escaped = json.dumps(str(value))[1:-1]
-        text = text.replace(f"<{key}>", escaped)
-    return text
-
-
-def find_placeholders(text):
-    return sorted(set(PLACEHOLDER_RE.findall(text)))
-
-
-def fill_lora_sentinels(text):
-    text = re.sub(r"<LORA_\d+_NAME>", LORA_NAME_SENTINEL, text)
-    text = re.sub(r"<LORA_\d+_STRENGTH>", "0", text)
-    return text
-
-
-def strip_lora_nodes(workflow):
-    removed = [
-        node_id
-        for node_id, node in workflow.items()
-        if node.get("inputs", {}).get("lora_name") == LORA_NAME_SENTINEL
-    ]
-    for node_id in removed:
-        inputs = workflow[node_id].get("inputs", {})
-        passthrough = {0: inputs.get("model")}
-        if "clip" in inputs:
-            passthrough[1] = inputs.get("clip")
-        del workflow[node_id]
-        _rewire_references(workflow, node_id, passthrough)
-    return workflow, removed
-
-
-def _rewire_references(workflow, removed_id, passthrough):
-    for node in workflow.values():
-        for key, value in node.get("inputs", {}).items():
-            if isinstance(value, list) and len(value) == 2 and value[0] == removed_id:
-                replacement = passthrough.get(value[1])
-                if replacement is not None:
-                    node["inputs"][key] = replacement
-
-
-def randomize_seeds(workflow):
-    """Replace every seed/noise_seed input in an API-format workflow with a random value."""
-    randomized = 0
-    for node in workflow.values():
-        inputs = node.get("inputs", {})
-        for key in ("seed", "noise_seed"):
-            if isinstance(inputs.get(key), (int, float)):
-                inputs[key] = random.randint(0, 2**64 - 1)
-                randomized += 1
-    return randomized
-
-
-def lora_path_for_os(path, os_type):
-    if os_type == "windows":
-        return path.replace("/", "\\")
-    return path
-
 
 # ---------------------------------------------------------------------------
 # LoRA helpers
@@ -224,15 +156,6 @@ def cancel_auto_purge(server_address):
 # ---------------------------------------------------------------------------
 # Background generation thread
 # ---------------------------------------------------------------------------
-
-def apply_resolution(workflow, width, height):
-    """Set width/height on every workflow node that exposes both as inputs."""
-    for node in workflow.values():
-        inputs = node.get("inputs", {})
-        if "width" in inputs and "height" in inputs:
-            inputs["width"] = width
-            inputs["height"] = height
-
 
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name, width=None, height=None):
     with jobs_lock:
@@ -460,13 +383,6 @@ def api_purge():
     return jsonify({"ok": True})
 
 
-def _fill_placeholders_for_validation(text):
-    """Replace template tokens with dummy values so the file parses as JSON."""
-    text = re.sub(r"<LORA_\d+_STRENGTH>", "1.0", text)   # unquoted numeric slots
-    text = re.sub(r"<[A-Z0-9_]+>", "placeholder", text)   # all remaining string slots
-    return text
-
-
 @app.route("/api/upload-workflow", methods=["POST"])
 @login_required
 def api_upload_workflow():
@@ -480,7 +396,7 @@ def api_upload_workflow():
 
     content = f.read()
     try:
-        json.loads(_fill_placeholders_for_validation(content.decode("utf-8")))
+        json.loads(fill_placeholders_for_validation(content.decode("utf-8")))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         return jsonify({"error": f"Invalid workflow file: {e}"}), 400
 
