@@ -27,8 +27,11 @@ COPY --from=builder /root/.local /usr/local
 # Copy application code
 COPY app.py .
 COPY ComfyServer.py .
+COPY workflow.py .
+COPY grok.py .
 COPY gunicorn.conf.py .
 COPY templates/ templates/
+COPY static/ static/
 
 # Create a non-root user for security
 RUN adduser --disabled-password --gecos '' appuser && \
