@@ -278,6 +278,7 @@ let currentServer     = null;  // {address, os, name}
 let currentWorkflow   = null;  // string
 let currentResolution = null;  // {width, height} or null
 let iterations        = 1;     // images generated per prompt (set via /iterations)
+let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
 
 // Auto-purge of idle GPU memory is handled server-side (see app.py),
@@ -435,6 +436,7 @@ function handleSlashCommand(raw) {
       addMessage('bot', '<span style="color:#f87171">⚠ Paste line-separated prompts after <code>/multi</code> (use Shift+Enter between lines)</span>');
       return;
     }
+    iterationsFromSequence = false; // /multi is a prompt, not a sequence — drop any borrowed count
     sendBtn.disabled = true;
     (async () => {
       for (const prompt of lines) {
@@ -457,6 +459,10 @@ function handleSlashCommand(raw) {
     // Number of prompts comes from /iterations, but 1 is never right for a
     // sequence, so fall back to 15 in that case.
     const count = iterations === 1 ? 15 : iterations;
+    // The sequence has borrowed `iterations` as its prompt count. Flag it so the
+    // next non-sequence prompt resets back to 1 instead of silently generating
+    // `count` images.
+    iterationsFromSequence = true;
     sendBtn.disabled = true;
     const statusBubble = addMessage('bot', `
       <div class="status-text">Asking Grok for ${count} prompt(s)…</div>
@@ -854,6 +860,7 @@ function handleSlashCommand(raw) {
       return;
     }
     iterations = n;
+    iterationsFromSequence = false; // explicit user choice — don't auto-reset it later
     addMessage('bot', `Each prompt will now generate <strong style="color:#a78bfa">${iterations}</strong> image(s)${n > 1 ? ', one after another' : ''}.`);
     return;
   }
@@ -1117,6 +1124,14 @@ function sendMessage() {
   if (history[0] !== raw) history.unshift(raw);
   historyIdx = -1;
   savedDraft = '';
+
+  // A /sequence borrowed `iterations` as its prompt count. A plain prompt isn't
+  // a sequence, so reset to 1 before generating — otherwise it would silently
+  // produce a whole sequence's worth of images.
+  if (iterationsFromSequence) {
+    iterations = 1;
+    iterationsFromSequence = false;
+  }
 
   addMessage('user', escapeHtml(raw), raw);
   inputEl.value = '';
