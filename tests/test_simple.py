@@ -84,6 +84,18 @@ class TestComfyChatbot(unittest.TestCase):
         data = response.get_json()
         self.assertIn('error', data)
 
+    def test_cancel_requires_auth(self):
+        response = self.client.post('/api/cancel/some-job-id')
+        self.assertEqual(response.status_code, 302)
+
+    def test_cancel_unknown_job(self):
+        with self.client.session_transaction() as sess:
+            sess['authenticated'] = True
+        response = self.client.post('/api/cancel/does-not-exist')
+        self.assertEqual(response.status_code, 404)
+        data = response.get_json()
+        self.assertIn('error', data)
+
     def test_logout(self):
         with self.client.session_transaction() as sess:
             sess['authenticated'] = True

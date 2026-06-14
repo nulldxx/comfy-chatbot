@@ -1147,6 +1147,16 @@ function runGeneration(raw, label) {
   const dotsEl     = botBubble.querySelector('.dots');
   const barWrap    = botBubble.querySelector('.progress-bar-wrap');
 
+  // ✕ cancel button — enabled once we have a job_id, removed when the job
+  // ends (done/error/cancelled). Lives on the bubble (not the status line,
+  // whose textContent is rewritten on every progress update).
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'cancel-btn';
+  cancelBtn.title = 'Cancel this job';
+  cancelBtn.textContent = '✕';
+  cancelBtn.disabled = true;
+  botBubble.appendChild(cancelBtn);
+
   fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1161,6 +1171,14 @@ function runGeneration(raw, label) {
   .then(data => {
     if (data.error) throw new Error(data.error);
 
+    // Now we have a job_id, the ✕ can actually cancel it.
+    cancelBtn.disabled = false;
+    cancelBtn.addEventListener('click', () => {
+      cancelBtn.disabled = true;
+      statusLine.textContent = 'Cancelling…' + label;
+      fetch('/api/cancel/' + data.job_id, { method: 'POST' }).catch(() => {});
+    });
+
     const es = new EventSource(`/api/progress/${data.job_id}`);
 
     es.onmessage = e => {
@@ -1174,6 +1192,7 @@ function runGeneration(raw, label) {
         es.close();
         dotsEl.remove();
         barWrap.remove();
+        cancelBtn.remove();
         statusLine.textContent = `Done — ${msg.images.length} image(s)${label}`;
         msg.images.forEach(url => {
           sessionImages.push(url);
@@ -1182,10 +1201,20 @@ function runGeneration(raw, label) {
         scrollBottom();
         resolve(true);
 
+      } else if (msg.type === 'cancelled') {
+        es.close();
+        dotsEl.remove();
+        barWrap.remove();
+        cancelBtn.remove();
+        statusLine.textContent = 'Cancelled' + label;
+        scrollBottom();
+        resolve(false);
+
       } else if (msg.type === 'error') {
         es.close();
         dotsEl.remove();
         barWrap.remove();
+        cancelBtn.remove();
         statusLine.textContent = '';
         botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
         scrollBottom();
@@ -1198,6 +1227,7 @@ function runGeneration(raw, label) {
       es.close();
       if (dotsEl.parentNode) dotsEl.remove();
       if (barWrap.parentNode) barWrap.remove();
+      cancelBtn.remove();
       botBubble.innerHTML += `<span style="color:#f87171">⚠ Connection lost — check server logs.</span>`;
       resolve(false);
     };
@@ -1205,6 +1235,7 @@ function runGeneration(raw, label) {
   .catch(err => {
     if (dotsEl.parentNode) dotsEl.remove();
     if (barWrap.parentNode) barWrap.remove();
+    cancelBtn.remove();
     statusLine.textContent = '';
     botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
     resolve(false);

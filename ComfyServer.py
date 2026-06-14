@@ -11,6 +11,10 @@ from pathlib import Path
 import requests
 
 
+class JobCancelled(Exception):
+    """Raised when a job is cancelled while polling for completion."""
+
+
 class ComfyServer:
     """Main interface to ComfyUI server."""
 
@@ -163,7 +167,7 @@ class ComfyServer:
         except requests.exceptions.RequestException as e:
             raise requests.exceptions.RequestException(f"Error connecting to server: {e}")
 
-    def poll_status(self, prompt_id, timeout=600, callback=None):
+    def poll_status(self, prompt_id, timeout=600, callback=None, cancel_event=None):
         """
         Poll workflow execution status until completion or timeout.
 
@@ -171,6 +175,7 @@ class ComfyServer:
             prompt_id: Prompt ID returned from submit_workflow
             timeout: Maximum wait time in seconds
             callback: Optional callback function for status updates
+            cancel_event: Optional threading.Event; when set, polling aborts
 
         Returns:
             dict: Completed prompt data with outputs
@@ -178,12 +183,16 @@ class ComfyServer:
         Raises:
             TimeoutError: If execution exceeds timeout
             RuntimeError: If execution fails
+            JobCancelled: If cancel_event is set during polling
         """
         url = f"http://{self.server}/history/{prompt_id}"
         start_time = time.time()
         last_status = None
 
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise JobCancelled()
+
             # Check timeout
             elapsed = time.time() - start_time
             if elapsed > timeout:
@@ -315,6 +324,28 @@ class ComfyServer:
             response = requests.post(url, json=payload, timeout=15)
             if response.status_code not in (200, 204):
                 raise RuntimeError(f"Server returned {response.status_code}: {response.text}")
+        except requests.exceptions.RequestException as e:
+            raise requests.exceptions.RequestException(f"Error connecting to server: {e}")
+
+    def interrupt(self, prompt_id=None):
+        """
+        Ask ComfyUI to stop the running prompt (and drop it from the queue if
+        it hasn't started yet).
+
+        Args:
+            prompt_id: Optional prompt ID to also remove from the pending queue
+
+        Raises:
+            requests.exceptions.RequestException: On connection error
+        """
+        try:
+            requests.post(f"http://{self.server}/interrupt", json={}, timeout=15)
+            if prompt_id:
+                requests.post(
+                    f"http://{self.server}/queue",
+                    json={"delete": [prompt_id]},
+                    timeout=15,
+                )
         except requests.exceptions.RequestException as e:
             raise requests.exceptions.RequestException(f"Error connecting to server: {e}")
 

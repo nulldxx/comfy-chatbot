@@ -12,7 +12,7 @@ from flask import (
     session, redirect, url_for, Response, send_from_directory,
 )
 from werkzeug.utils import secure_filename
-from ComfyServer import ComfyServer
+from ComfyServer import ComfyServer, JobCancelled
 from grok import generate_prompt_sequence, GrokError
 from workflow import (
     LORA_TAG_RE, LORA_PLACEHOLDER_RE,
@@ -161,6 +161,7 @@ def cancel_auto_purge(server_address):
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name, width=None, height=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
+        cancel_event = jobs[job_id]["cancel"]
 
     def send(msg_type, **kwargs):
         q.put(json.dumps({"type": msg_type, **kwargs}))
@@ -221,11 +222,16 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if randomize_seeds(workflow):
             send("progress", message="Randomized seed values")
 
+        if cancel_event.is_set():
+            raise JobCancelled()
+
         send("progress", message=f"Submitting to {server_address}...")
         prompt_id = server.submit_workflow(workflow)
+        with jobs_lock:
+            jobs[job_id]["prompt_id"] = prompt_id
         send("progress", message=f"Queued (ID: {prompt_id[:8]}…) — generating")
 
-        prompt_data = server.poll_status(prompt_id, 600, progress)
+        prompt_data = server.poll_status(prompt_id, 600, progress, cancel_event=cancel_event)
         send("progress", message="Downloading images...")
 
         images = server.get_output_images(prompt_data)
@@ -252,6 +258,10 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
 
         send("done", images=image_urls)
 
+    except JobCancelled:
+        with jobs_lock:
+            jobs[job_id]["status"] = "cancelled"
+        send("cancelled", message="Cancelled")
     except Exception as e:
         with jobs_lock:
             jobs[job_id]["status"] = "error"
@@ -442,7 +452,14 @@ def api_generate():
 
     job_id = str(uuid.uuid4())
     with jobs_lock:
-        jobs[job_id] = {"status": "pending", "queue": queue.Queue(), "images": []}
+        jobs[job_id] = {
+            "status": "pending",
+            "queue": queue.Queue(),
+            "images": [],
+            "cancel": threading.Event(),
+            "server": server_address,
+            "prompt_id": None,
+        }
 
     t = threading.Thread(
         target=run_generation,
@@ -495,6 +512,26 @@ def api_sequence():
     return jsonify({"prompts": out})
 
 
+@app.route("/api/cancel/<job_id>", methods=["POST"])
+@login_required
+def api_cancel(job_id):
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    job["cancel"].set()
+    prompt_id = job.get("prompt_id")
+    if prompt_id:
+        try:
+            ComfyServer(job["server"]).interrupt(prompt_id)
+        except Exception as e:
+            # Best-effort: the poll loop still aborts via the cancel event.
+            print(f"Interrupt failed for {job['server']}/{prompt_id}: {e}", flush=True)
+
+    return jsonify({"ok": True})
+
+
 @app.route("/api/progress/<job_id>")
 @login_required
 def api_progress(job_id):
@@ -510,7 +547,7 @@ def api_progress(job_id):
                 msg = q.get(timeout=25)
                 yield f"data: {msg}\n\n"
                 parsed = json.loads(msg)
-                if parsed.get("type") in ("done", "error"):
+                if parsed.get("type") in ("done", "error", "cancelled"):
                     break
             except queue.Empty:
                 yield f"data: {json.dumps({'type': 'ping'})}\n\n"
