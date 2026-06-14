@@ -159,6 +159,37 @@ header a:hover { color: #a78bfa; }
   .img-del { opacity: 0.6; }
 }
 
+/* Review grid (/review) */
+.review-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+.review-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.review-thumb img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  cursor: pointer;
+  -webkit-user-drag: none;
+}
+.review-del {
+  position: absolute;
+  top: 4px; right: 4px;
+  padding: 3px 6px;          /* tighter than the in-chat trashcan */
+  font-size: 0.8rem;
+}
+.review-thumb:hover .review-del { opacity: 1; }
+@media (max-width: 600px) {
+  .review-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
+  .review-del { opacity: 0.6; }   /* always visible where there's no hover */
+}
+
 .bubble code { background: #0f172a; padding: 1px 5px; border-radius: 4px; font-size: 0.82em; }
 
 .status-text { font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; padding-right: 24px; }

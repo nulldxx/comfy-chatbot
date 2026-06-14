@@ -136,6 +136,7 @@ const SLASH_COMMANDS = [
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
   { cmd: '/purge',      desc: 'free GPU memory on active server',   args: ''  },
   { cmd: '/resolution', desc: 'set output resolution (e.g. 640x480 or phone)', args: ' ' },
+  { cmd: '/review',     desc: 'grid of this session’s images (tap to view, trash to delete)', args: '' },
   { cmd: '/sequence',   desc: 'generate a prompt sequence from a master prompt (Grok)', args: ' ' },
   { cmd: '/sequence-replacement', desc: 'add a find→replace applied to Grok prompts', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
@@ -704,6 +705,16 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/review') {
+    if (!sessionImages.length) {
+      addMessage('bot', 'No images from this session yet — generate some first!');
+      return;
+    }
+    const bubble = addMessage('bot', '');
+    renderReviewGrid(bubble, sessionImages.slice());
+    return;
+  }
+
   if (cmd === '/delete') {
     if (!sessionImages.length) {
       addMessage('bot', 'No images from this session left to delete.');
@@ -1100,6 +1111,59 @@ function appendChatImage(container, url) {
   wrap.appendChild(img);
   wrap.appendChild(del);
   container.appendChild(wrap);
+}
+
+// Renders a responsive grid of the given image URLs into `bubble`. Tapping a
+// thumb opens the lightbox; the trash button deletes from the output folder
+// (and removes every chat copy via removeImageFromChat).
+function renderReviewGrid(bubble, urls) {
+  bubble.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'review-grid';
+
+  urls.forEach(url => {
+    const cell = document.createElement('div');
+    cell.className = 'review-thumb';
+
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = 'Generated image';
+    img.addEventListener('click', () => openLightbox(url));
+
+    const del = document.createElement('button');
+    del.className = 'img-del review-del';   // reuse existing img-del styling
+    del.title = 'Delete image';
+    del.innerHTML = '&#128465;&#xFE0E;';
+    del.addEventListener('click', e => {
+      e.stopPropagation();
+      if (del.disabled) return;
+      del.disabled = true;
+      deleteImageFile(url)
+        .then(() => {
+          removeImageFromChat(url);  // clears chat copies + sessionImages
+          cell.remove();
+          if (!grid.children.length) {
+            bubble.innerHTML = 'All session images deleted.';
+          }
+        })
+        .catch(err => {
+          del.disabled = false;
+          del.innerHTML = '&#9888;&#xFE0E;';
+          del.title = 'Delete failed: ' + err.message + ' — click to retry';
+          setTimeout(() => {
+            del.innerHTML = '&#128465;&#xFE0E;';
+            del.title = 'Delete image';
+          }, 3000);
+        });
+    });
+
+    cell.appendChild(img);
+    cell.appendChild(del);
+    grid.appendChild(cell);
+  });
+
+  bubble.appendChild(grid);
+  scrollBottom();
 }
 
 // ---------------------------------------------------------------------------
