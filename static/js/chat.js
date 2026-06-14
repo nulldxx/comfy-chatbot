@@ -136,6 +136,8 @@ const SLASH_COMMANDS = [
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
   { cmd: '/purge',      desc: 'free GPU memory on active server',   args: ''  },
   { cmd: '/resolution', desc: 'set output resolution (e.g. 640x480 or phone)', args: ' ' },
+  { cmd: '/sequence',   desc: 'generate a prompt sequence from a master prompt (Grok)', args: ' ' },
+  { cmd: '/sequence-replacement', desc: 'add a find→replace applied to Grok prompts', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
   { cmd: '/slideshow',  desc: 'browse generated images (all or today)', args: ' ' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
@@ -276,6 +278,7 @@ let currentServer     = null;  // {address, os, name}
 let currentWorkflow   = null;  // string
 let currentResolution = null;  // {width, height} or null
 let iterations        = 1;     // images generated per prompt (set via /iterations)
+let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
 
 // Auto-purge of idle GPU memory is handled server-side (see app.py),
 // so it fires even after the browser is closed.
@@ -444,6 +447,74 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/sequence') {
+    const master = raw.slice('/sequence'.length).trim();
+    addMessage('user', escapeHtml(raw), raw);
+    if (!master) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide a master prompt, e.g. <code>/sequence a woman practising yoga at sunrise</code></span>');
+      return;
+    }
+    // Number of prompts comes from /iterations, but 1 is never right for a
+    // sequence, so fall back to 15 in that case.
+    const count = iterations === 1 ? 15 : iterations;
+    sendBtn.disabled = true;
+    const statusBubble = addMessage('bot', `
+      <div class="status-text">Asking Grok for ${count} prompt(s)…</div>
+      <div class="dots"><span></span><span></span><span></span></div>
+    `);
+    fetch('/api/sequence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: master, count, replacements: sequenceReplacements }),
+    })
+    .then(r => r.json())
+    .then(async data => {
+      if (data.error) throw new Error(data.error);
+      const prompts = data.prompts || [];
+      statusBubble.innerHTML = `<div class="status-text">Grok returned <strong style="color:#a78bfa">${prompts.length}</strong> prompt(s) — generating one after another…</div>`;
+      scrollBottom();
+      // Generate each prompt sequentially, exactly like /multi.
+      for (const prompt of prompts) {
+        addMessage('user', escapeHtml(prompt), prompt);
+        const ok = await runGeneration(prompt, '');
+        if (!ok) break;
+      }
+      sendBtn.disabled = false;
+    })
+    .catch(err => {
+      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+      sendBtn.disabled = false;
+    });
+    return;
+  }
+
+  if (cmd === '/sequence-replacement') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!parts[1]) {
+      if (!sequenceReplacements.length) {
+        addMessage('bot', `No sequence replacements set.<br>Usage: <code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to every prompt <code>/sequence</code> gets back from Grok.<br><code>/sequence-replacement clear</code> removes them all.`);
+      } else {
+        const list = sequenceReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
+        addMessage('bot', `<strong>Sequence replacements:</strong><br>${list}<br><br><code>/sequence-replacement clear</code> removes them all.`);
+      }
+      return;
+    }
+    if (parts[1].toLowerCase() === 'clear') {
+      sequenceReplacements = [];
+      addMessage('bot', 'Sequence replacements cleared.');
+      return;
+    }
+    const from = parts[1];
+    const to   = parts.slice(2).join(' ');
+    if (!to) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/sequence-replacement woman elegant woman in a red dress</code></span>');
+      return;
+    }
+    sequenceReplacements.push([from, to]);
+    addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to every prompt from <code>/sequence</code>.`);
+    return;
+  }
+
   addMessage('user', escapeHtml(raw), raw);
 
   if (cmd === '/help') {
@@ -465,6 +536,10 @@ function handleSlashCommand(raw) {
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/multi</code> — generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence &lt;master prompt&gt;</code> — ask Grok to expand a master prompt into a sequence of prompts, then generate them one after another
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">count comes from <code>/iterations</code> (or 15 if iterations is 1) &nbsp;·&nbsp; needs <code>XAI_API_KEY</code> set on the server</div>
+        </div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to each Grok prompt (no args lists them; <code>clear</code> removes them)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>

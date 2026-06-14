@@ -13,6 +13,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 from ComfyServer import ComfyServer
+from grok import generate_prompt_sequence, GrokError
 from workflow import (
     LORA_TAG_RE, LORA_PLACEHOLDER_RE,
     apply_placeholders, find_placeholders, fill_lora_sentinels,
@@ -452,6 +453,46 @@ def api_generate():
     t.start()
 
     return jsonify({"job_id": job_id})
+
+
+@app.route("/api/sequence", methods=["POST"])
+@login_required
+def api_sequence():
+    """Turn a single master prompt into a sequence of prompts via Grok.
+
+    The client then feeds each returned prompt back through /api/generate,
+    one after another (the same flow as /multi).
+    """
+    data = request.get_json(force=True)
+    master = (data.get("prompt") or "").strip()
+    if not master:
+        return jsonify({"error": "A master prompt is required"}), 400
+
+    try:
+        count = int(data.get("count", 15))
+    except (ValueError, TypeError):
+        count = 15
+    count = max(1, min(count, 64))
+
+    # Replacements arrive as a list of [from, to] pairs and are applied to each
+    # prompt after it comes back from Grok.
+    replacements = []
+    for pair in data.get("replacements") or []:
+        if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0]:
+            replacements.append((str(pair[0]), str(pair[1])))
+
+    try:
+        prompts = generate_prompt_sequence(master, count)
+    except GrokError as e:
+        return jsonify({"error": str(e)}), 502
+
+    out = []
+    for p in prompts:
+        for src, dst in replacements:
+            p = p.replace(src, dst)
+        out.append(p)
+
+    return jsonify({"prompts": out})
 
 
 @app.route("/api/progress/<job_id>")

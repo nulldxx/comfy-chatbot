@@ -30,6 +30,12 @@ services:
       # Directory where generated images are saved inside the container
       - COMFY_OUTPUT_DIR=/app/output
 
+      # Grok (x.ai) API — required for the /sequence command, which expands a
+      # master prompt into a sequence of prompts. Leave blank to disable it.
+      - XAI_API_KEY=${XAI_API_KEY:-}
+      # Optional: override the Grok model used for /sequence
+      - GROK_MODEL=grok-4-1-fast-non-reasoning
+
     volumes:
       # Mount your existing dot-files comfyui directory so workflow templates
       # and loras.json are available without being baked into the image.
