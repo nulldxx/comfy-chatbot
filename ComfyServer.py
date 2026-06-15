@@ -306,6 +306,43 @@ class ComfyServer:
             print(f"Error downloading {filename}: {e}", file=sys.stderr)
             return None
 
+    def upload_image(self, image_path, subfolder="", overwrite=True):
+        """
+        Upload an image to the ComfyUI server's input folder.
+
+        Used to feed a previously generated image into a workflow (e.g. via a
+        LoadImage node whose `image` input is a <INPUT_IMAGE> placeholder).
+
+        Args:
+            image_path: Path to the local image file to upload
+            subfolder: Optional subfolder within the server's input folder
+            overwrite: Overwrite an existing file with the same name
+
+        Returns:
+            str: The name to reference the image by in a LoadImage node
+                 (prefixed with the subfolder if the server stored it in one)
+
+        Raises:
+            requests.exceptions.RequestException: On connection/HTTP error
+        """
+        image_path = Path(image_path)
+        url = f"http://{self.server}/upload/image"
+        data = {"overwrite": "true" if overwrite else "false"}
+        if subfolder:
+            data["subfolder"] = subfolder
+        try:
+            with open(image_path, "rb") as f:
+                files = {"image": (image_path.name, f, "image/png")}
+                response = requests.post(url, files=files, data=data, timeout=60)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise requests.exceptions.RequestException(f"Error uploading image: {e}")
+
+        result = response.json()
+        name = result.get("name", image_path.name)
+        sub = result.get("subfolder", "")
+        return f"{sub}/{name}" if sub else name
+
     def free_memory(self, unload_models=True, free_memory=True):
         """
         Ask ComfyUI to release GPU memory.

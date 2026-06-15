@@ -130,6 +130,8 @@ const SLASH_COMMANDS = [
   { cmd: '/clear',      desc: 'clear the chat history',             args: ''  },
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
   { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
+  { cmd: '/face-detail', desc: 'run a face-detailer workflow on the last image', args: ' ' },
+  { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
@@ -295,6 +297,7 @@ const RESOLUTION_PRESETS = {
 // Current selections (null = use backend default)
 let currentServer     = null;  // {address, os, name}
 let currentWorkflow   = null;  // string
+let currentFaceWorkflow = null;  // string — face-detailer workflow for /face-detail
 let currentResolution = null;  // {width, height} or null
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
@@ -604,6 +607,25 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/face-detail') {
+    const prompt = raw.slice('/face-detail'.length).trim();
+    addMessage('user', escapeHtml(raw), raw);
+    if (!prompt) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/face-detail a clear, detailed face</code></span>');
+      return;
+    }
+    if (!sessionImages.length) {
+      addMessage('bot', 'No image from this session to run face detail on — generate one first.');
+      return;
+    }
+    const image = sessionImages[sessionImages.length - 1];
+    iterationsFromSequence = false; // a face-detail run is a single image, not a sequence
+    sendBtn.disabled = true;
+    runGeneration(prompt, '', null, { face: { image, workflow: currentFaceWorkflow } })
+      .finally(() => { sendBtn.disabled = false; });
+    return;
+  }
+
   addMessage('user', escapeHtml(raw), raw);
 
   if (cmd === '/help') {
@@ -631,6 +653,8 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to each Grok prompt (no args lists them; <code>clear</code> removes them)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several workflows, then run the prompt against each one</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail &lt;prompt&gt;</code> — run a face-detailer workflow over the last generated image (supports <code>&lt;lora:…&gt;</code> tags)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow <code>/face-detail</code> uses</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
@@ -699,6 +723,33 @@ function handleSlashCommand(raw) {
       });
       scrollBottom();
     }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load workflows.</span>'; });
+    return;
+  }
+
+  if (cmd === '/face-detail-workflow') {
+    const bubble = addMessage('bot', '<div class="status-text">Loading face-detailer workflows…</div>').parentElement.querySelector('.bubble');
+    fetch('/api/facedetailer-workflows').then(r => r.json()).then(workflows => {
+      if (!workflows.length) {
+        bubble.innerHTML = 'No face-detailer workflows available — add one to the <code>facedetailer/</code> folder.';
+        return;
+      }
+      let html = '<strong>Select a face-detailer workflow:</strong><div class="sel-list">';
+      workflows.forEach(wf => {
+        const isCur = wf === currentFaceWorkflow;
+        html += `<button class="sel-btn${isCur ? ' current' : ''}" data-wf="${escapeHtml(wf)}">
+                   ${escapeHtml(wf)}${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}
+                 </button>`;
+      });
+      html += '</div>';
+      bubble.innerHTML = html;
+      bubble.querySelectorAll('.sel-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          currentFaceWorkflow = btn.dataset.wf;
+          bubble.innerHTML = `Face-detailer workflow set to <strong style="color:#a78bfa">${escapeHtml(currentFaceWorkflow)}</strong>`;
+        });
+      });
+      scrollBottom();
+    }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load face-detailer workflows.</span>'; });
     return;
   }
 
@@ -1336,8 +1387,10 @@ function sendMessage() {
 
 // Runs one generation job in its own bot bubble. Resolves true on success,
 // false on any failure — it never rejects; errors are rendered in the bubble.
-function runGeneration(raw, label, workflowOverride) {
+function runGeneration(raw, label, workflowOverride, opts = {}) {
   return new Promise(resolve => {
+  const face = opts.face || null;
+  const endpoint = face ? '/api/face-detail' : '/api/generate';
   const botBubble = addMessage('bot', `
     <div class="status-text" id="status-line">Connecting…${label}</div>
     <div class="dots"><span></span><span></span><span></span></div>
@@ -1358,15 +1411,18 @@ function runGeneration(raw, label, workflowOverride) {
   cancelBtn.disabled = true;
   botBubble.appendChild(cancelBtn);
 
-  fetch('/api/generate', {
+  // Face-detail runs its own workflow over a source image; a plain generation
+  // uses the selected/override workflow and the current resolution.
+  const wf = face ? face.workflow : (workflowOverride || currentWorkflow);
+  fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt: raw,
       ...(currentServer     ? { server: currentServer.address, server_os: currentServer.os } : {}),
-      ...(workflowOverride  ? { workflow: workflowOverride }
-                            : currentWorkflow ? { workflow: currentWorkflow } : {}),
-      ...(currentResolution ? { width: currentResolution.width, height: currentResolution.height } : {}),
+      ...(wf ? { workflow: wf } : {}),
+      ...(!face && currentResolution ? { width: currentResolution.width, height: currentResolution.height } : {}),
+      ...(face ? { image: face.image } : {}),
     }),
   })
   .then(r => r.json())

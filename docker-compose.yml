@@ -23,6 +23,11 @@ services:
       - COMFY_SERVER_OS=unix
       # Workflow template name (without .json) inside COMFY_WORKFLOW_DIR
       - COMFY_WORKFLOW=z_image_turbo_api
+      # Default face-detailer workflow (without .json) inside the facedetailer/
+      # subdir of COMFY_WORKFLOW_DIR, used by /face-detail. Leave blank to fall
+      # back to the first workflow found there.
+      - COMFY_FACEDETAILER_WORKFLOW=
+
       # Path inside the container where workflow templates live
       - COMFY_WORKFLOW_DIR=/app/workflows
       # Path inside the container to loras.json

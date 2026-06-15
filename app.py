@@ -39,6 +39,10 @@ COMFY_SERVER_OS = os.environ.get('COMFY_SERVER_OS', 'unix')
 COMFY_WORKFLOW = os.environ.get('COMFY_WORKFLOW', 'z_image_turbo_api')
 COMFY_WORKFLOW_DIR = Path(os.environ.get('COMFY_WORKFLOW_DIR', '/app/workflows'))
 COMFY_LORAS_FILE = Path(os.environ.get('COMFY_LORAS_FILE', '/app/workflows/loras.json'))
+# Face-detailer workflows live in a subdir of the main workflow folder. They take
+# the last generated image as input (via an <INPUT_IMAGE> LoadImage placeholder).
+COMFY_FACEDETAILER_DIR = COMFY_WORKFLOW_DIR / 'facedetailer'
+COMFY_FACEDETAILER_WORKFLOW = os.environ.get('COMFY_FACEDETAILER_WORKFLOW') or None
 
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -158,7 +162,8 @@ def cancel_auto_purge(server_address):
 # Background generation thread
 # ---------------------------------------------------------------------------
 
-def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name, width=None, height=None):
+def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
+                   width=None, height=None, workflow_dir=None, input_image=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
         cancel_event = jobs[job_id]["cancel"]
@@ -174,18 +179,25 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
 
     purge_generation_started(server_address)
     try:
+        base_dir = workflow_dir or COMFY_WORKFLOW_DIR
         name_with_ext = workflow_name if workflow_name.endswith(".json") else f"{workflow_name}.json"
-        workflow_path = COMFY_WORKFLOW_DIR / name_with_ext
+        workflow_path = base_dir / name_with_ext
         if not workflow_path.is_file():
             raise FileNotFoundError(f"Workflow template not found: {workflow_path}")
 
         send("progress", message=f"Loading workflow: {workflow_path.name}")
         template = workflow_path.read_text()
 
+        server = ComfyServer(server_address)
+
         mapping = {"PROMPT": prompt}
         for i, (name, strength) in enumerate(loras, start=1):
             mapping[f"LORA_{i}_NAME"] = lora_path_for_os(name, server_os)
             mapping[f"LORA_{i}_STRENGTH"] = strength
+
+        if input_image is not None:
+            send("progress", message="Uploading source image to ComfyUI...")
+            mapping["INPUT_IMAGE"] = server.upload_image(input_image)
 
         filled = apply_placeholders(template, mapping)
 
@@ -208,8 +220,6 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
             workflow, removed = strip_lora_nodes(workflow)
             if removed:
                 send("progress", message=f"Skipping {len(removed)} unused LoRA node(s)")
-
-        server = ComfyServer(server_address)
 
         if "nodes" in workflow:
             send("progress", message="Converting UI-format workflow to API format...")
@@ -382,6 +392,18 @@ def api_workflows():
     return jsonify(workflows)
 
 
+def list_facedetailer_workflows():
+    if not COMFY_FACEDETAILER_DIR.is_dir():
+        return []
+    return [f.stem for f in sorted(COMFY_FACEDETAILER_DIR.glob("*.json"))]
+
+
+@app.route("/api/facedetailer-workflows")
+@login_required
+def api_facedetailer_workflows():
+    return jsonify(list_facedetailer_workflows())
+
+
 @app.route("/api/purge", methods=["POST"])
 @login_required
 def api_purge():
@@ -465,6 +487,65 @@ def api_generate():
         target=run_generation,
         args=(job_id, prompt, loras, server_address, server_os, workflow_name),
         kwargs={"width": width, "height": height},
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/face-detail", methods=["POST"])
+@login_required
+def api_face_detail():
+    """Run a face-detailer workflow over a previously generated image.
+
+    The workflow is loaded from the facedetailer/ subdir and supports the usual
+    <PROMPT> and <lora:...> tags plus an <INPUT_IMAGE> placeholder, which is
+    filled with the uploaded source image.
+    """
+    data = request.get_json(force=True)
+    raw_prompt = (data.get("prompt") or "").strip()
+    if not raw_prompt:
+        return jsonify({"error": "prompt is required"}), 400
+
+    prompt, loras = parse_loras_from_prompt(raw_prompt)
+    if not prompt:
+        return jsonify({"error": "Prompt is empty after removing LoRA tags"}), 400
+
+    # Resolve the source image (a /images/<name> URL) to a local file.
+    image_url = (data.get("image") or "").strip()
+    if not image_url:
+        return jsonify({"error": "image is required"}), 400
+    safe = secure_filename(image_url.rsplit("/", 1)[-1])
+    image_path = IMAGES_DIR / safe
+    if not safe or not image_path.is_file():
+        return jsonify({"error": "Source image not found"}), 404
+
+    workflow_name = data.get("workflow") or COMFY_FACEDETAILER_WORKFLOW
+    if not workflow_name:
+        available = list_facedetailer_workflows()
+        if not available:
+            return jsonify({"error": "No face-detailer workflows available"}), 400
+        workflow_name = available[0]
+
+    server_address = data.get("server") or COMFY_SERVER
+    server_os      = data.get("server_os") or COMFY_SERVER_OS
+
+    job_id = str(uuid.uuid4())
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "queue": queue.Queue(),
+            "images": [],
+            "cancel": threading.Event(),
+            "server": server_address,
+            "prompt_id": None,
+        }
+
+    t = threading.Thread(
+        target=run_generation,
+        args=(job_id, prompt, loras, server_address, server_os, workflow_name),
+        kwargs={"workflow_dir": COMFY_FACEDETAILER_DIR, "input_image": image_path},
         daemon=True,
     )
     t.start()

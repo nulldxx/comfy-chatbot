@@ -41,6 +41,7 @@ All settings are environment variables in `docker-compose.yml`:
 | `COMFY_SERVER` | `192.168.1.135:8000` | ComfyUI server address (`host:port`) |
 | `COMFY_SERVER_OS` | `unix` | Path style sent to server: `unix` or `windows` |
 | `COMFY_WORKFLOW` | `z_image_turbo_api` | Default workflow template name |
+| `COMFY_FACEDETAILER_WORKFLOW` | *(first found)* | Default face-detailer workflow (in `facedetailer/` subdir) used by `/face-detail` |
 | `COMFY_WORKFLOW_DIR` | `/app/workflows` | Directory of workflow `.json` templates |
 | `COMFY_LORAS_FILE` | `/app/workflows/loras.json` | LoRA catalogue |
 | `COMFY_OUTPUT_DIR` | `/app/output` | Where generated images are saved |
@@ -81,6 +82,8 @@ volumes:
 | `/server` | Pick a ComfyUI server from the catalogue |
 | `/addserver <name> <host:port:os>` | Add a server (`os`: `unix` or `windows`) |
 | `/workflow` | Pick a workflow template |
+| `/face-detail <prompt>` | Run a face-detailer workflow over the last generated image (supports `<lora:…>` tags) |
+| `/face-detail-workflow` | Pick which face-detailer workflow `/face-detail` uses (from the `facedetailer/` subdir) |
 | `/upload` | Upload a new workflow `.json` file |
 
 ## Adding Workflows
@@ -98,6 +101,7 @@ The exported JSON is a static snapshot; you need to replace the values you want 
 | The prompt string | `<PROMPT>` | Inside the existing quotes in the JSON |
 | A LoRA filename | `<LORA_1_NAME>` | Use `<LORA_2_NAME>` for a second LoRA, etc. |
 | A LoRA strength | `<LORA_1_STRENGTH>` | **Remove the surrounding quotes** — this must be a bare number in the JSON |
+| A `LoadImage` filename | `<INPUT_IMAGE>` | For `facedetailer/` workflows — filled with the last generated image, which `/face-detail` uploads to the server |
 
 For example, a KSampler node's prompt input might look like this before and after:
 
