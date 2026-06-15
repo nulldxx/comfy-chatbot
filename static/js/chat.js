@@ -447,6 +447,36 @@ function addMessage(role, contentHtml, rawText) {
 // Slash commands
 // ---------------------------------------------------------------------------
 
+// Shared selection bubble for /workflow and /face-detail-workflow: fetches a
+// list of workflow names, renders one button each (ticking the current one),
+// and reports the choice back via onSelect.
+function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, current, setMsg, onSelect }) {
+  const bubble = addMessage('bot', `<div class="status-text">${loadingText}</div>`).parentElement.querySelector('.bubble');
+  fetch(url).then(r => r.json()).then(workflows => {
+    if (!workflows.length && emptyMsg) {
+      bubble.innerHTML = emptyMsg;
+      return;
+    }
+    let html = `<strong>${title}</strong><div class="sel-list">`;
+    workflows.forEach(wf => {
+      const isCur = wf === current;
+      html += `<button class="sel-btn${isCur ? ' current' : ''}" data-wf="${escapeHtml(wf)}">
+                 ${escapeHtml(wf)}${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}
+               </button>`;
+    });
+    html += '</div>';
+    bubble.innerHTML = html;
+    bubble.querySelectorAll('.sel-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const wf = btn.dataset.wf;
+        onSelect(wf);
+        bubble.innerHTML = `${setMsg} <strong style="color:#a78bfa">${escapeHtml(wf)}</strong>`;
+      });
+    });
+    scrollBottom();
+  }).catch(() => { bubble.innerHTML = `<span style="color:#f87171">Failed to load ${failLabel}.</span>`; });
+}
+
 function handleSlashCommand(raw) {
   const parts = raw.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
@@ -614,6 +644,10 @@ function handleSlashCommand(raw) {
       addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/face-detail a clear, detailed face</code></span>');
       return;
     }
+    if (!/<lora:[^>]+>/i.test(prompt)) {
+      addMessage('bot', '<span style="color:#f87171">⚠ <code>/face-detail</code> needs a LoRA tag in the prompt, e.g. <code>/face-detail a clear, detailed face &lt;lora:name:strength&gt;</code> — type <code>/lora</code> to find one.</span>');
+      return;
+    }
     if (!sessionImages.length) {
       addMessage('bot', 'No image from this session to run face detail on — generate one first.');
       return;
@@ -621,7 +655,7 @@ function handleSlashCommand(raw) {
     const image = sessionImages[sessionImages.length - 1];
     iterationsFromSequence = false; // a face-detail run is a single image, not a sequence
     sendBtn.disabled = true;
-    runGeneration(prompt, '', null, { face: { image, workflow: currentFaceWorkflow } })
+    runGeneration(prompt, '', null, { face: { image, workflow: currentFaceWorkflow || DEFAULT_FACE_WORKFLOW } })
       .finally(() => { sendBtn.disabled = false; });
     return;
   }
@@ -702,54 +736,29 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/workflow') {
-    const bubble = addMessage('bot', '<div class="status-text">Loading workflows…</div>').parentElement.querySelector('.bubble');
-    fetch('/api/workflows').then(r => r.json()).then(workflows => {
-      const curWf = currentWorkflow || DEFAULT_WORKFLOW;
-      let html = '<strong>Select a workflow:</strong><div class="sel-list">';
-      workflows.forEach(wf => {
-        const isCur = wf === curWf;
-        html += `<button class="sel-btn${isCur ? ' current' : ''}" data-wf="${escapeHtml(wf)}">
-                   ${escapeHtml(wf)}${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}
-                 </button>`;
-      });
-      html += '</div>';
-      bubble.innerHTML = html;
-      bubble.querySelectorAll('.sel-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          currentWorkflow = btn.dataset.wf;
-          bubble.innerHTML = `Workflow set to <strong style="color:#a78bfa">${escapeHtml(currentWorkflow)}</strong>`;
-          updateHeaderStatus();
-        });
-      });
-      scrollBottom();
-    }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load workflows.</span>'; });
+    renderWorkflowPicker({
+      url: '/api/workflows',
+      title: 'Select a workflow:',
+      loadingText: 'Loading workflows…',
+      failLabel: 'workflows',
+      current: currentWorkflow || DEFAULT_WORKFLOW,
+      setMsg: 'Workflow set to',
+      onSelect: wf => { currentWorkflow = wf; updateHeaderStatus(); },
+    });
     return;
   }
 
   if (cmd === '/face-detail-workflow') {
-    const bubble = addMessage('bot', '<div class="status-text">Loading face-detailer workflows…</div>').parentElement.querySelector('.bubble');
-    fetch('/api/facedetailer-workflows').then(r => r.json()).then(workflows => {
-      if (!workflows.length) {
-        bubble.innerHTML = 'No face-detailer workflows available — add one to the <code>facedetailer/</code> folder.';
-        return;
-      }
-      let html = '<strong>Select a face-detailer workflow:</strong><div class="sel-list">';
-      workflows.forEach(wf => {
-        const isCur = wf === currentFaceWorkflow;
-        html += `<button class="sel-btn${isCur ? ' current' : ''}" data-wf="${escapeHtml(wf)}">
-                   ${escapeHtml(wf)}${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}
-                 </button>`;
-      });
-      html += '</div>';
-      bubble.innerHTML = html;
-      bubble.querySelectorAll('.sel-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          currentFaceWorkflow = btn.dataset.wf;
-          bubble.innerHTML = `Face-detailer workflow set to <strong style="color:#a78bfa">${escapeHtml(currentFaceWorkflow)}</strong>`;
-        });
-      });
-      scrollBottom();
-    }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load face-detailer workflows.</span>'; });
+    renderWorkflowPicker({
+      url: '/api/facedetailer-workflows',
+      title: 'Select a face-detailer workflow:',
+      loadingText: 'Loading face-detailer workflows…',
+      failLabel: 'face-detailer workflows',
+      emptyMsg: 'No face-detailer workflows available — add one to the <code>facedetailer/</code> folder.',
+      current: currentFaceWorkflow || DEFAULT_FACE_WORKFLOW,
+      setMsg: 'Face-detailer workflow set to',
+      onSelect: wf => { currentFaceWorkflow = wf; },
+    });
     return;
   }
 

@@ -42,7 +42,11 @@ COMFY_LORAS_FILE = Path(os.environ.get('COMFY_LORAS_FILE', '/app/workflows/loras
 # Face-detailer workflows live in a subdir of the main workflow folder. They take
 # the last generated image as input (via an <INPUT_IMAGE> LoadImage placeholder).
 COMFY_FACEDETAILER_DIR = COMFY_WORKFLOW_DIR / 'facedetailer'
-COMFY_FACEDETAILER_WORKFLOW = os.environ.get('COMFY_FACEDETAILER_WORKFLOW') or None
+# Default face-detailer workflow. Accepts a bare stem ("zit-face-detailer") or a
+# fuller form like "facedetailer/zit-face-detailer.json"; we normalise to the
+# stem so it matches the names returned by list_facedetailer_workflows().
+_FACEDETAILER_WORKFLOW_RAW = os.environ.get('COMFY_FACEDETAILER_WORKFLOW') or None
+COMFY_FACEDETAILER_WORKFLOW = Path(_FACEDETAILER_WORKFLOW_RAW).stem if _FACEDETAILER_WORKFLOW_RAW else None
 
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -321,6 +325,7 @@ def index():
         default_server=COMFY_SERVER,
         default_server_os=COMFY_SERVER_OS,
         default_workflow=COMFY_WORKFLOW,
+        default_face_workflow=COMFY_FACEDETAILER_WORKFLOW,
     )
 
 
@@ -443,6 +448,33 @@ def api_upload_workflow():
     return jsonify({"name": dest.stem})
 
 
+def start_generation_job(prompt, loras, server_address, server_os, workflow_name, **kwargs):
+    """Create a tracked job and spawn its generation thread; return the job_id.
+
+    Extra kwargs (width/height, workflow_dir, input_image) are forwarded to
+    run_generation.
+    """
+    job_id = str(uuid.uuid4())
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "queue": queue.Queue(),
+            "images": [],
+            "cancel": threading.Event(),
+            "server": server_address,
+            "prompt_id": None,
+        }
+
+    t = threading.Thread(
+        target=run_generation,
+        args=(job_id, prompt, loras, server_address, server_os, workflow_name),
+        kwargs=kwargs,
+        daemon=True,
+    )
+    t.start()
+    return job_id
+
+
 @app.route("/api/generate", methods=["POST"])
 @login_required
 def api_generate():
@@ -472,25 +504,10 @@ def api_generate():
         except (ValueError, TypeError):
             return jsonify({"error": "height must be an integer"}), 400
 
-    job_id = str(uuid.uuid4())
-    with jobs_lock:
-        jobs[job_id] = {
-            "status": "pending",
-            "queue": queue.Queue(),
-            "images": [],
-            "cancel": threading.Event(),
-            "server": server_address,
-            "prompt_id": None,
-        }
-
-    t = threading.Thread(
-        target=run_generation,
-        args=(job_id, prompt, loras, server_address, server_os, workflow_name),
-        kwargs={"width": width, "height": height},
-        daemon=True,
+    job_id = start_generation_job(
+        prompt, loras, server_address, server_os, workflow_name,
+        width=width, height=height,
     )
-    t.start()
-
     return jsonify({"job_id": job_id})
 
 
@@ -521,35 +538,27 @@ def api_face_detail():
     if not safe or not image_path.is_file():
         return jsonify({"error": "Source image not found"}), 404
 
+    # Resolve and validate the workflow against the known facedetailer/ files so
+    # a client-supplied name can't escape the directory (e.g. via "../").
+    available = list_facedetailer_workflows()
     workflow_name = data.get("workflow") or COMFY_FACEDETAILER_WORKFLOW
-    if not workflow_name:
-        available = list_facedetailer_workflows()
-        if not available:
-            return jsonify({"error": "No face-detailer workflows available"}), 400
+    if workflow_name:
+        stem = Path(workflow_name).stem
+        if stem not in available:
+            return jsonify({"error": f"Unknown face-detailer workflow: {workflow_name}"}), 400
+        workflow_name = stem
+    elif available:
         workflow_name = available[0]
+    else:
+        return jsonify({"error": "No face-detailer workflows available"}), 400
 
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
 
-    job_id = str(uuid.uuid4())
-    with jobs_lock:
-        jobs[job_id] = {
-            "status": "pending",
-            "queue": queue.Queue(),
-            "images": [],
-            "cancel": threading.Event(),
-            "server": server_address,
-            "prompt_id": None,
-        }
-
-    t = threading.Thread(
-        target=run_generation,
-        args=(job_id, prompt, loras, server_address, server_os, workflow_name),
-        kwargs={"workflow_dir": COMFY_FACEDETAILER_DIR, "input_image": image_path},
-        daemon=True,
+    job_id = start_generation_job(
+        prompt, loras, server_address, server_os, workflow_name,
+        workflow_dir=COMFY_FACEDETAILER_DIR, input_image=image_path,
     )
-    t.start()
-
     return jsonify({"job_id": job_id})
 
 
