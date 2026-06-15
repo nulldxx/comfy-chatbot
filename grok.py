@@ -64,14 +64,19 @@ def generate_prompt_sequence(master_prompt, count):
         "You are an expert at writing detailed prompts for photorealistic AI image "
         "generation. You always respond with valid JSON and nothing else."
     )
-    user = f"""Based on the following master prompt, create a sequence of exactly {count} distinct, detailed image-generation prompts.
+    user = f"""Based on the following master prompt, create a set of exactly {count} distinct, detailed image-generation prompts.
 
 Master prompt: {master_prompt}
 
-Each generated prompt should:
+CRITICAL: Each prompt is sent to the image model completely on its own, with no knowledge of the other prompts. There is NO shared context between prompts. Treat every prompt as if it were the only one. This means each prompt MUST:
+- Fully restate the subject, scene, and style from scratch — never rely on, refer to, or continue from another prompt
+- Never use back-references like "the same woman", "she", "as before", "this time", "again", "now", "continuing", or "the previous scene"; every noun must be introduced fresh as if for the first time
+- Stand completely alone and be fully understandable in isolation
+
+Each generated prompt should also:
 - Be a single self-contained paragraph describing one specific image
-- Keep the core subject, scene, and overall style consistent with the master prompt
-- Vary the pose, composition, camera angle, and small details across the sequence
+- Keep the core subject, scene, and overall style consistent with the master prompt (by re-describing it in full, not by referring back)
+- Vary the pose, composition, camera angle, and small details from prompt to prompt
 - Describe a single moment — never multiple poses or sequential actions in one prompt
 - Be optimised for a photorealistic text-to-image model
 
