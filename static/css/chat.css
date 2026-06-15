@@ -200,9 +200,17 @@ header a:hover { color: #a78bfa; }
   font-size: 0.8rem;
 }
 .review-thumb:hover .review-del { opacity: 1; }
+.review-face {
+  position: absolute;
+  bottom: 4px; right: 4px;
+  padding: 3px 6px;          /* tighter than the in-chat face icon */
+  font-size: 0.8rem;
+}
+.review-thumb:hover .review-face { opacity: 1; }
 @media (max-width: 600px) {
   .review-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
   .review-del { opacity: 0.6; }   /* always visible where there's no hover */
+  .review-face { opacity: 0.6; }
 }
 
 .bubble code { background: #0f172a; padding: 1px 5px; border-radius: 4px; font-size: 0.82em; }

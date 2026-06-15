@@ -1366,8 +1366,25 @@ function renderReviewGrid(bubble, urls) {
         });
     });
 
+    const face = document.createElement('button');
+    face.className = 'img-face review-face';   // reuse existing img-face styling
+    face.title = 'Run face detail';
+    face.innerHTML = '&#128100;&#xFE0E;';
+    face.addEventListener('click', e => {
+      e.stopPropagation();
+      if (face.disabled || sendBtn.disabled) return;
+      if (!lastFaceDetailPrompt) {
+        addMessage('bot', '<span style="color:#f87171">You must run <code>/face-detail &lt;prompt&gt;</code> first</span>');
+        return;
+      }
+      face.disabled = true;
+      addMessage('user', 'Face detail: ' + escapeHtml(lastFaceDetailPrompt));
+      runFaceDetail(lastFaceDetailPrompt, url).finally(() => { face.disabled = false; });
+    });
+
     cell.appendChild(img);
     cell.appendChild(del);
+    cell.appendChild(face);
     grid.appendChild(cell);
   });
 
