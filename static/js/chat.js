@@ -298,6 +298,7 @@ const RESOLUTION_PRESETS = {
 let currentServer     = null;  // {address, os, name}
 let currentWorkflow   = null;  // string
 let currentFaceWorkflow = null;  // string — face-detailer workflow for /face-detail
+let lastFaceDetailPrompt = null; // last prompt used by a manual /face-detail; reused by the per-image face icon
 let currentResolution = null;  // {width, height} or null
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
@@ -653,10 +654,8 @@ function handleSlashCommand(raw) {
       return;
     }
     const image = sessionImages[sessionImages.length - 1];
-    iterationsFromSequence = false; // a face-detail run is a single image, not a sequence
-    sendBtn.disabled = true;
-    runGeneration(prompt, '', null, { face: { image, workflow: currentFaceWorkflow || DEFAULT_FACE_WORKFLOW } })
-      .finally(() => { sendBtn.disabled = false; });
+    lastFaceDetailPrompt = prompt; // remember so the per-image face icon can reuse it
+    runFaceDetail(prompt, image);
     return;
   }
 
@@ -1259,8 +1258,19 @@ function removeImageFromChat(url) {
   if (i !== -1) sessionImages.splice(i, 1);
 }
 
-// Appends a generated image to a bubble with a trash-icon overlay that
-// deletes it from both the chat and the server's output folder.
+// Runs a face-detailer workflow over `image` using `prompt`. Shared by the
+// /face-detail command and the per-image face icon. Returns the generation
+// promise so callers can re-enable their own controls when it settles.
+function runFaceDetail(prompt, image) {
+  iterationsFromSequence = false; // a face-detail run is a single image, not a sequence
+  sendBtn.disabled = true;
+  return runGeneration(prompt, '', null, { face: { image, workflow: currentFaceWorkflow || DEFAULT_FACE_WORKFLOW } })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
+// Appends a generated image to a bubble with a trash-icon overlay (top-right,
+// deletes from chat + output folder) and a face-icon overlay (bottom-right,
+// re-runs the last /face-detail prompt over this image).
 function appendChatImage(container, url) {
   const wrap = document.createElement('div');
   wrap.className = 'img-wrap';
@@ -1268,6 +1278,22 @@ function appendChatImage(container, url) {
   const img = document.createElement('img');
   img.src = url;
   img.alt = 'Generated image';
+
+  const face = document.createElement('button');
+  face.className = 'img-face';
+  face.title = 'Run face detail';
+  face.innerHTML = '&#128100;&#xFE0E;';
+  face.addEventListener('click', e => {
+    e.stopPropagation();
+    if (face.disabled || sendBtn.disabled) return;
+    if (!lastFaceDetailPrompt) {
+      addMessage('bot', '<span style="color:#f87171">You must run <code>/face-detail &lt;prompt&gt;</code> first</span>');
+      return;
+    }
+    face.disabled = true;
+    addMessage('user', 'Face detail: ' + escapeHtml(lastFaceDetailPrompt));
+    runFaceDetail(lastFaceDetailPrompt, url).finally(() => { face.disabled = false; });
+  });
 
   const del = document.createElement('button');
   del.className = 'img-del';
@@ -1292,6 +1318,7 @@ function appendChatImage(container, url) {
 
   wrap.appendChild(img);
   wrap.appendChild(del);
+  wrap.appendChild(face);
   container.appendChild(wrap);
 }
 
