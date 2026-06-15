@@ -129,6 +129,7 @@ const SLASH_COMMANDS = [
   { cmd: '/addserver',  desc: 'add a server  (name host:port:os)',  args: ' ' },
   { cmd: '/clear',      desc: 'clear the chat history',             args: ''  },
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
+  { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
   { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
   { cmd: '/face-detail', desc: 'run a face-detailer workflow on the last image', args: ' ' },
   { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
@@ -336,6 +337,10 @@ document.addEventListener('keydown', e => {
 const history = [];
 let historyIdx = -1;   // -1 = at the live draft
 let savedDraft = '';   // preserves unsent text when browsing history
+
+// When a command needs y/n confirmation, it parks a callback here. The next
+// message the user sends is treated as the answer instead of a prompt.
+let pendingConfirm = null;
 
 inputEl.addEventListener('keydown', e => {
   // Slash-command autocomplete navigation takes priority
@@ -692,6 +697,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-session</code> — delete all images from this session (chat + output folder)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-all</code> — delete every image in the output folder (asks y/n first)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review [all|today]</code> — grid of images, oldest first (no arg this session · <code>all</code> every image · <code>today</code> only today's)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow [today|session|reverse]</code> — browse generated images, oldest first (<code>today</code> only today's · <code>session</code> only this session's · <code>reverse</code> newest first)
@@ -939,6 +945,37 @@ function handleSlashCommand(raw) {
         scrollBottom();
       }
     });
+    return;
+  }
+
+  if (cmd === '/delete-all') {
+    addMessage('user', escapeHtml(raw), null);
+    addMessage('bot', 'This deletes <strong>every</strong> image in the output folder, not just this session\'s. Type <code>y</code> to confirm or <code>n</code> to cancel.');
+    pendingConfirm = (answer) => {
+      if (!/^y(es)?$/i.test(answer)) {
+        addMessage('bot', 'Cancelled — no images deleted.');
+        return;
+      }
+      const bubble = addMessage('bot', '<div class="status-text">Deleting all images…</div>').parentElement.querySelector('.bubble');
+      fetch('/api/images', { method: 'DELETE' })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok || data.error) throw new Error(data.error || 'Delete failed');
+          // Clear chat too, since any on-screen images now point at deleted files.
+          history.length = 0;
+          historyIdx = -1;
+          savedDraft = '';
+          sessionImages.length = 0;
+          fauxFullscreenEls.clear();
+          document.body.style.overflow = '';
+          messagesEl.innerHTML = '';
+          addMessage('bot', `Deleted ${data.deleted} image(s) from the output folder.`);
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
+    };
     return;
   }
 
@@ -1398,6 +1435,21 @@ function renderReviewGrid(bubble, urls) {
 
 function sendMessage() {
   let raw = inputEl.value.trim();
+
+  // A command is awaiting y/n — consume this message as the answer.
+  if (pendingConfirm) {
+    if (!raw) return;
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+    historyIdx = -1;
+    savedDraft = '';
+    addMessage('user', escapeHtml(raw), null);
+    const cb = pendingConfirm;
+    pendingConfirm = null;
+    cb(raw);
+    return;
+  }
+
   if (!raw && history.length) raw = history[0]; // empty prompt redoes the last one
   if (!raw || sendBtn.disabled) return;
 

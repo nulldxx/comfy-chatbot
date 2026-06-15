@@ -672,6 +672,27 @@ def api_delete_image(filename):
     return jsonify({"deleted": safe})
 
 
+@app.route("/api/images", methods=["DELETE"])
+@login_required
+def api_delete_all_images():
+    if not IMAGES_DIR.is_dir():
+        return jsonify({"deleted": 0})
+    exts = {".png", ".jpg", ".jpeg", ".webp"}
+    deleted = 0
+    failed = []
+    for p in IMAGES_DIR.iterdir():
+        if p.suffix.lower() not in exts:
+            continue
+        try:
+            p.unlink()
+            deleted += 1
+        except OSError as exc:
+            failed.append(f"{p.name}: {exc}")
+    if failed:
+        return jsonify({"deleted": deleted, "error": "; ".join(failed)}), 500
+    return jsonify({"deleted": deleted})
+
+
 @app.route("/api/images")
 @login_required
 def api_images():
