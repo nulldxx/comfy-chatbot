@@ -143,6 +143,7 @@ const SLASH_COMMANDS = [
   { cmd: '/slideshow',  desc: 'browse generated images (all or today)', args: ' ' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
   { cmd: '/workflow',   desc: 'choose a workflow template',         args: ''  },
+  { cmd: '/workflow-iterate', desc: 'run a prompt against several workflows', args: ' ' },
 ];
 
 // LoRA catalogue for the /lora fuzzy finder
@@ -522,6 +523,70 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/workflow-iterate') {
+    const master = raw.slice('/workflow-iterate'.length).trim();
+    addMessage('user', escapeHtml(raw), raw);
+    if (!master) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/workflow-iterate a cat astronaut</code> — then tick the workflows to run it against</span>');
+      return;
+    }
+    const bubble = addMessage('bot', '<div class="status-text">Loading workflows…</div>').parentElement.querySelector('.bubble');
+    fetch('/api/workflows').then(r => r.json()).then(workflows => {
+      if (!workflows.length) {
+        bubble.innerHTML = 'No workflows available — upload one with <code>/upload</code>.';
+        return;
+      }
+      let html = `<strong>Run against which workflows?</strong>
+        <div style="font-size:0.8rem;color:#94a3b8;margin:4px 0 8px">Prompt: <code>${escapeHtml(master)}</code></div>
+        <div class="sel-list">`;
+      workflows.forEach((wf, i) => {
+        html += `<label class="wfi-row" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;color:#cbd5e1;cursor:pointer">
+                   <input type="checkbox" class="wfi-check" value="${escapeHtml(wf)}" id="wfi-${i}">
+                   ${escapeHtml(wf)}
+                 </label>`;
+      });
+      html += `</div>
+        <button class="sel-btn wfi-go" style="margin-top:10px">Generate</button>`;
+      bubble.innerHTML = html;
+
+      const goBtn = bubble.querySelector('.wfi-go');
+      goBtn.addEventListener('click', () => {
+        const selected = [...bubble.querySelectorAll('.wfi-check:checked')].map(c => c.value);
+        if (!selected.length) {
+          // Nothing ticked — nudge, but leave the checkboxes in place.
+          if (!bubble.querySelector('.wfi-warn')) {
+            const warn = document.createElement('div');
+            warn.className = 'wfi-warn';
+            warn.style.cssText = 'color:#f87171;font-size:0.82rem;margin-top:6px';
+            warn.textContent = '⚠ Tick at least one workflow.';
+            bubble.appendChild(warn);
+          }
+          return;
+        }
+        // Lock the selection UI so it reads as a record of what was run.
+        bubble.querySelectorAll('.wfi-check, .wfi-go').forEach(el => { el.disabled = true; });
+        const warn = bubble.querySelector('.wfi-warn');
+        if (warn) warn.remove();
+        bubble.insertAdjacentHTML('beforeend',
+          `<div class="status-text" style="margin-top:8px">Generating <strong style="color:#a78bfa">${selected.length}</strong> workflow(s)…</div>`);
+
+        iterationsFromSequence = false; // this is a prompt run, not a sequence — drop any borrowed count
+        sendBtn.disabled = true;
+        (async () => {
+          for (let i = 0; i < selected.length; i++) {
+            const wf = selected[i];
+            const label = ` — ${wf} (${i + 1}/${selected.length})`;
+            const ok = await runGeneration(master, label, wf);
+            if (!ok) break;
+          }
+          sendBtn.disabled = false;
+        })();
+      });
+      scrollBottom();
+    }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load workflows.</span>'; });
+    return;
+  }
+
   addMessage('user', escapeHtml(raw), raw);
 
   if (cmd === '/help') {
@@ -548,6 +613,7 @@ function handleSlashCommand(raw) {
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to each Grok prompt (no args lists them; <code>clear</code> removes them)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several workflows, then run the prompt against each one</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
@@ -1214,7 +1280,7 @@ function sendMessage() {
 
 // Runs one generation job in its own bot bubble. Resolves true on success,
 // false on any failure — it never rejects; errors are rendered in the bubble.
-function runGeneration(raw, label) {
+function runGeneration(raw, label, workflowOverride) {
   return new Promise(resolve => {
   const botBubble = addMessage('bot', `
     <div class="status-text" id="status-line">Connecting…${label}</div>
@@ -1242,7 +1308,8 @@ function runGeneration(raw, label) {
     body: JSON.stringify({
       prompt: raw,
       ...(currentServer     ? { server: currentServer.address, server_os: currentServer.os } : {}),
-      ...(currentWorkflow   ? { workflow: currentWorkflow } : {}),
+      ...(workflowOverride  ? { workflow: workflowOverride }
+                            : currentWorkflow ? { workflow: currentWorkflow } : {}),
       ...(currentResolution ? { width: currentResolution.width, height: currentResolution.height } : {}),
     }),
   })
