@@ -30,7 +30,12 @@ def grok_available():
     return bool(GROK_API_KEY)
 
 
-def _chat(messages, temperature=0.8, timeout=120):
+# Keep this safely below gunicorn's worker `timeout` (120s). If the HTTP call
+# is allowed to run as long as the worker timeout, a slow Grok response races
+# the worker kill and the client receives a non-JSON body (gunicorn error page)
+# instead of a clean {"error": ...} — surfacing as a "JSON.parse: unexpected
+# character at line 1 column 1" in the browser.
+def _chat(messages, temperature=0.8, timeout=90):
     if not GROK_API_KEY:
         raise GrokError("Grok is not configured — set XAI_API_KEY in the environment.")
     try:

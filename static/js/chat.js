@@ -159,6 +159,23 @@ fetch('/api/loras')
   })
   .catch(() => {});
 
+// Parse a fetch Response as JSON, but degrade gracefully when the body isn't
+// JSON at all (e.g. a gunicorn/proxy timeout page or an empty body). Without
+// this, r.json() throws the cryptic "unexpected character at line 1 column 1".
+async function parseJsonResponse(r) {
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    const snippet = text.trim().slice(0, 120);
+    throw new Error(
+      r.ok
+        ? `Server returned a non-JSON response${snippet ? ': ' + snippet : ''}`
+        : `Request failed (HTTP ${r.status})${snippet ? ': ' + snippet : ''}`
+    );
+  }
+}
+
 // Subsequence fuzzy match: every query char must appear in order.
 // Returns a score (higher = better) or -1 for no match.
 function fuzzyScore(query, text) {
@@ -475,7 +492,7 @@ function handleSlashCommand(raw) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: master, count, replacements: sequenceReplacements }),
     })
-    .then(r => r.json())
+    .then(parseJsonResponse)
     .then(async data => {
       if (data.error) throw new Error(data.error);
       const prompts = data.prompts || [];
