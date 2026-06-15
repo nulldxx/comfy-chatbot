@@ -136,7 +136,7 @@ const SLASH_COMMANDS = [
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
   { cmd: '/purge',      desc: 'free GPU memory on active server',   args: ''  },
   { cmd: '/resolution', desc: 'set output resolution (e.g. 640x480 or phone)', args: ' ' },
-  { cmd: '/review',     desc: 'grid of this session’s images (tap to view, trash to delete)', args: '' },
+  { cmd: '/review',     desc: 'grid of images — this session, all, or today (tap to view, trash to delete)', args: ' ' },
   { cmd: '/sequence',   desc: 'generate a prompt sequence from a master prompt (Grok)', args: ' ' },
   { cmd: '/sequence-replacement', desc: 'add a find→replace applied to Grok prompts', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
@@ -636,6 +636,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-session</code> — delete all images from this session (chat + output folder)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/review [all|today]</code> — grid of images, oldest first (no arg this session · <code>all</code> every image · <code>today</code> only today's)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow [today|reverse]</code> — browse generated images, oldest first (<code>today</code> only today's · <code>reverse</code> newest first)
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">← → keys on desktop &nbsp;·&nbsp; Del deletes the current image &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s</div>
         </div>
@@ -793,12 +794,34 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/review') {
-    if (!sessionImages.length) {
-      addMessage('bot', 'No images from this session yet — generate some first!');
+    const scope = (parts[1] || '').toLowerCase();
+    if (scope && scope !== 'all' && scope !== 'today') {
+      addMessage('bot', `Usage: <code>/review</code> — this session's images, <code>/review all</code> — every image, <code>/review today</code> — only today's`);
       return;
     }
-    const bubble = addMessage('bot', '');
-    renderReviewGrid(bubble, sessionImages.slice());
+    if (!scope) {
+      if (!sessionImages.length) {
+        addMessage('bot', 'No images from this session yet — generate some first!');
+        return;
+      }
+      const bubble = addMessage('bot', '');
+      renderReviewGrid(bubble, sessionImages.slice());
+      return;
+    }
+    const bubble = addMessage('bot', '<div class="status-text">Loading images…</div>');
+    fetch(scope === 'today' ? '/api/images?filter=today' : '/api/images')
+      .then(r => r.json())
+      .then(images => {
+        if (!images.length) {
+          bubble.innerHTML = scope === 'today'
+            ? 'No images generated today — try <code>/review all</code> for every image.'
+            : 'No images yet — generate some first!';
+          return;
+        }
+        // The API returns newest-first; show oldest-first to match the slideshow.
+        renderReviewGrid(bubble, images.slice().reverse());
+      })
+      .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
     return;
   }
 
