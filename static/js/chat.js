@@ -302,7 +302,7 @@ let currentWorkflow   = null;  // string
 let currentFaceWorkflow = null;  // string — face-detailer workflow for /face-detail
 let currentUpscaleWorkflow = null; // string — upscaler workflow for /upscale
 let lastFaceDetailPrompt = null; // last prompt used by a manual /face-detail; reused by the per-image face icon
-let currentResolution = null;  // {width, height} or null
+let currentResolution = { width: 1365, height: 768 };  // {width, height} or null (null = workflow default); defaults to 16:9
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
@@ -1037,7 +1037,7 @@ function handleSlashCommand(raw) {
         : 'workflow default';
       addMessage('bot', `Current resolution: ${cur}<br>
         Usage: <code>/resolution &lt;WxH&gt;</code> — e.g. <code>/resolution 640x480</code><br>
-        <code>phone</code> — measures this device's viewport (alias: <code>iphone</code>) &nbsp;·&nbsp; presets: ${Object.keys(RESOLUTION_PRESETS).map(k => `<code>${k}</code>`).join(', ')}<br>
+        <code>16:9</code> — aspect ratio (shorter side 768px) &nbsp;·&nbsp; <code>phone</code> — measures this device's viewport (alias: <code>iphone</code>) &nbsp;·&nbsp; presets: ${Object.keys(RESOLUTION_PRESETS).map(k => `<code>${k}</code>`).join(', ')}<br>
         <code>/resolution flip</code> — swap width and height &nbsp;·&nbsp; <code>/resolution reset</code> — restore workflow default`);
       return;
     }
@@ -1073,6 +1073,21 @@ function handleSlashCommand(raw) {
     if (preset) {
       currentResolution = { width: preset.width, height: preset.height };
       addMessage('bot', `Resolution set to ${preset.label}.`);
+      return;
+    }
+    // Aspect-ratio alias, e.g. `16:9` → 1365×768 (shorter side fixed at 768).
+    const ar = arg.match(/^(\d+):(\d+)$/);
+    if (ar) {
+      const a = parseInt(ar[1], 10), b = parseInt(ar[2], 10);
+      if (a < 1 || b < 1) {
+        addMessage('bot', '<span style="color:#f87171">⚠ Aspect ratio parts must be positive (e.g. <code>16:9</code>).</span>');
+        return;
+      }
+      const base = 768;
+      const w = a >= b ? Math.round(base * a / b) : base;
+      const h = a >= b ? base : Math.round(base * b / a);
+      currentResolution = { width: w, height: h };
+      addMessage('bot', `Resolution set to <strong style="color:#a78bfa">${w}×${h}</strong> (${a}:${b} aspect ratio).`);
       return;
     }
     const m = arg.match(/^(\d+)[x×*](\d+)$/);
