@@ -48,6 +48,16 @@ COMFY_FACEDETAILER_DIR = COMFY_WORKFLOW_DIR / 'facedetailer'
 _FACEDETAILER_WORKFLOW_RAW = os.environ.get('COMFY_FACEDETAILER_WORKFLOW') or None
 COMFY_FACEDETAILER_WORKFLOW = Path(_FACEDETAILER_WORKFLOW_RAW).stem if _FACEDETAILER_WORKFLOW_RAW else None
 
+# Upscaler workflows live in a subdir of the main workflow folder. Like the
+# face-detailer ones they take the last generated image as input (via an
+# <INPUT_IMAGE> LoadImage placeholder), but they take no prompt or LoRA tags.
+COMFY_UPSCALER_DIR = COMFY_WORKFLOW_DIR / 'upscaler'
+# Default upscaler workflow. Accepts a bare stem ("zip-2k-upscale") or a fuller
+# form like "upscaler/zip-2k-upscale.json"; normalised to the stem so it matches
+# the names returned by list_upscaler_workflows().
+_UPSCALER_WORKFLOW_RAW = os.environ.get('COMFY_UPSCALER_WORKFLOW') or None
+COMFY_UPSCALER_WORKFLOW = Path(_UPSCALER_WORKFLOW_RAW).stem if _UPSCALER_WORKFLOW_RAW else None
+
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -326,6 +336,7 @@ def index():
         default_server_os=COMFY_SERVER_OS,
         default_workflow=COMFY_WORKFLOW,
         default_face_workflow=COMFY_FACEDETAILER_WORKFLOW,
+        default_upscale_workflow=COMFY_UPSCALER_WORKFLOW,
     )
 
 
@@ -407,6 +418,18 @@ def list_facedetailer_workflows():
 @login_required
 def api_facedetailer_workflows():
     return jsonify(list_facedetailer_workflows())
+
+
+def list_upscaler_workflows():
+    if not COMFY_UPSCALER_DIR.is_dir():
+        return []
+    return [f.stem for f in sorted(COMFY_UPSCALER_DIR.glob("*.json"))]
+
+
+@app.route("/api/upscaler-workflows")
+@login_required
+def api_upscaler_workflows():
+    return jsonify(list_upscaler_workflows())
 
 
 @app.route("/api/purge", methods=["POST"])
@@ -558,6 +581,50 @@ def api_face_detail():
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_FACEDETAILER_DIR, input_image=image_path,
+    )
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/upscale", methods=["POST"])
+@login_required
+def api_upscale():
+    """Run an upscaler workflow over a previously generated image.
+
+    Like /api/face-detail this loads a workflow from the upscaler/ subdir and
+    fills its <INPUT_IMAGE> placeholder with the uploaded source image — but it
+    takes no prompt and no LoRA tags.
+    """
+    data = request.get_json(force=True)
+
+    # Resolve the source image (a /images/<name> URL) to a local file.
+    image_url = (data.get("image") or "").strip()
+    if not image_url:
+        return jsonify({"error": "image is required"}), 400
+    safe = secure_filename(image_url.rsplit("/", 1)[-1])
+    image_path = IMAGES_DIR / safe
+    if not safe or not image_path.is_file():
+        return jsonify({"error": "Source image not found"}), 404
+
+    # Resolve and validate the workflow against the known upscaler/ files so a
+    # client-supplied name can't escape the directory (e.g. via "../").
+    available = list_upscaler_workflows()
+    workflow_name = data.get("workflow") or COMFY_UPSCALER_WORKFLOW
+    if workflow_name:
+        stem = Path(workflow_name).stem
+        if stem not in available:
+            return jsonify({"error": f"Unknown upscaler workflow: {workflow_name}"}), 400
+        workflow_name = stem
+    elif available:
+        workflow_name = available[0]
+    else:
+        return jsonify({"error": "No upscaler workflows available"}), 400
+
+    server_address = data.get("server") or COMFY_SERVER
+    server_os      = data.get("server_os") or COMFY_SERVER_OS
+
+    job_id = start_generation_job(
+        "", [], server_address, server_os, workflow_name,
+        workflow_dir=COMFY_UPSCALER_DIR, input_image=image_path,
     )
     return jsonify({"job_id": job_id})
 

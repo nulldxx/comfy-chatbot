@@ -145,6 +145,7 @@ const SLASH_COMMANDS = [
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
   { cmd: '/slideshow',  desc: 'browse generated images oldest first (today / session / reverse)', args: ' ' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
+  { cmd: '/upscale',    desc: 'upscale the last image (no prompt)', args: ''  },
   { cmd: '/workflow',   desc: 'choose a workflow template',         args: ''  },
   { cmd: '/workflow-iterate', desc: 'run a prompt against several workflows', args: ' ' },
 ];
@@ -299,6 +300,7 @@ const RESOLUTION_PRESETS = {
 let currentServer     = null;  // {address, os, name}
 let currentWorkflow   = null;  // string
 let currentFaceWorkflow = null;  // string — face-detailer workflow for /face-detail
+let currentUpscaleWorkflow = null; // string — upscaler workflow for /upscale
 let lastFaceDetailPrompt = null; // last prompt used by a manual /face-detail; reused by the per-image face icon
 let currentResolution = null;  // {width, height} or null
 let iterations        = 1;     // images generated per prompt (set via /iterations)
@@ -664,6 +666,16 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/upscale') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!sessionImages.length) {
+      addMessage('bot', 'No image from this session to upscale — generate one first.');
+      return;
+    }
+    runUpscale(sessionImages[sessionImages.length - 1]);
+    return;
+  }
+
   addMessage('user', escapeHtml(raw), raw);
 
   if (cmd === '/help') {
@@ -693,6 +705,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several workflows, then run the prompt against each one</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail &lt;prompt&gt;</code> — run a face-detailer workflow over the last generated image (supports <code>&lt;lora:…&gt;</code> tags)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow <code>/face-detail</code> uses</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale</code> — run an upscaler workflow over the last generated image (no prompt needed)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
@@ -1305,6 +1318,16 @@ function runFaceDetail(prompt, image) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+// Runs an upscaler workflow over `image`. Shared by the /upscale command and the
+// per-image "up" button. Takes no prompt. Returns the generation promise so
+// callers can re-enable their own controls when it settles.
+function runUpscale(image) {
+  iterationsFromSequence = false; // an upscale run is a single image, not a sequence
+  sendBtn.disabled = true;
+  return runGeneration('', '', null, { upscale: { image, workflow: currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW } })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
 // Appends a generated image to a bubble with a trash-icon overlay (top-right,
 // deletes from chat + output folder) and a face-icon overlay (bottom-right,
 // re-runs the last /face-detail prompt over this image).
@@ -1332,6 +1355,18 @@ function appendChatImage(container, url) {
     runFaceDetail(lastFaceDetailPrompt, url).finally(() => { face.disabled = false; });
   });
 
+  const up = document.createElement('button');
+  up.className = 'img-up';
+  up.title = 'Upscale image';
+  up.textContent = 'up';
+  up.addEventListener('click', e => {
+    e.stopPropagation();
+    if (up.disabled || sendBtn.disabled) return;
+    up.disabled = true;
+    addMessage('user', 'Upscale image');
+    runUpscale(url).finally(() => { up.disabled = false; });
+  });
+
   const del = document.createElement('button');
   del.className = 'img-del';
   del.title = 'Delete image';
@@ -1356,6 +1391,7 @@ function appendChatImage(container, url) {
   wrap.appendChild(img);
   wrap.appendChild(del);
   wrap.appendChild(face);
+  wrap.appendChild(up);
   container.appendChild(wrap);
 }
 
@@ -1419,9 +1455,22 @@ function renderReviewGrid(bubble, urls) {
       runFaceDetail(lastFaceDetailPrompt, url).finally(() => { face.disabled = false; });
     });
 
+    const up = document.createElement('button');
+    up.className = 'img-up review-up';   // reuse existing img-up styling
+    up.title = 'Upscale image';
+    up.textContent = 'up';
+    up.addEventListener('click', e => {
+      e.stopPropagation();
+      if (up.disabled || sendBtn.disabled) return;
+      up.disabled = true;
+      addMessage('user', 'Upscale image');
+      runUpscale(url).finally(() => { up.disabled = false; });
+    });
+
     cell.appendChild(img);
     cell.appendChild(del);
     cell.appendChild(face);
+    cell.appendChild(up);
     grid.appendChild(cell);
   });
 
@@ -1495,7 +1544,9 @@ function sendMessage() {
 function runGeneration(raw, label, workflowOverride, opts = {}) {
   return new Promise(resolve => {
   const face = opts.face || null;
-  const endpoint = face ? '/api/face-detail' : '/api/generate';
+  const upscale = opts.upscale || null;
+  const job = face || upscale; // an image-input job (face-detail or upscale) vs a plain generation
+  const endpoint = face ? '/api/face-detail' : upscale ? '/api/upscale' : '/api/generate';
   const botBubble = addMessage('bot', `
     <div class="status-text" id="status-line">Connecting…${label}</div>
     <div class="dots"><span></span><span></span><span></span></div>
@@ -1516,9 +1567,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   cancelBtn.disabled = true;
   botBubble.appendChild(cancelBtn);
 
-  // Face-detail runs its own workflow over a source image; a plain generation
-  // uses the selected/override workflow and the current resolution.
-  const wf = face ? face.workflow : (workflowOverride || currentWorkflow);
+  // Face-detail and upscale run their own workflow over a source image; a plain
+  // generation uses the selected/override workflow and the current resolution.
+  const wf = job ? job.workflow : (workflowOverride || currentWorkflow);
   fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1526,8 +1577,8 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       prompt: raw,
       ...(currentServer     ? { server: currentServer.address, server_os: currentServer.os } : {}),
       ...(wf ? { workflow: wf } : {}),
-      ...(!face && currentResolution ? { width: currentResolution.width, height: currentResolution.height } : {}),
-      ...(face ? { image: face.image } : {}),
+      ...(!job && currentResolution ? { width: currentResolution.width, height: currentResolution.height } : {}),
+      ...(job ? { image: job.image } : {}),
     }),
   })
   .then(r => r.json())

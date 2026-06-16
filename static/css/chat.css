@@ -173,6 +173,21 @@ header a:hover { color: #a78bfa; }
 @media (hover: none) {
   .img-face { opacity: 0.6; }
 }
+.img-up {
+  position: absolute; top: 8px; left: 8px;
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 5px 8px; font-size: 0.85rem;
+  cursor: pointer; line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.img-wrap:hover .img-up { opacity: 1; }
+.img-up:hover { border-color: #34d399; color: #34d399; }
+.img-up:disabled { cursor: default; opacity: 0.4; }
+@media (hover: none) {
+  .img-up { opacity: 0.6; }
+}
 
 /* Review grid (/review) */
 .review-grid {
@@ -207,10 +222,18 @@ header a:hover { color: #a78bfa; }
   font-size: 0.8rem;
 }
 .review-thumb:hover .review-face { opacity: 1; }
+.review-up {
+  position: absolute;
+  top: 4px; left: 4px;
+  padding: 3px 6px;          /* tighter than the in-chat upscale button */
+  font-size: 0.8rem;
+}
+.review-thumb:hover .review-up { opacity: 1; }
 @media (max-width: 600px) {
   .review-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
   .review-del { opacity: 0.6; }   /* always visible where there's no hover */
   .review-face { opacity: 0.6; }
+  .review-up { opacity: 0.6; }
 }
 
 .bubble code { background: #0f172a; padding: 1px 5px; border-radius: 4px; font-size: 0.82em; }
