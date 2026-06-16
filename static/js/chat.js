@@ -131,7 +131,7 @@ const SLASH_COMMANDS = [
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
   { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
-  { cmd: '/face-detail', desc: 'run a face-detailer workflow on the last image', args: ' ' },
+  { cmd: '/face-detail-prompt', desc: 'set the prompt the face-detail icons use', args: ' ' },
   { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
@@ -299,9 +299,9 @@ const RESOLUTION_PRESETS = {
 // Current selections (null = use backend default)
 let currentServer     = null;  // {address, os, name}
 let currentWorkflow   = null;  // string
-let currentFaceWorkflow = null;  // string — face-detailer workflow for /face-detail
+let currentFaceWorkflow = null;  // string — face-detailer workflow the face icons use
 let currentUpscaleWorkflow = null; // string — upscaler workflow for /upscale
-let lastFaceDetailPrompt = null; // last prompt used by a manual /face-detail; reused by the per-image face icon
+let lastFaceDetailPrompt = null; // global override set by /face-detail-prompt; takes priority over per-image derivation
 let currentResolution = { width: 1365, height: 768 };  // {width, height} or null (null = workflow default); defaults to 16:9
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
@@ -645,24 +645,19 @@ function handleSlashCommand(raw) {
     return;
   }
 
-  if (cmd === '/face-detail') {
-    const prompt = raw.slice('/face-detail'.length).trim();
+  if (cmd === '/face-detail-prompt') {
+    const prompt = raw.slice('/face-detail-prompt'.length).trim();
     addMessage('user', escapeHtml(raw), raw);
     if (!prompt) {
-      addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/face-detail a clear, detailed face</code></span>');
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/face-detail-prompt a clear, detailed face &lt;lora:name:strength&gt;</code></span>');
       return;
     }
     if (!/<lora:[^>]+>/i.test(prompt)) {
-      addMessage('bot', '<span style="color:#f87171">⚠ <code>/face-detail</code> needs a LoRA tag in the prompt, e.g. <code>/face-detail a clear, detailed face &lt;lora:name:strength&gt;</code> — type <code>/lora</code> to find one.</span>');
+      addMessage('bot', '<span style="color:#f87171">⚠ <code>/face-detail-prompt</code> needs a LoRA tag in the prompt, e.g. <code>/face-detail-prompt a clear, detailed face &lt;lora:name:strength&gt;</code> — type <code>/lora</code> to find one.</span>');
       return;
     }
-    if (!sessionImages.length) {
-      addMessage('bot', 'No image from this session to run face detail on — generate one first.');
-      return;
-    }
-    const image = sessionImages[sessionImages.length - 1];
-    lastFaceDetailPrompt = prompt; // remember so the per-image face icon can reuse it
-    runFaceDetail(prompt, image);
+    lastFaceDetailPrompt = prompt; // overrides per-image derivation; the face icons reuse it
+    addMessage('bot', `Face-detail prompt set — the face icons will use <code>${escapeHtml(prompt)}</code>.`);
     return;
   }
 
@@ -703,8 +698,8 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to each Grok prompt (no args lists them; <code>clear</code> removes them)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several workflows, then run the prompt against each one</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail &lt;prompt&gt;</code> — run a face-detailer workflow over the last generated image (supports <code>&lt;lora:…&gt;</code> tags)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow <code>/face-detail</code> uses</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt &lt;prompt&gt;</code> — set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image's own prompt (needs a <code>&lt;lora:…&gt;</code> tag)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale</code> — run an upscaler workflow over the last generated image (no prompt needed)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
@@ -1305,7 +1300,7 @@ const sessionImages = [];
 
 // url -> the generation prompt (raw, incl. <lora:…> tags) that produced it.
 // Lets a face icon derive a default face-detail prompt from the image's own
-// generation prompt when no explicit /face-detail prompt has been set.
+// generation prompt when no explicit /face-detail-prompt has been set.
 const imagePrompts = {};
 
 // Deletes an image file from the server's output folder. Resolves on
@@ -1341,9 +1336,9 @@ function deriveFaceDetailPrompt(genPrompt) {
   return `${subject} ${loraTags.join(' ')}`;
 }
 
-// Runs a face-detailer workflow over `image` using `prompt`. Shared by the
-// /face-detail command and the per-image face icon. Returns the generation
-// promise so callers can re-enable their own controls when it settles.
+// Runs a face-detailer workflow over `image` using `prompt`. Driven by the
+// per-image face icons. Returns the generation promise so callers can
+// re-enable their own controls when it settles.
 function runFaceDetail(prompt, image) {
   iterationsFromSequence = false; // a face-detail run is a single image, not a sequence
   sendBtn.disabled = true;
@@ -1363,7 +1358,8 @@ function runUpscale(image) {
 
 // Appends a generated image to a bubble with a trash-icon overlay (top-right,
 // deletes from chat + output folder) and a face-icon overlay (bottom-right,
-// re-runs the last /face-detail prompt over this image).
+// runs face detail over this image using the /face-detail-prompt override or a
+// prompt derived from this image's own generation prompt).
 function appendChatImage(container, url) {
   const wrap = document.createElement('div');
   wrap.className = 'img-wrap';
@@ -1381,7 +1377,7 @@ function appendChatImage(container, url) {
     if (face.disabled || sendBtn.disabled) return;
     const prompt = lastFaceDetailPrompt || deriveFaceDetailPrompt(imagePrompts[url]);
     if (!prompt) {
-      addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — run <code>/face-detail &lt;prompt&gt;</code> manually</span>');
+      addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
       return;
     }
     face.disabled = true;
@@ -1482,7 +1478,7 @@ function renderReviewGrid(bubble, urls) {
       if (face.disabled || sendBtn.disabled) return;
       const prompt = lastFaceDetailPrompt || deriveFaceDetailPrompt(imagePrompts[url]);
       if (!prompt) {
-        addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — run <code>/face-detail &lt;prompt&gt;</code> manually</span>');
+        addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
         return;
       }
       face.disabled = true;
