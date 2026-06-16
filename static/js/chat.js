@@ -1334,15 +1334,22 @@ function removeImageFromChat(url) {
 }
 
 // Build a default face-detail prompt from a generation prompt by keeping its
-// <lora:…> tag(s) and prepending a subject phrase. Returns null if no LoRA.
+// <lora:…> tag(s) and a subject phrase, plus any facial expressions / emotions
+// found in the prompt so the re-detailed face keeps the original mood. Returns
+// null if no LoRA. Expressions are appended as comma-separated tags (how
+// diffusion prompts read), so noun/adjective grammar mixing doesn't matter.
 const SUBJECT_RE = /\b(woman|man|girl|boy|lady)\b/i;   // \b stops 'man' matching inside 'woman'
+// Multi-word / hyphenated forms first so e.g. "open mouth" wins over a bare word.
+const EXPRESSION_RE = /\b(open[- ]mouthed|open mouth|wide[- ]eyed|teary[- ]eyed|gritted teeth|clenched teeth|furrowed brow|raised eyebrows?|tongue out|biting lip|lip bite|pursed lips|puppy eyes|side[- ]eye|rolling eyes|eyes closed|closed eyes|head tilt|smiling|smile|grinning|grin|laughing|laugh|chuckling|giggling|beaming|smirking|smirk|winking|wink|frowning|frown|scowling|scowl|pouting|pout|crying|sobbing|weeping|tearful|sniffling|screaming|scream|shouting|yelling|yawning|sneering|snarling|grimacing|gasping|blushing|flushed|surprised|shocked|astonished|amazed|stunned|angry|furious|enraged|rage|annoyed|irritated|sad|sorrowful|melancholy|depressed|gloomy|happy|joyful|joy|cheerful|delighted|gleeful|ecstatic|ecstasy|euphoric|blissful|content|terrified|scared|fearful|afraid|frightened|horrified|panicked|worried|anxious|nervous|confused|puzzled|perplexed|disgusted|disgust|contempt|bored|tired|sleepy|exhausted|serious|stern|solemn|calm|serene|peaceful|relaxed|seductive|flirtatious|sultry|coy|smug|mischievous|playful|determined|focused|concentrating|pained|anguished|agony|suffering|embarrassed|ashamed|shy|bashful|hopeful|longing|yearning|dreamy|thoughtful|pensive|suspicious|skeptical|disappointed|frustrated|desperate|hysterical|manic|deadpan|expressionless|neutral|intense|fierce|menacing)\b/gi;
 function deriveFaceDetailPrompt(genPrompt) {
   if (!genPrompt) return null;
   const loraTags = genPrompt.match(/<lora:[^>]+>/gi);   // preserves name + strength verbatim
   if (!loraTags || !loraTags.length) return null;
   const m = genPrompt.match(SUBJECT_RE);
   const subject = m ? `a ${m[1].toLowerCase()}'s face` : 'a face';
-  return `${subject} ${loraTags.join(' ')}`;
+  const expressions = [...new Set((genPrompt.match(EXPRESSION_RE) || []).map(s => s.toLowerCase()))];
+  const desc = [subject, ...expressions].join(', ');
+  return `${desc} ${loraTags.join(' ')}`;
 }
 
 // Runs a face-detailer workflow over `image` using `prompt`. Driven by the
