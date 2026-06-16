@@ -132,6 +132,7 @@ const SLASH_COMMANDS = [
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
   { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
   { cmd: '/face-detail-prompt', desc: 'set the prompt the face-detail icons use', args: ' ' },
+  { cmd: '/face-detail-prompt-reset', desc: 'clear the override; derive prompts again', args: '' },
   { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
@@ -661,6 +662,13 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/face-detail-prompt-reset') {
+    addMessage('user', escapeHtml(raw), raw);
+    lastFaceDetailPrompt = null; // back to deriving a prompt from each image's own generation prompt
+    addMessage('bot', 'Face-detail prompt cleared — the face icons will derive a prompt from each image again.');
+    return;
+  }
+
   if (cmd === '/upscale') {
     addMessage('user', escapeHtml(raw), raw);
     if (!sessionImages.length) {
@@ -699,6 +707,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several workflows, then run the prompt against each one</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt &lt;prompt&gt;</code> — set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image's own prompt (needs a <code>&lt;lora:…&gt;</code> tag)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt-reset</code> — clear that override so the face icons derive a prompt from each image again</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale</code> — run an upscaler workflow over the last generated image (no prompt needed)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
