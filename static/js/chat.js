@@ -1303,6 +1303,11 @@ function doUpload(file, bubble) {
 // URLs of images generated this session, oldest first. Used by /delete.
 const sessionImages = [];
 
+// url -> the generation prompt (raw, incl. <lora:…> tags) that produced it.
+// Lets a face icon derive a default face-detail prompt from the image's own
+// generation prompt when no explicit /face-detail prompt has been set.
+const imagePrompts = {};
+
 // Deletes an image file from the server's output folder. Resolves on
 // success; a 404 also resolves since the file is already gone (e.g.
 // deleted via /slideshow).
@@ -1321,6 +1326,19 @@ function removeImageFromChat(url) {
   });
   const i = sessionImages.indexOf(url);
   if (i !== -1) sessionImages.splice(i, 1);
+  delete imagePrompts[url];
+}
+
+// Build a default face-detail prompt from a generation prompt by keeping its
+// <lora:…> tag(s) and prepending a subject phrase. Returns null if no LoRA.
+const SUBJECT_RE = /\b(woman|man|girl|boy|lady)\b/i;   // \b stops 'man' matching inside 'woman'
+function deriveFaceDetailPrompt(genPrompt) {
+  if (!genPrompt) return null;
+  const loraTags = genPrompt.match(/<lora:[^>]+>/gi);   // preserves name + strength verbatim
+  if (!loraTags || !loraTags.length) return null;
+  const m = genPrompt.match(SUBJECT_RE);
+  const subject = m ? `a ${m[1].toLowerCase()}'s face` : 'a face';
+  return `${subject} ${loraTags.join(' ')}`;
 }
 
 // Runs a face-detailer workflow over `image` using `prompt`. Shared by the
@@ -1361,13 +1379,14 @@ function appendChatImage(container, url) {
   face.addEventListener('click', e => {
     e.stopPropagation();
     if (face.disabled || sendBtn.disabled) return;
-    if (!lastFaceDetailPrompt) {
-      addMessage('bot', '<span style="color:#f87171">You must run <code>/face-detail &lt;prompt&gt;</code> first</span>');
+    const prompt = lastFaceDetailPrompt || deriveFaceDetailPrompt(imagePrompts[url]);
+    if (!prompt) {
+      addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — run <code>/face-detail &lt;prompt&gt;</code> manually</span>');
       return;
     }
     face.disabled = true;
-    addMessage('user', 'Face detail: ' + escapeHtml(lastFaceDetailPrompt));
-    runFaceDetail(lastFaceDetailPrompt, url).finally(() => { face.disabled = false; });
+    addMessage('user', 'Face detail: ' + escapeHtml(prompt));
+    runFaceDetail(prompt, url).finally(() => { face.disabled = false; });
   });
 
   const up = document.createElement('button');
@@ -1461,13 +1480,14 @@ function renderReviewGrid(bubble, urls) {
     face.addEventListener('click', e => {
       e.stopPropagation();
       if (face.disabled || sendBtn.disabled) return;
-      if (!lastFaceDetailPrompt) {
-        addMessage('bot', '<span style="color:#f87171">You must run <code>/face-detail &lt;prompt&gt;</code> first</span>');
+      const prompt = lastFaceDetailPrompt || deriveFaceDetailPrompt(imagePrompts[url]);
+      if (!prompt) {
+        addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — run <code>/face-detail &lt;prompt&gt;</code> manually</span>');
         return;
       }
       face.disabled = true;
-      addMessage('user', 'Face detail: ' + escapeHtml(lastFaceDetailPrompt));
-      runFaceDetail(lastFaceDetailPrompt, url).finally(() => { face.disabled = false; });
+      addMessage('user', 'Face detail: ' + escapeHtml(prompt));
+      runFaceDetail(prompt, url).finally(() => { face.disabled = false; });
     });
 
     const up = document.createElement('button');
@@ -1623,8 +1643,13 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         barWrap.remove();
         cancelBtn.remove();
         statusLine.textContent = `Done — ${msg.images.length} image(s)${label}`;
+        // The prompt to remember for this image: the raw generation prompt, or
+        // for prompt-less jobs (upscale) the source image's own prompt, so a
+        // face icon on the result can still derive a face-detail prompt.
+        const originPrompt = raw || (job && imagePrompts[job.image]) || '';
         msg.images.forEach(url => {
           sessionImages.push(url);
+          if (originPrompt) imagePrompts[url] = originPrompt;
           appendChatImage(botBubble, url);
         });
         scrollBottom();
