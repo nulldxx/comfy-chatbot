@@ -35,18 +35,9 @@ def grok_available():
 # the worker kill and the client receives a non-JSON body (gunicorn error page)
 # instead of a clean {"error": ...} — surfacing as a "JSON.parse: unexpected
 # character at line 1 column 1" in the browser.
-def _chat(messages, temperature=0.8, timeout=90, max_tokens=None):
+def _chat(messages, temperature=0.8, timeout=90):
     if not GROK_API_KEY:
         raise GrokError("Grok is not configured — set XAI_API_KEY in the environment.")
-    payload = {
-        "model": GROK_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        # Guarantee a parseable JSON object back rather than free-form text.
-        "response_format": {"type": "json_object"},
-    }
-    if max_tokens is not None:
-        payload["max_tokens"] = max_tokens
     try:
         resp = requests.post(
             f"{GROK_BASE_URL}/chat/completions",
@@ -54,7 +45,7 @@ def _chat(messages, temperature=0.8, timeout=90, max_tokens=None):
                 "Authorization": f"Bearer {GROK_API_KEY}",
                 "Content-Type": "application/json",
             },
-            json=payload,
+            json={"model": GROK_MODEL, "messages": messages, "temperature": temperature},
             timeout=timeout,
         )
     except requests.RequestException as e:
@@ -97,17 +88,11 @@ Each generated prompt should also:
 Return ONLY valid JSON in exactly this structure:
 {{"prompts": ["first prompt", "second prompt", "..."]}}"""
 
-    # Each detailed prompt is a full paragraph (~300 tokens). Budget generously
-    # per prompt plus a fixed overhead so the JSON array is never cut off
-    # mid-string — a truncated response has no closing brace and fails parsing.
-    max_tokens = 1024 + count * 500
-
     content = _chat(
         [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
-        ],
-        max_tokens=max_tokens,
+        ]
     )
 
     # Extract the JSON object even if the model wraps it in stray text.
