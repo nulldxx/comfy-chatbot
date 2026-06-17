@@ -50,6 +50,10 @@ DEFAULTS = {
 
 log = logging.getLogger("archive-agent")
 
+# Marker file written at the volume root on mount; the container verifies it
+# exists before deleting any originals. Keep in sync with app.py ARCHIVE_MARKER.
+MARKER_NAME = ".comfy-archive"
+
 
 def load_config():
     cfg = dict(DEFAULTS)
@@ -125,6 +129,15 @@ def _ensure_bind(src, mount_dir, volume, rollback):
         os.chmod(mount_dir, 0o777)
     except OSError as exc:
         log.warning("could not chmod %s: %s", mount_dir, exc)
+
+    # Drop a marker file at the volume root. The container checks for this before
+    # copying+deleting: if MOUNT_DIR and the container's bind source disagree (or
+    # the mount didn't propagate), the container sees a plain directory with no
+    # marker and aborts rather than silently writing to unencrypted disk.
+    try:
+        (Path(mount_dir) / MARKER_NAME).write_text("comfy-archive\n", encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not write marker in %s: %s", mount_dir, exc)
     return None
 
 
@@ -175,9 +188,19 @@ def handle_unmount(cfg, req):
     if not volume:
         return {"ok": False, "error": "unmount requires 'volume'"}
     mount_dir = cfg["MOUNT_DIR"]
-    # Detach the bind first so zuluCrypt can unmount its own mountpoint.
-    if os.path.ismount(mount_dir):
-        subprocess.run(["umount", mount_dir], capture_output=True, text=True)
+    # Detach the volume bind(s) so zuluCrypt can unmount its own mountpoint. A
+    # killed run can leave binds stacked on mount_dir; a single umount would pop
+    # only one, leaving the decrypted fs busy so the close below fails and the
+    # volume stays "open" forever. Pop every bind whose device is the volume's,
+    # stopping at the shared self-bind anchor (same device as mount_dir's parent,
+    # see setup_shared_mount) so propagation into the container survives.
+    anchor_dev = os.stat(os.path.dirname(mount_dir) or "/").st_dev
+    for _ in range(16):
+        if not os.path.ismount(mount_dir) or os.stat(mount_dir).st_dev == anchor_dev:
+            break
+        if subprocess.run(["umount", mount_dir],
+                          capture_output=True, text=True).returncode != 0:
+            break
     rc, out = _run(["zuluCrypt-cli", "-q", "-d", volume])
     if rc != 0:
         log.error("close failed (rc=%s): %s", rc, out)

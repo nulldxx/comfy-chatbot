@@ -65,10 +65,13 @@ services:
       # Archive agent socket — lets the app ask the host agent to mount/unmount.
       - /run/archive-agent.sock:/run/archive-agent.sock
       # Archive mount point. The host agent mounts the encrypted volume at its
-      # MOUNT_DIR (default /var/lib/comfy-archive/mnt, which the .deb sets up as a
-      # shared mount); rshared propagation makes that mount visible in here.
+      # MOUNT_DIR (default /var/lib/archive-agent/mnt, which the .deb sets up as a
+      # shared mount); rshared propagation makes that mount visible in here. This
+      # source MUST match the agent's MOUNT_DIR in /etc/archive-agent.conf — if it
+      # doesn't, images are copied to plain disk here and the encrypted volume
+      # never receives them.
       - type: bind
-        source: /var/lib/comfy-archive/mnt
+        source: /var/lib/archive-agent/mnt
         target: /app/archive
         bind:
           propagation: rshared

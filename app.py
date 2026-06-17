@@ -74,6 +74,11 @@ ARCHIVE_VOLUME = os.environ.get('ARCHIVE_VOLUME', '')          # host path to en
 ARCHIVE_PASSWORD = os.environ.get('ARCHIVE_PASSWORD', '')
 ARCHIVE_AGENT_SOCKET = os.environ.get('ARCHIVE_AGENT_SOCKET', '/run/archive-agent.sock')
 ARCHIVE_MOUNT_DIR = Path(os.environ.get('ARCHIVE_MOUNT_DIR', '/app/archive'))
+# Marker file the agent writes at the volume root on mount. We refuse to delete
+# originals unless this is visible here — proof the encrypted volume actually
+# propagated into the container and we're not writing to plain disk. Keep in
+# sync with MARKER_NAME in packaging/agent/archive-agent.
+ARCHIVE_MARKER = '.comfy-archive'
 # Only one mount/copy/unmount cycle at a time (gunicorn runs gthread workers).
 archive_lock = threading.Lock()
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -876,6 +881,13 @@ def api_archive():
             return jsonify({"error": resp.get("error", "mount failed")}), 502
 
         try:
+            # Safety: the agent writes ARCHIVE_MARKER at the volume root on mount.
+            # If it isn't visible the encrypted volume didn't propagate in (e.g.
+            # MOUNT_DIR and this bind source disagree), so writing here would land
+            # on plain disk. Abort before deleting anything.
+            if not (ARCHIVE_MOUNT_DIR / ARCHIVE_MARKER).exists():
+                return jsonify({"error": "archive volume not mounted (safety check "
+                                         "failed); no files were deleted"}), 500
             dest_dir = ARCHIVE_MOUNT_DIR / "staging" / guid
             dest_dir.mkdir(parents=True, exist_ok=True)
             # Copy + verify every file before deleting any original (move semantics).

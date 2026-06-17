@@ -19,8 +19,12 @@ class FakeAgent:
     records every request and replies {"ok": true} so the endpoint can exercise
     its mount -> copy -> unmount flow without zuluCrypt-cli."""
 
-    def __init__(self, sock_path):
+    def __init__(self, sock_path, mount_dir=None):
         self.sock_path = sock_path
+        self.mount_dir = mount_dir
+        # When True, mount succeeds but skips writing the marker — emulates a
+        # MOUNT_DIR/bind-source mismatch where the volume never propagates in.
+        self.skip_marker = False
         self.requests = []
         self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._srv.bind(sock_path)
@@ -50,6 +54,11 @@ class FakeAgent:
                 resp = {"ok": True}
                 if req.get("action") == "mount":
                     resp["mountpoint"] = req.get("volume")
+                    # Real agent drops a marker at the volume root on mount.
+                    if self.mount_dir and not self.skip_marker:
+                        with open(os.path.join(self.mount_dir, ".comfy-archive"),
+                                  "w", encoding="utf-8") as fh:
+                            fh.write("comfy-archive\n")
                 conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
 
     def stop(self):
@@ -71,7 +80,7 @@ class TestArchive(unittest.TestCase):
         os.makedirs(self.mount_dir)
 
         self.sock_path = os.path.join(self.tmp, "agent.sock")
-        self.agent = FakeAgent(self.sock_path)
+        self.agent = FakeAgent(self.sock_path, mount_dir=self.mount_dir)
         self.agent.start()
 
         # Point the app's module globals at our temp fixtures.
@@ -175,6 +184,21 @@ class TestArchive(unittest.TestCase):
             json={"scope": "session", "filenames": ["../etc/passwd"]},
         )
         self.assertEqual(resp.status_code, 400)
+
+    def test_archive_aborts_without_marker(self):
+        # If the volume marker isn't visible the encrypted volume didn't mount
+        # here (e.g. MOUNT_DIR/bind-source mismatch). The endpoint must refuse to
+        # delete originals rather than silently writing to plain disk.
+        self.agent.skip_marker = True
+        self._auth()
+        self._make_image("a.png")
+        resp = self.client.post("/api/archive", json={"scope": "all"})
+        self.assertEqual(resp.status_code, 500)
+        # Original is preserved — no data loss.
+        self.assertIn("a.png", os.listdir(self.images_dir))
+        # The volume was still unmounted afterwards.
+        actions = [r["action"] for r in self.agent.requests]
+        self.assertEqual(actions, ["mount", "unmount"])
 
     def test_archive_empty_scope_noop(self):
         self._auth()
