@@ -147,7 +147,10 @@ const SLASH_COMMANDS = [
   { cmd: '/sequence',   desc: 'generate a prompt sequence from a master prompt (Grok)', args: ' ' },
   { cmd: '/sequence-replacement', desc: 'add a find→replace applied to Grok prompts', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
-  { cmd: '/slideshow',  desc: 'browse generated images oldest first (today / session / reverse)', args: ' ' },
+  { cmd: '/slideshow-all',     desc: 'browse every image, oldest first',       args: '' },
+  { cmd: '/slideshow-reverse', desc: 'browse every image, newest first',       args: '' },
+  { cmd: '/slideshow-session', desc: 'browse this session\'s images',          args: '' },
+  { cmd: '/slideshow-today',   desc: 'browse today\'s images, oldest first',   args: '' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
   { cmd: '/upscale',    desc: 'upscale the last image (no prompt)', args: ''  },
   { cmd: '/workflow',   desc: 'choose a workflow template',         args: ''  },
@@ -725,7 +728,10 @@ function handleSlashCommand(raw) {
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review [all|today]</code> — grid of images, oldest first (no arg this session · <code>all</code> every image · <code>today</code> only today's)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow [today|session|reverse]</code> — browse generated images, oldest first (<code>today</code> only today's · <code>session</code> only this session's · <code>reverse</code> newest first)
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-all</code> — browse every image, oldest first</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-reverse</code> — browse every image, newest first</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-today</code> — browse today's images, oldest first</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-session</code> — browse this session's images
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">← → keys on desktop &nbsp;·&nbsp; Del deletes the current image &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s</div>
         </div>
       </div>
@@ -857,37 +863,31 @@ function handleSlashCommand(raw) {
     return;
   }
 
-  if (cmd === '/slideshow') {
-    const args = parts.slice(1).map(a => a.toLowerCase());
-    if (!args.every(a => a === 'today' || a === 'reverse' || a === 'session')) {
-      addMessage('bot', `Usage: <code>/slideshow</code> — all images (oldest first), <code>/slideshow today</code> — only today's, <code>/slideshow session</code> — only this session's, <code>/slideshow reverse</code> — newest first`);
+  if (cmd === '/slideshow-session') {
+    if (!sessionImages.length) {
+      addMessage('bot', 'No images from this session yet — generate some first!');
       return;
     }
-    const todayOnly   = args.includes('today');
-    const sessionOnly = args.includes('session');
-    const reverse     = args.includes('reverse');
-    if (sessionOnly) {
-      if (!sessionImages.length) {
-        addMessage('bot', 'No images from this session yet — generate some first!');
-        return;
-      }
-      const bubble = addMessage('bot', '');
-      // sessionImages is oldest-first; reverse for newest-first.
-      const images = reverse ? sessionImages.slice().reverse() : sessionImages.slice();
-      activeSlideshowCtrl = createSlideshow(bubble, images);
-      return;
-    }
+    const bubble = addMessage('bot', '');
+    // sessionImages is oldest-first.
+    activeSlideshowCtrl = createSlideshow(bubble, sessionImages.slice());
+    return;
+  }
+
+  if (cmd === '/slideshow-all' || cmd === '/slideshow-today' || cmd === '/slideshow-reverse') {
+    const todayOnly = cmd === '/slideshow-today';
+    const reverse   = cmd === '/slideshow-reverse';
     const bubble = addMessage('bot', '<div class="status-text">Loading images…</div>');
     fetch(todayOnly ? '/api/images?filter=today' : '/api/images')
       .then(r => r.json())
       .then(images => {
         if (!images.length) {
           bubble.innerHTML = todayOnly
-            ? 'No images generated today — try <code>/slideshow</code> for all images.'
+            ? 'No images generated today — try <code>/slideshow-all</code> for all images.'
             : 'No images yet — generate some first!';
           return;
         }
-        // The API returns newest-first; show oldest-first by default unless reversed.
+        // The API returns newest-first; show oldest-first unless reversed.
         if (!reverse) images = images.slice().reverse();
         activeSlideshowCtrl = createSlideshow(bubble, images);
       })
@@ -1418,7 +1418,7 @@ const imagePrompts = {};
 
 // Deletes an image file from the server's output folder. Resolves on
 // success; a 404 also resolves since the file is already gone (e.g.
-// deleted via /slideshow).
+// deleted from a slideshow).
 function deleteImageFile(url) {
   const filename = url.split('/').pop();
   return fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
