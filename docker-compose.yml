@@ -41,12 +41,37 @@ services:
       # Optional: override the Grok model used for /sequence
       - GROK_MODEL=grok-4-1-fast-non-reasoning
 
+      # Archive (/archive-* commands) — copies images into a password-encrypted
+      # volume, then deletes the originals. Requires the comfy-archive-agent .deb
+      # installed and running on the host (it does the privileged zuluCrypt-cli
+      # mount). Leave ARCHIVE_VOLUME/ARCHIVE_PASSWORD blank to disable archiving.
+      #
+      # Host path the agent opens with zuluCrypt-cli (LUKS/VeraCrypt auto-detected):
+      - ARCHIVE_VOLUME=${ARCHIVE_VOLUME:-}
+      # Passphrase for the encrypted volume — sent to the agent per request; the
+      # agent never stores it.
+      - ARCHIVE_PASSWORD=${ARCHIVE_PASSWORD:-}
+      # Unix socket the host agent listens on (bind-mounted below).
+      - ARCHIVE_AGENT_SOCKET=/run/comfy-archive-agent.sock
+      # Where the host mount appears inside the container (bind-mounted below).
+      - ARCHIVE_MOUNT_DIR=/app/archive
+
     volumes:
       # Mount your existing dot-files comfyui directory so workflow templates
       # and loras.json are available without being baked into the image.
       - ~/dot-files/comfyui:/app/workflows:ro
       # Persist generated images across container restarts.
       - ~/Pictures/ComfyUI:/app/output
+      # Archive agent socket — lets the app ask the host agent to mount/unmount.
+      - /run/comfy-archive-agent.sock:/run/comfy-archive-agent.sock
+      # Archive mount point. The host agent mounts the encrypted volume at its
+      # MOUNT_DIR (default /var/lib/comfy-archive/mnt, which the .deb sets up as a
+      # shared mount); rshared propagation makes that mount visible in here.
+      - type: bind
+        source: /var/lib/comfy-archive/mnt
+        target: /app/archive
+        bind:
+          propagation: rshared
 
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health', timeout=5)"]

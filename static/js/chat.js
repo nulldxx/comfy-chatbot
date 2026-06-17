@@ -127,6 +127,9 @@ function exitFauxFs(el) {
 
 const SLASH_COMMANDS = [
   { cmd: '/addserver',  desc: 'add a server  (name host:port:os)',  args: ' ' },
+  { cmd: '/archive-all',     desc: 'archive every image to the encrypted volume',     args: '' },
+  { cmd: '/archive-session', desc: 'archive all images from this session',            args: '' },
+  { cmd: '/archive-today',   desc: 'archive images generated today',                  args: '' },
   { cmd: '/clear',      desc: 'clear the chat history',             args: ''  },
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
@@ -715,6 +718,11 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-session</code> — delete all images from this session (chat + output folder)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-all</code> — delete every image in the output folder (asks y/n first)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-session</code> — copy this session's images into the encrypted volume, then remove the originals</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-today</code> — archive images generated today into the encrypted volume</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all</code> — archive every image in the output folder into the encrypted volume (asks y/n first)
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>comfy-archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
+        </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review [all|today]</code> — grid of images, oldest first (no arg this session · <code>all</code> every image · <code>today</code> only today's)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow [today|session|reverse]</code> — browse generated images, oldest first (<code>today</code> only today's · <code>session</code> only this session's · <code>reverse</code> newest first)
@@ -990,6 +998,102 @@ function handleSlashCommand(raw) {
         })
         .catch(err => {
           bubble.innerHTML = `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
+    };
+    return;
+  }
+
+  if (cmd === '/archive-session') {
+    if (!sessionImages.length) {
+      addMessage('bot', 'No images from this session to archive.');
+      return;
+    }
+    const targets = [...sessionImages];
+    const filenames = targets.map(url => decodeURIComponent(url.split('/').pop()));
+    const bubble = addMessage('bot', '<div class="status-text">Archiving…</div>').parentElement.querySelector('.bubble');
+    fetch('/api/archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'session', filenames }),
+    })
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || data.error) throw new Error(data.error || 'Archive failed');
+        // Originals are deleted after archiving, so drop them from the chat.
+        targets.forEach(removeImageFromChat);
+        bubble.innerHTML = `Archived ${data.archived} image(s) to the encrypted volume.`;
+        scrollBottom();
+      })
+      .catch(err => {
+        bubble.innerHTML = `<span style="color:#f87171">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
+        scrollBottom();
+      });
+    return;
+  }
+
+  if (cmd === '/archive-today') {
+    const bubble = addMessage('bot', '<div class="status-text">Archiving today\'s images…</div>').parentElement.querySelector('.bubble');
+    fetch('/api/archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'today' }),
+    })
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || data.error) throw new Error(data.error || 'Archive failed');
+        if (!data.archived) {
+          bubble.innerHTML = 'No images generated today to archive.';
+          scrollBottom();
+          return;
+        }
+        // Originals are gone now; clear the chat since on-screen images may point
+        // at archived files.
+        history.length = 0;
+        historyIdx = -1;
+        savedDraft = '';
+        sessionImages.length = 0;
+        fauxFullscreenEls.clear();
+        document.body.style.overflow = '';
+        messagesEl.innerHTML = '';
+        addMessage('bot', `Archived ${data.archived} image(s) generated today to the encrypted volume.`);
+      })
+      .catch(err => {
+        bubble.innerHTML = `<span style="color:#f87171">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
+        scrollBottom();
+      });
+    return;
+  }
+
+  if (cmd === '/archive-all') {
+    addMessage('user', escapeHtml(raw), null);
+    addMessage('bot', 'This archives <strong>every</strong> image in the output folder to the encrypted volume and then <strong>removes the originals</strong>. Type <code>y</code> to confirm or <code>n</code> to cancel.');
+    pendingConfirm = (answer) => {
+      if (!/^y(es)?$/i.test(answer)) {
+        addMessage('bot', 'Cancelled — nothing archived.');
+        return;
+      }
+      const bubble = addMessage('bot', '<div class="status-text">Archiving all images…</div>').parentElement.querySelector('.bubble');
+      fetch('/api/archive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'all' }),
+      })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok || data.error) throw new Error(data.error || 'Archive failed');
+          // Clear chat too, since any on-screen images now point at archived files.
+          history.length = 0;
+          historyIdx = -1;
+          savedDraft = '';
+          sessionImages.length = 0;
+          fauxFullscreenEls.clear();
+          document.body.style.overflow = '';
+          messagesEl.innerHTML = '';
+          addMessage('bot', `Archived ${data.archived} image(s) from the output folder to the encrypted volume.`);
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
     };

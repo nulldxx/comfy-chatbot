@@ -134,3 +134,25 @@ jobs:
           echo "❌ Tests failed! Docker image was NOT pushed to Docker Hub."
           echo "Please check the test results above and fix any issues before releasing."
         fi
+
+  build-deb:
+    name: Build comfy-archive-agent .deb
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create/update the GitHub Release
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build .deb
+      run: |
+        # Architecture: all package (pure Python), so it installs on arm64
+        # (Raspberry Pi 5 / Debian Bookworm) as well as amd64.
+        chmod +x packaging/build-deb.sh
+        VERSION="${GITHUB_REF_NAME#v}" packaging/build-deb.sh dist
+
+    - name: Upload .deb to the GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*.deb

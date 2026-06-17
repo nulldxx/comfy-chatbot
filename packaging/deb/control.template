@@ -1,0 +1,14 @@
+Package: comfy-archive-agent
+Version: __VERSION__
+Section: utils
+Priority: optional
+Architecture: all
+Depends: zulucrypt-cli, python3 (>= 3.9), mount
+Maintainer: comfy-chatbot maintainers <noreply@example.com>
+Description: Privileged mount helper for comfy-chatbot archiving
+ A small root daemon that mounts and unmounts a password-encrypted volume with
+ zuluCrypt-cli on behalf of the unprivileged comfy-chatbot container. The
+ container talks to it over a Unix socket and supplies the volume path and
+ passphrase per request; the agent never stores the passphrase. Pure Python 3
+ stdlib, so the package is architecture-independent and runs on arm64 (e.g.
+ Raspberry Pi 5 / Debian Bookworm) as well as amd64.

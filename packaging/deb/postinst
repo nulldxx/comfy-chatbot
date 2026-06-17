@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Mount directory for the encrypted volume (kept in sync with the
+        # MOUNT_DIR default in /etc/comfy-archive-agent.conf).
+        mkdir -p /var/lib/comfy-archive/mnt
+
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+            systemctl enable comfy-archive-agent.service || true
+            systemctl restart comfy-archive-agent.service || true
+        fi
+        ;;
+esac
+
+exit 0

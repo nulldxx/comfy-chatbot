@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""comfy-archive-agent — a tiny privileged host helper for comfy-chatbot.
+
+The comfy-chatbot container runs unprivileged and cannot mount encrypted
+volumes, so it asks this agent (running as root) to do the privileged
+zuluCrypt-cli mount/unmount over a Unix domain socket. One newline-delimited
+JSON request per connection, one JSON reply.
+
+Requests:
+  {"action": "mount",   "volume": "<host path>", "password": "<passphrase>"}
+  {"action": "unmount", "volume": "<host path>"}
+  {"action": "status"}
+
+Replies:
+  {"ok": true,  "mountpoint": "<dir>"}        # mount
+  {"ok": true}                                # unmount / status
+  {"ok": false, "error": "<message>"}
+
+The password is supplied per request and is NEVER stored. It is handed to
+zuluCrypt-cli via a 0600 key file in tmpfs (not on argv, so it never appears in
+`ps`), which is deleted immediately after the mount attempt.
+
+Config is read from /etc/comfy-archive-agent.conf (KEY=VALUE lines):
+  SOCKET_PATH   default /run/comfy-archive-agent.sock
+  SOCKET_MODE   default 0666   (octal; the container user must be able to connect)
+  MOUNT_DIR     default /var/lib/comfy-archive/mnt
+"""
+
+import os
+import pwd
+import sys
+import json
+import socket
+import logging
+import tempfile
+import subprocess
+from pathlib import Path
+
+CONFIG_PATH = os.environ.get("CONFIG_PATH", "/etc/comfy-archive-agent.conf")
+
+DEFAULTS = {
+    "SOCKET_PATH": "/run/comfy-archive-agent.sock",
+    "SOCKET_MODE": "0666",
+    "MOUNT_DIR": "/var/lib/comfy-archive/mnt",
+    # zuluCrypt-cli's -m is a path *component* appended to /run/media/private/$USER,
+    # not an absolute path, so we mount under this name and then bind it onto
+    # MOUNT_DIR (which propagates into the container).
+    "MOUNT_NAME": "comfy-archive",
+}
+
+log = logging.getLogger("comfy-archive-agent")
+
+
+def load_config():
+    cfg = dict(DEFAULTS)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                cfg[key.strip()] = val.strip()
+    except FileNotFoundError:
+        log.warning("config %s not found; using defaults", CONFIG_PATH)
+    return cfg
+
+
+def _run(cmd, key_input=None):
+    """Run a command, optionally writing `key_input` to a 0600 tmpfs key file
+    passed via -f. Returns (returncode, combined_output)."""
+    keyfile = None
+    try:
+        if key_input is not None:
+            fd, keyfile = tempfile.mkstemp(prefix="caa-", dir="/dev/shm")
+            os.fchmod(fd, 0o600)
+            # No trailing newline: zuluCrypt-cli uses the file content verbatim.
+            os.write(fd, key_input.encode("utf-8"))
+            os.close(fd)
+            cmd = cmd + ["-f", keyfile]
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=120,
+        )
+        return proc.returncode, (proc.stdout + proc.stderr).strip()
+    finally:
+        if keyfile and os.path.exists(keyfile):
+            os.remove(keyfile)
+
+
+def _zulu_mountpoint(name):
+    """zuluCrypt-cli mounts at /run/media/private/<user>/<name> (the -m value is a
+    component appended to that prefix, not an absolute path)."""
+    user = pwd.getpwuid(os.geteuid()).pw_name
+    return f"/run/media/private/{user}/{name}"
+
+
+def handle_mount(cfg, req):
+    volume = req.get("volume")
+    password = req.get("password")
+    if not volume or password is None:
+        return {"ok": False, "error": "mount requires 'volume' and 'password'"}
+
+    mount_dir = cfg["MOUNT_DIR"]
+    name = cfg["MOUNT_NAME"]
+    Path(mount_dir).mkdir(parents=True, exist_ok=True)
+
+    # zuluCrypt-cli open, read-write (default is ro). Format (LUKS/VeraCrypt/PLAIN)
+    # is auto-detected. The passphrase is passed via -f keyfile (see _run) so it
+    # never appears on argv.
+    cmd = ["zuluCrypt-cli", "-o", "-d", volume, "-m", name, "-e", "rw"]
+    rc, out = _run(cmd, key_input=password)
+    if rc != 0:
+        log.error("open failed (rc=%s): %s", rc, out)
+        return {"ok": False, "error": f"zuluCrypt-cli open failed: {out}"}
+
+    src = _zulu_mountpoint(name)
+    if not os.path.ismount(src):
+        log.error("expected mount %s not found after open", src)
+        return {"ok": False, "error": f"volume opened but {src} is not mounted"}
+
+    # Bind the decrypted filesystem onto MOUNT_DIR. MOUNT_DIR is a shared mount
+    # (see setup_shared_mount), so this bind propagates into the container.
+    try:
+        subprocess.run(["mount", "--bind", src, mount_dir],
+                       check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        _run(["zuluCrypt-cli", "-q", "-d", volume])  # roll back the open
+        return {"ok": False, "error": f"bind to {mount_dir} failed: {exc.stderr.strip()}"}
+
+    # The newly mounted filesystem's root is owned by root; the container writes
+    # as an unprivileged user, so make the mount root world-writable (this is a
+    # private encrypted archive). Persisted in the volume, applied each mount.
+    try:
+        os.chmod(mount_dir, 0o777)
+    except OSError as exc:
+        log.warning("could not chmod %s: %s", mount_dir, exc)
+
+    log.info("mounted %s -> %s -> %s", volume, src, mount_dir)
+    return {"ok": True, "mountpoint": mount_dir}
+
+
+def handle_unmount(cfg, req):
+    volume = req.get("volume")
+    if not volume:
+        return {"ok": False, "error": "unmount requires 'volume'"}
+    mount_dir = cfg["MOUNT_DIR"]
+    # Detach the bind first so zuluCrypt can unmount its own mountpoint.
+    if os.path.ismount(mount_dir):
+        subprocess.run(["umount", mount_dir], capture_output=True, text=True)
+    rc, out = _run(["zuluCrypt-cli", "-q", "-d", volume])
+    if rc != 0:
+        log.error("close failed (rc=%s): %s", rc, out)
+        return {"ok": False, "error": f"zuluCrypt-cli close failed: {out}"}
+    log.info("unmounted %s", volume)
+    return {"ok": True}
+
+
+def handle(cfg, req):
+    action = req.get("action")
+    if action == "mount":
+        return handle_mount(cfg, req)
+    if action == "unmount":
+        return handle_unmount(cfg, req)
+    if action == "status":
+        return {"ok": True}
+    return {"ok": False, "error": f"unknown action: {action!r}"}
+
+
+def read_request(conn):
+    chunks = []
+    while True:
+        data = conn.recv(4096)
+        if not data:
+            break
+        chunks.append(data)
+        if b"\n" in data:
+            break
+    raw = b"".join(chunks).decode("utf-8").strip()
+    return json.loads(raw) if raw else {}
+
+
+def setup_shared_mount(mount_dir):
+    """Ensure MOUNT_DIR is a shared mount so a volume mounted here propagates
+    into the container's rshared bind mount. Bind it to itself if it isn't
+    already a mount point, then mark it shared (idempotent)."""
+    Path(mount_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        if not os.path.ismount(mount_dir):
+            subprocess.run(["mount", "--bind", mount_dir, mount_dir],
+                           check=True, capture_output=True, text=True)
+        subprocess.run(["mount", "--make-shared", mount_dir],
+                       check=True, capture_output=True, text=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        log.warning("could not make %s a shared mount: %s", mount_dir, exc)
+
+
+def serve(cfg):
+    setup_shared_mount(cfg["MOUNT_DIR"])
+    sock_path = cfg["SOCKET_PATH"]
+    if os.path.exists(sock_path):
+        os.remove(sock_path)
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(sock_path)
+    os.chmod(sock_path, int(cfg["SOCKET_MODE"], 8))
+    srv.listen(8)
+    log.info("listening on %s (mount dir %s)", sock_path, cfg["MOUNT_DIR"])
+    while True:
+        conn, _ = srv.accept()
+        try:
+            conn.settimeout(120)
+            try:
+                req = read_request(conn)
+                resp = handle(cfg, req)
+            except json.JSONDecodeError as exc:
+                resp = {"ok": False, "error": f"invalid JSON: {exc}"}
+            except Exception as exc:  # never let one request kill the agent
+                log.exception("request failed")
+                resp = {"ok": False, "error": str(exc)}
+            conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
+        finally:
+            conn.close()
+
+
+def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        stream=sys.stderr,
+    )
+    if os.geteuid() != 0:
+        log.warning("not running as root; zuluCrypt-cli mounts will likely fail")
+    cfg = load_config()
+    try:
+        serve(cfg)
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

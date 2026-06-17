@@ -48,6 +48,10 @@ All settings are environment variables in `docker-compose.yml`:
 | `APP_USERNAME` | `user` | Login username |
 | `APP_PASSWORD` | `password` | Login password |
 | `SECRET_KEY` | *(change this)* | Flask session secret |
+| `ARCHIVE_VOLUME` | *(empty)* | Host path to the encrypted volume for `/archive-*` (blank disables archiving) |
+| `ARCHIVE_PASSWORD` | *(empty)* | Passphrase for the encrypted volume (sent to the host agent per request) |
+| `ARCHIVE_AGENT_SOCKET` | `/run/comfy-archive-agent.sock` | Unix socket of the host archive agent |
+| `ARCHIVE_MOUNT_DIR` | `/app/archive` | Where the host mount appears inside the container |
 
 ### loras.json
 
@@ -85,6 +89,51 @@ volumes:
 | `/face-detail <prompt>` | Run a face-detailer workflow over the last generated image (supports `<lora:…>` tags) |
 | `/face-detail-workflow` | Pick which face-detailer workflow `/face-detail` uses (from the `facedetailer/` subdir) |
 | `/upload` | Upload a new workflow `.json` file |
+| `/archive-session` | Copy this session's images into the encrypted volume, then delete the originals |
+| `/archive-today` | Archive images generated today into the encrypted volume |
+| `/archive-all` | Archive every image in the output folder (asks y/n first) |
+
+## Encrypted Archiving
+
+The `/archive-*` commands copy images into a password-encrypted volume (opened
+with [zuluCrypt](https://github.com/mhogomchungu/zuluCrypt)) and then delete the
+originals from the output folder — a *move*, not a backup copy.
+
+Because the container runs unprivileged, it cannot mount the volume itself.
+Instead it asks a small **host-side root agent** (`comfy-archive-agent`) to run
+`zuluCrypt-cli` over a Unix socket. The container sends the volume path and
+passphrase **per request**; the agent never stores them.
+
+**1. Install the agent on the host** (e.g. Raspberry Pi 5 / Debian Bookworm). The
+`.deb` is attached to each [GitHub Release](../../releases) (it's
+`Architecture: all`, so one package works on arm64 and amd64):
+
+```bash
+sudo apt install ./comfy-archive-agent_<version>_all.deb
+```
+
+This pulls in `zulucrypt-cli`, installs a `comfy-archive-agent` systemd service,
+and sets up the mount directory `/var/lib/comfy-archive/mnt` as a **shared mount**
+so the mount propagates into the container.
+
+**2. Point the container at it** via the `ARCHIVE_*` variables above and the bind
+mounts already present in `docker-compose.yml`:
+
+```yaml
+environment:
+  - ARCHIVE_VOLUME=/srv/archives/photos.luks   # host path the agent opens
+  - ARCHIVE_PASSWORD=change-me
+volumes:
+  - /run/comfy-archive-agent.sock:/run/comfy-archive-agent.sock
+  - type: bind
+    source: /var/lib/comfy-archive/mnt        # = agent MOUNT_DIR (shared mount)
+    target: /app/archive
+    bind:
+      propagation: rshared                    # required: makes the mount visible
+```
+
+zuluCrypt auto-detects LUKS/VeraCrypt, so the volume can be either. Tune the agent
+(socket path/permissions, mount dir) in `/etc/comfy-archive-agent.conf`.
 
 ## Adding Workflows
 

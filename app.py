@@ -3,6 +3,8 @@ import os
 import json
 import uuid
 import queue
+import shutil
+import socket
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -60,6 +62,21 @@ COMFY_UPSCALER_WORKFLOW = Path(_UPSCALER_WORKFLOW_RAW).stem if _UPSCALER_WORKFLO
 
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+# Archive config — the /archive-* commands copy images into a password-encrypted
+# volume and then delete the originals (move semantics). The container is
+# unprivileged and can't mount the volume itself, so it asks a root host agent
+# (shipped as the comfy-archive-agent .deb) to run zuluCrypt-cli over a Unix
+# socket. The volume path + password are sent to the agent per request — the
+# agent never stores the password. The agent mounts on the host at a directory
+# bind-mounted into the container (with rshared propagation) as ARCHIVE_MOUNT_DIR.
+ARCHIVE_VOLUME = os.environ.get('ARCHIVE_VOLUME', '')          # host path to encrypted volume
+ARCHIVE_PASSWORD = os.environ.get('ARCHIVE_PASSWORD', '')
+ARCHIVE_AGENT_SOCKET = os.environ.get('ARCHIVE_AGENT_SOCKET', '/run/comfy-archive-agent.sock')
+ARCHIVE_MOUNT_DIR = Path(os.environ.get('ARCHIVE_MOUNT_DIR', '/app/archive'))
+# Only one mount/copy/unmount cycle at a time (gunicorn runs gthread workers).
+archive_lock = threading.Lock()
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
 # In-memory job tracking
 jobs: dict = {}
@@ -744,11 +761,10 @@ def api_delete_image(filename):
 def api_delete_all_images():
     if not IMAGES_DIR.is_dir():
         return jsonify({"deleted": 0})
-    exts = {".png", ".jpg", ".jpeg", ".webp"}
     deleted = 0
     failed = []
     for p in IMAGES_DIR.iterdir():
-        if p.suffix.lower() not in exts:
+        if p.suffix.lower() not in IMAGE_EXTS:
             continue
         try:
             p.unlink()
@@ -760,21 +776,127 @@ def api_delete_all_images():
     return jsonify({"deleted": deleted})
 
 
+def _select_images(scope, filenames=None):
+    """Resolve an archive/listing scope to a list of image Paths in IMAGES_DIR.
+
+    - "all"     -> every image file.
+    - "today"   -> images whose mtime is today (mirrors the /api/images filter).
+    - "session" -> the supplied filenames, validated like api_delete_image.
+    Raises ValueError on an unknown scope or an invalid session filename.
+    """
+    if not IMAGES_DIR.is_dir():
+        return []
+    if scope == "session":
+        selected = []
+        for name in (filenames or []):
+            safe = secure_filename(name)
+            if not safe or safe != name:
+                raise ValueError(f"Invalid filename: {name}")
+            path = IMAGES_DIR / safe
+            if path.suffix.lower() not in IMAGE_EXTS:
+                raise ValueError(f"Invalid filename: {name}")
+            if path.is_file():
+                selected.append(path)
+        return selected
+    files = [p for p in IMAGES_DIR.iterdir() if p.suffix.lower() in IMAGE_EXTS]
+    if scope == "today":
+        today = datetime.now().date()
+        files = [
+            p for p in files
+            if datetime.fromtimestamp(p.stat().st_mtime).date() == today
+        ]
+    elif scope != "all":
+        raise ValueError(f"Unknown scope: {scope}")
+    return files
+
+
 @app.route("/api/images")
 @login_required
 def api_images():
-    if not IMAGES_DIR.is_dir():
-        return jsonify([])
-    exts = {".png", ".jpg", ".jpeg", ".webp"}
-    files = (p for p in IMAGES_DIR.iterdir() if p.suffix.lower() in exts)
-    if request.args.get("filter") == "today":
-        today = datetime.now().date()
-        files = (
-            p for p in files
-            if datetime.fromtimestamp(p.stat().st_mtime).date() == today
-        )
+    scope = "today" if request.args.get("filter") == "today" else "all"
+    files = _select_images(scope)
     files = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
     return jsonify([f"/images/{p.name}" for p in files])
+
+
+def _agent_request(payload: dict, timeout: float = 120.0) -> dict:
+    """Send one newline-delimited JSON request to the host archive agent over its
+    Unix socket and return the parsed JSON reply. Raises RuntimeError on transport
+    failure so callers can surface a clean error to the user."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect(ARCHIVE_AGENT_SOCKET)
+            sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+            sock.shutdown(socket.SHUT_WR)
+            chunks = []
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+    except OSError as exc:
+        raise RuntimeError(f"archive agent unavailable: {exc}") from exc
+    raw = b"".join(chunks).decode("utf-8").strip()
+    if not raw:
+        raise RuntimeError("archive agent returned no response")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"archive agent returned invalid response: {raw!r}") from exc
+
+
+@app.route("/api/archive", methods=["POST"])
+@login_required
+def api_archive():
+    if not ARCHIVE_VOLUME or not ARCHIVE_PASSWORD:
+        return jsonify({"error": "Archiving is not configured on the server."}), 503
+
+    body = request.get_json(silent=True) or {}
+    scope = body.get("scope")
+    try:
+        files = _select_images(scope, body.get("filenames"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    if not files:
+        return jsonify({"archived": 0})
+
+    guid = uuid.uuid4().hex
+    with archive_lock:
+        try:
+            resp = _agent_request({
+                "action": "mount",
+                "volume": ARCHIVE_VOLUME,
+                "password": ARCHIVE_PASSWORD,
+            })
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 502
+        if not resp.get("ok"):
+            return jsonify({"error": resp.get("error", "mount failed")}), 502
+
+        try:
+            dest_dir = ARCHIVE_MOUNT_DIR / "staging" / guid
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            # Copy + verify every file before deleting any original (move semantics).
+            copied = []
+            for src in files:
+                dest = dest_dir / src.name
+                shutil.copy2(src, dest)
+                if dest.stat().st_size != src.stat().st_size:
+                    raise OSError(f"size mismatch after copying {src.name}")
+                copied.append(src)
+            for src in copied:
+                src.unlink()
+        except OSError as exc:
+            return jsonify({"error": f"archive failed: {exc}"}), 500
+        finally:
+            try:
+                _agent_request({"action": "unmount", "volume": ARCHIVE_VOLUME})
+            except RuntimeError as exc:
+                app.logger.warning("archive agent unmount failed: %s", exc)
+
+    return jsonify({"archived": len(files), "guid": guid})
 
 
 @app.route("/health")
