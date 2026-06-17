@@ -94,6 +94,40 @@ def _zulu_mountpoint(name):
     return f"/run/media/private/{user}/{name}"
 
 
+def _ensure_bind(src, mount_dir, volume, rollback):
+    """Bind the decrypted filesystem at `src` onto `mount_dir` and make its root
+    writable for the unprivileged container user. Idempotent: if `mount_dir`
+    already resolves to the same filesystem as `src` the bind is left as-is (so
+    we never stack a second bind that a single unmount couldn't pop). Returns
+    None on success or an error dict. If the bind fails and `rollback` is set
+    (we opened the volume this call), the volume is closed again.
+
+    MOUNT_DIR is a shared mount (see setup_shared_mount), so this bind
+    propagates into the container.
+    """
+    try:
+        already_bound = os.stat(mount_dir).st_dev == os.stat(src).st_dev
+    except OSError:
+        already_bound = False
+    if not already_bound:
+        try:
+            subprocess.run(["mount", "--bind", src, mount_dir],
+                           check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            if rollback:
+                _run(["zuluCrypt-cli", "-q", "-d", volume])  # roll back the open
+            return {"ok": False, "error": f"bind to {mount_dir} failed: {exc.stderr.strip()}"}
+
+    # The mounted filesystem's root is owned by root; the container writes as an
+    # unprivileged user, so make the mount root world-writable (this is a
+    # private encrypted archive). Persisted in the volume, applied each mount.
+    try:
+        os.chmod(mount_dir, 0o777)
+    except OSError as exc:
+        log.warning("could not chmod %s: %s", mount_dir, exc)
+    return None
+
+
 def handle_mount(cfg, req):
     volume = req.get("volume")
     password = req.get("password")
@@ -103,37 +137,34 @@ def handle_mount(cfg, req):
     mount_dir = cfg["MOUNT_DIR"]
     name = cfg["MOUNT_NAME"]
     Path(mount_dir).mkdir(parents=True, exist_ok=True)
+    src = _zulu_mountpoint(name)
 
     # zuluCrypt-cli open, read-write (default is ro). Format (LUKS/VeraCrypt/PLAIN)
     # is auto-detected. The passphrase is passed via -f keyfile (see _run) so it
     # never appears on argv.
     cmd = ["zuluCrypt-cli", "-o", "-d", volume, "-m", name, "-e", "rw"]
     rc, out = _run(cmd, key_input=password)
-    if rc != 0:
-        log.error("open failed (rc=%s): %s", rc, out)
-        return {"ok": False, "error": f"zuluCrypt-cli open failed: {out}"}
 
-    src = _zulu_mountpoint(name)
-    if not os.path.ismount(src):
+    opened_now = rc == 0
+    if not opened_now:
+        # `-o` fails if the volume is already open — typically a leftover mount
+        # from a run that was killed before it could unmount. That's
+        # recoverable: if the decrypted filesystem is already mounted at `src`,
+        # treat the mount as idempotent and just (re)establish the bind. Any
+        # other failure (e.g. wrong password) leaves nothing mounted at `src`.
+        if os.path.ismount(src):
+            log.warning("volume already open (rc=%s: %s); recovering existing mount",
+                        rc, out)
+        else:
+            log.error("open failed (rc=%s): %s", rc, out)
+            return {"ok": False, "error": f"zuluCrypt-cli open failed: {out}"}
+    elif not os.path.ismount(src):
         log.error("expected mount %s not found after open", src)
         return {"ok": False, "error": f"volume opened but {src} is not mounted"}
 
-    # Bind the decrypted filesystem onto MOUNT_DIR. MOUNT_DIR is a shared mount
-    # (see setup_shared_mount), so this bind propagates into the container.
-    try:
-        subprocess.run(["mount", "--bind", src, mount_dir],
-                       check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as exc:
-        _run(["zuluCrypt-cli", "-q", "-d", volume])  # roll back the open
-        return {"ok": False, "error": f"bind to {mount_dir} failed: {exc.stderr.strip()}"}
-
-    # The newly mounted filesystem's root is owned by root; the container writes
-    # as an unprivileged user, so make the mount root world-writable (this is a
-    # private encrypted archive). Persisted in the volume, applied each mount.
-    try:
-        os.chmod(mount_dir, 0o777)
-    except OSError as exc:
-        log.warning("could not chmod %s: %s", mount_dir, exc)
+    err = _ensure_bind(src, mount_dir, volume, rollback=opened_now)
+    if err is not None:
+        return err
 
     log.info("mounted %s -> %s -> %s", volume, src, mount_dir)
     return {"ok": True, "mountpoint": mount_dir}
