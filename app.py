@@ -882,7 +882,9 @@ def api_archive():
             copied = []
             for src in files:
                 dest = dest_dir / src.name
-                shutil.copy2(src, dest)
+                # copyfile (data only) rather than copy2: exFAT can't store
+                # POSIX permissions, so copystat's chmod raises EPERM there.
+                shutil.copyfile(src, dest)
                 if dest.stat().st_size != src.stat().st_size:
                     raise OSError(f"size mismatch after copying {src.name}")
                 copied.append(src)
