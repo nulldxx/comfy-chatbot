@@ -99,12 +99,13 @@ Return ONLY valid JSON in exactly this structure:
     start = content.find("{")
     end = content.rfind("}") + 1
     if start == -1 or end <= start:
-        raise GrokError("Grok did not return JSON.")
+        snippet = (content or "").strip()[:300] or "<empty response>"
+        raise GrokError(f"Grok did not return JSON — model said: {snippet}")
 
     try:
         data = json.loads(content[start:end])
     except json.JSONDecodeError as e:
-        raise GrokError(f"Grok returned invalid JSON: {e}")
+        raise GrokError(f"Grok returned invalid JSON: {e} — model said: {content[start:end][:300]}")
 
     prompts = [p.strip() for p in data.get("prompts", []) if isinstance(p, str) and p.strip()]
     if not prompts:
