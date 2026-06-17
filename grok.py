@@ -14,12 +14,25 @@ Configured entirely via environment variables (see docker-compose.yml):
 """
 
 import os
+import re
 import json
+import logging
 import requests
+
+log = logging.getLogger(__name__)
 
 GROK_BASE_URL = os.environ.get("GROK_BASE_URL", "https://api.x.ai/v1")
 GROK_MODEL = os.environ.get("GROK_MODEL", "grok-4-1-fast-non-reasoning")
+# The primary model occasionally serves corrupt output (see _parse_prompts).
+# When that happens we retry once with this fallback, then fall back to the
+# primary automatically again as soon as it recovers server-side.
+GROK_FALLBACK_MODEL = os.environ.get("GROK_FALLBACK_MODEL", "grok-4-1-fast-reasoning")
 GROK_API_KEY = os.environ.get("XAI_API_KEY", "")
+
+# Matches a leaked model special token such as <|eos|> or <|separator|>. These
+# should never appear in a well-formed reply; their presence means the model
+# corrupted its own output and the JSON is unreliable.
+_SPECIAL_TOKEN_RE = re.compile(r"<\|\w+\|>")
 
 
 class GrokError(Exception):
@@ -35,10 +48,10 @@ def grok_available():
 # the worker kill and the client receives a non-JSON body (gunicorn error page)
 # instead of a clean {"error": ...} — surfacing as a "JSON.parse: unexpected
 # character at line 1 column 1" in the browser.
-def _chat(messages, temperature=0.8, timeout=90, max_tokens=None):
+def _chat(messages, temperature=0.8, timeout=90, max_tokens=None, model=None):
     if not GROK_API_KEY:
         raise GrokError("Grok is not configured — set XAI_API_KEY in the environment.")
-    payload = {"model": GROK_MODEL, "messages": messages, "temperature": temperature}
+    payload = {"model": model or GROK_MODEL, "messages": messages, "temperature": temperature}
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
     try:
@@ -95,14 +108,41 @@ Return ONLY valid JSON in exactly this structure:
     # per prompt plus a fixed overhead so the JSON array is never cut off
     # mid-string — a truncated response has no closing brace and fails parsing.
     max_tokens = 1024 + count * 500
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
 
-    content = _chat(
-        [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        max_tokens=max_tokens,
-    )
+    # Try the preferred model first; if it serves corrupt/unparseable output
+    # (e.g. grok-4-1-fast-non-reasoning has been observed leaking <|eos|> tokens
+    # and returning broken JSON), retry once with the reasoning fallback. We
+    # keep the primary as first choice so the app reverts to it automatically
+    # once it's healthy again, without a config change or redeploy.
+    models = [GROK_MODEL]
+    if GROK_FALLBACK_MODEL and GROK_FALLBACK_MODEL != GROK_MODEL:
+        models.append(GROK_FALLBACK_MODEL)
+
+    last_error = None
+    for model in models:
+        try:
+            content = _chat(messages, max_tokens=max_tokens, model=model)
+            return _parse_prompts(content)
+        except GrokError as e:
+            last_error = e
+            log.warning("Grok model %s failed for /sequence: %s", model, e)
+
+    raise last_error or GrokError("Grok is not configured — no model to try.")
+
+
+def _parse_prompts(content):
+    """Extract the prompts list from a Grok JSON reply, or raise GrokError."""
+    # A leaked special token means the model corrupted its own output; the JSON
+    # may even parse but cannot be trusted, so reject it (triggers a fallback).
+    if _SPECIAL_TOKEN_RE.search(content or ""):
+        raise GrokError(
+            f"Grok returned a corrupt response (leaked a special token) — "
+            f"model said: {(content or '').strip()[:300]}"
+        )
 
     # Extract the JSON object even if the model wraps it in stray text.
     start = content.find("{")
