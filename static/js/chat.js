@@ -134,6 +134,7 @@ const SLASH_COMMANDS = [
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
   { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
+  { cmd: '/delete-today',   desc: 'delete every image generated today',            args: '' },
   { cmd: '/face-detail-prompt', desc: 'set the prompt the face-detail icons use', args: ' ' },
   { cmd: '/face-detail-prompt-reset', desc: 'clear the override; derive prompts again', args: '' },
   { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
@@ -722,6 +723,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-session</code> — delete all images from this session (chat + output folder)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-today</code> — delete every image generated today (asks y/n first)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-all</code> — delete every image in the output folder (asks y/n first)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-session</code> — copy this session's images into the encrypted volume, then remove the originals</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-today</code> — archive images generated today into the encrypted volume</div>
@@ -974,8 +976,43 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/delete-today') {
+    addMessage('bot', 'This deletes <strong>every</strong> image generated today, not just this session\'s. Type <code>y</code> to confirm or <code>n</code> to cancel.');
+    pendingConfirm = (answer) => {
+      if (!/^y(es)?$/i.test(answer)) {
+        addMessage('bot', 'Cancelled — no images deleted.');
+        return;
+      }
+      const bubble = addMessage('bot', '<div class="status-text">Deleting today\'s images…</div>').parentElement.querySelector('.bubble');
+      fetch('/api/images?filter=today')
+        .then(r => r.json())
+        .then(images => {
+          if (!images.length) {
+            bubble.innerHTML = 'No images generated today.';
+            return;
+          }
+          return Promise.allSettled(images.map(url =>
+            deleteImageFile(url).then(() => removeImageFromChat(url))
+          )).then(results => {
+            const failed = results.filter(r => r.status === 'rejected');
+            const ok = results.length - failed.length;
+            if (failed.length) {
+              bubble.innerHTML = `Deleted ${ok} image(s) generated today. <span style="color:#f87171">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`;
+            } else {
+              bubble.innerHTML = `Deleted ${ok} image(s) generated today.`;
+            }
+            scrollBottom();
+          });
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
+    };
+    return;
+  }
+
   if (cmd === '/delete-all') {
-    addMessage('user', escapeHtml(raw), null);
     addMessage('bot', 'This deletes <strong>every</strong> image in the output folder, not just this session\'s. Type <code>y</code> to confirm or <code>n</code> to cancel.');
     pendingConfirm = (answer) => {
       if (!/^y(es)?$/i.test(answer)) {
@@ -1067,7 +1104,6 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/archive-all') {
-    addMessage('user', escapeHtml(raw), null);
     addMessage('bot', 'This archives <strong>every</strong> image in the output folder to the encrypted volume and then <strong>removes the originals</strong>. Type <code>y</code> to confirm or <code>n</code> to cancel.');
     pendingConfirm = (answer) => {
       if (!/^y(es)?$/i.test(answer)) {
