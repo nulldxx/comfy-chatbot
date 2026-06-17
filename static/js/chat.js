@@ -143,7 +143,9 @@ const SLASH_COMMANDS = [
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
   { cmd: '/purge',      desc: 'free GPU memory on active server',   args: ''  },
   { cmd: '/resolution', desc: 'set output resolution (e.g. 640x480 or phone)', args: ' ' },
-  { cmd: '/review',     desc: 'grid of images — this session, all, or today (tap to view, trash to delete)', args: ' ' },
+  { cmd: '/review-all',     desc: 'grid of every image (tap to view, trash to delete)', args: '' },
+  { cmd: '/review-session', desc: 'grid of this session\'s images (tap to view, trash to delete)', args: '' },
+  { cmd: '/review-today',   desc: 'grid of today\'s images (tap to view, trash to delete)', args: '' },
   { cmd: '/sequence',   desc: 'generate a prompt sequence from a master prompt (Grok)', args: ' ' },
   { cmd: '/sequence-replacement', desc: 'add a find→replace applied to Grok prompts', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
@@ -727,7 +729,9 @@ function handleSlashCommand(raw) {
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/review [all|today]</code> — grid of images, oldest first (no arg this session · <code>all</code> every image · <code>today</code> only today's)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/review-all</code> — grid of every image, oldest first (tap to view, trash to delete)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/review-today</code> — grid of today's images, oldest first</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/review-session</code> — grid of this session's images</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-all</code> — browse every image, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-reverse</code> — browse every image, newest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-today</code> — browse today's images, oldest first</div>
@@ -895,28 +899,25 @@ function handleSlashCommand(raw) {
     return;
   }
 
-  if (cmd === '/review') {
-    const scope = (parts[1] || '').toLowerCase();
-    if (scope && scope !== 'all' && scope !== 'today') {
-      addMessage('bot', `Usage: <code>/review</code> — this session's images, <code>/review all</code> — every image, <code>/review today</code> — only today's`);
+  if (cmd === '/review-session') {
+    if (!sessionImages.length) {
+      addMessage('bot', 'No images from this session yet — generate some first!');
       return;
     }
-    if (!scope) {
-      if (!sessionImages.length) {
-        addMessage('bot', 'No images from this session yet — generate some first!');
-        return;
-      }
-      const bubble = addMessage('bot', '');
-      renderReviewGrid(bubble, sessionImages.slice());
-      return;
-    }
+    const bubble = addMessage('bot', '');
+    renderReviewGrid(bubble, sessionImages.slice());
+    return;
+  }
+
+  if (cmd === '/review-all' || cmd === '/review-today') {
+    const todayOnly = cmd === '/review-today';
     const bubble = addMessage('bot', '<div class="status-text">Loading images…</div>');
-    fetch(scope === 'today' ? '/api/images?filter=today' : '/api/images')
+    fetch(todayOnly ? '/api/images?filter=today' : '/api/images')
       .then(r => r.json())
       .then(images => {
         if (!images.length) {
-          bubble.innerHTML = scope === 'today'
-            ? 'No images generated today — try <code>/review all</code> for every image.'
+          bubble.innerHTML = todayOnly
+            ? 'No images generated today — try <code>/review-all</code> for every image.'
             : 'No images yet — generate some first!';
           return;
         }
