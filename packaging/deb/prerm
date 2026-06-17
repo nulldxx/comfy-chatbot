@@ -4,7 +4,7 @@ set -e
 case "$1" in
     remove|deconfigure|upgrade)
         if [ -d /run/systemd/system ]; then
-            systemctl stop comfy-archive-agent.service || true
+            systemctl stop archive-agent.service || true
         fi
         ;;
 esac

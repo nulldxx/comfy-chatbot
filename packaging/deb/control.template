@@ -1,4 +1,4 @@
-Package: comfy-archive-agent
+Package: archive-agent
 Version: __VERSION__
 Section: utils
 Priority: optional

@@ -50,7 +50,7 @@ All settings are environment variables in `docker-compose.yml`:
 | `SECRET_KEY` | *(change this)* | Flask session secret |
 | `ARCHIVE_VOLUME` | *(empty)* | Host path to the encrypted volume for `/archive-*` (blank disables archiving) |
 | `ARCHIVE_PASSWORD` | *(empty)* | Passphrase for the encrypted volume (sent to the host agent per request) |
-| `ARCHIVE_AGENT_SOCKET` | `/run/comfy-archive-agent.sock` | Unix socket of the host archive agent |
+| `ARCHIVE_AGENT_SOCKET` | `/run/archive-agent.sock` | Unix socket of the host archive agent |
 | `ARCHIVE_MOUNT_DIR` | `/app/archive` | Where the host mount appears inside the container |
 
 ### loras.json
@@ -100,7 +100,7 @@ with [zuluCrypt](https://github.com/mhogomchungu/zuluCrypt)) and then delete the
 originals from the output folder — a *move*, not a backup copy.
 
 Because the container runs unprivileged, it cannot mount the volume itself.
-Instead it asks a small **host-side root agent** (`comfy-archive-agent`) to run
+Instead it asks a small **host-side root agent** (`archive-agent`) to run
 `zuluCrypt-cli` over a Unix socket. The container sends the volume path and
 passphrase **per request**; the agent never stores them.
 
@@ -109,11 +109,11 @@ passphrase **per request**; the agent never stores them.
 `Architecture: all`, so one package works on arm64 and amd64):
 
 ```bash
-sudo apt install ./comfy-archive-agent_<version>_all.deb
+sudo apt install ./archive-agent_<version>_all.deb
 ```
 
-This pulls in `zulucrypt-cli`, installs a `comfy-archive-agent` systemd service,
-and sets up the mount directory `/var/lib/comfy-archive/mnt` as a **shared mount**
+This pulls in `zulucrypt-cli`, installs an `archive-agent` systemd service,
+and sets up the mount directory `/var/lib/archive-agent/mnt` as a **shared mount**
 so the mount propagates into the container.
 
 **2. Point the container at it** via the `ARCHIVE_*` variables above and the bind
@@ -124,7 +124,7 @@ environment:
   - ARCHIVE_VOLUME=/srv/archives/photos.luks   # host path the agent opens
   - ARCHIVE_PASSWORD=change-me
 volumes:
-  - /run/comfy-archive-agent.sock:/run/comfy-archive-agent.sock
+  - /run/archive-agent.sock:/run/archive-agent.sock
   - type: bind
     source: /var/lib/comfy-archive/mnt        # = agent MOUNT_DIR (shared mount)
     target: /app/archive
@@ -133,7 +133,7 @@ volumes:
 ```
 
 zuluCrypt auto-detects LUKS/VeraCrypt, so the volume can be either. Tune the agent
-(socket path/permissions, mount dir) in `/etc/comfy-archive-agent.conf`.
+(socket path/permissions, mount dir) in `/etc/archive-agent.conf`.
 
 ## Adding Workflows
 

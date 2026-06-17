@@ -66,13 +66,13 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 # Archive config — the /archive-* commands copy images into a password-encrypted
 # volume and then delete the originals (move semantics). The container is
 # unprivileged and can't mount the volume itself, so it asks a root host agent
-# (shipped as the comfy-archive-agent .deb) to run zuluCrypt-cli over a Unix
+# (shipped as the archive-agent .deb) to run zuluCrypt-cli over a Unix
 # socket. The volume path + password are sent to the agent per request — the
 # agent never stores the password. The agent mounts on the host at a directory
 # bind-mounted into the container (with rshared propagation) as ARCHIVE_MOUNT_DIR.
 ARCHIVE_VOLUME = os.environ.get('ARCHIVE_VOLUME', '')          # host path to encrypted volume
 ARCHIVE_PASSWORD = os.environ.get('ARCHIVE_PASSWORD', '')
-ARCHIVE_AGENT_SOCKET = os.environ.get('ARCHIVE_AGENT_SOCKET', '/run/comfy-archive-agent.sock')
+ARCHIVE_AGENT_SOCKET = os.environ.get('ARCHIVE_AGENT_SOCKET', '/run/archive-agent.sock')
 ARCHIVE_MOUNT_DIR = Path(os.environ.get('ARCHIVE_MOUNT_DIR', '/app/archive'))
 # Only one mount/copy/unmount cycle at a time (gunicorn runs gthread workers).
 archive_lock = threading.Lock()

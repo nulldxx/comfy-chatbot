@@ -15,7 +15,7 @@ from app import app
 
 
 class FakeAgent:
-    """A throwaway Unix-socket server that emulates comfy-archive-agent. It
+    """A throwaway Unix-socket server that emulates archive-agent. It
     records every request and replies {"ok": true} so the endpoint can exercise
     its mount -> copy -> unmount flow without zuluCrypt-cli."""
 

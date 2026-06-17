@@ -136,7 +136,7 @@ jobs:
         fi
 
   build-deb:
-    name: Build comfy-archive-agent .deb
+    name: Build archive-agent .deb
     runs-on: ubuntu-latest
     permissions:
       contents: write  # needed to create/update the GitHub Release

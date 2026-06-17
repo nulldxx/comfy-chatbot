@@ -5,7 +5,7 @@ After=local-fs.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/comfy-archive-agent
+ExecStart=/usr/bin/archive-agent
 Restart=on-failure
 RestartSec=2
 # The agent runs as root: it mounts encrypted volumes via zuluCrypt-cli and sets

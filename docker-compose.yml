@@ -42,7 +42,7 @@ services:
       - GROK_MODEL=grok-4-1-fast-non-reasoning
 
       # Archive (/archive-* commands) — copies images into a password-encrypted
-      # volume, then deletes the originals. Requires the comfy-archive-agent .deb
+      # volume, then deletes the originals. Requires the archive-agent .deb
       # installed and running on the host (it does the privileged zuluCrypt-cli
       # mount). Leave ARCHIVE_VOLUME/ARCHIVE_PASSWORD blank to disable archiving.
       #
@@ -52,7 +52,7 @@ services:
       # agent never stores it.
       - ARCHIVE_PASSWORD=${ARCHIVE_PASSWORD:-}
       # Unix socket the host agent listens on (bind-mounted below).
-      - ARCHIVE_AGENT_SOCKET=/run/comfy-archive-agent.sock
+      - ARCHIVE_AGENT_SOCKET=/run/archive-agent.sock
       # Where the host mount appears inside the container (bind-mounted below).
       - ARCHIVE_MOUNT_DIR=/app/archive
 
@@ -63,7 +63,7 @@ services:
       # Persist generated images across container restarts.
       - ~/Pictures/ComfyUI:/app/output
       # Archive agent socket — lets the app ask the host agent to mount/unmount.
-      - /run/comfy-archive-agent.sock:/run/comfy-archive-agent.sock
+      - /run/archive-agent.sock:/run/archive-agent.sock
       # Archive mount point. The host agent mounts the encrypted volume at its
       # MOUNT_DIR (default /var/lib/comfy-archive/mnt, which the .deb sets up as a
       # shared mount); rshared propagation makes that mount visible in here.

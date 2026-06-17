@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""comfy-archive-agent — a tiny privileged host helper for comfy-chatbot.
+"""archive-agent — a tiny privileged host helper for comfy-chatbot.
 
 The comfy-chatbot container runs unprivileged and cannot mount encrypted
 volumes, so it asks this agent (running as root) to do the privileged
@@ -20,10 +20,10 @@ The password is supplied per request and is NEVER stored. It is handed to
 zuluCrypt-cli via a 0600 key file in tmpfs (not on argv, so it never appears in
 `ps`), which is deleted immediately after the mount attempt.
 
-Config is read from /etc/comfy-archive-agent.conf (KEY=VALUE lines):
-  SOCKET_PATH   default /run/comfy-archive-agent.sock
+Config is read from /etc/archive-agent.conf (KEY=VALUE lines):
+  SOCKET_PATH   default /run/archive-agent.sock
   SOCKET_MODE   default 0666   (octal; the container user must be able to connect)
-  MOUNT_DIR     default /var/lib/comfy-archive/mnt
+  MOUNT_DIR     default /var/lib/archive-agent/mnt
 """
 
 import os
@@ -36,19 +36,19 @@ import tempfile
 import subprocess
 from pathlib import Path
 
-CONFIG_PATH = os.environ.get("CONFIG_PATH", "/etc/comfy-archive-agent.conf")
+CONFIG_PATH = os.environ.get("CONFIG_PATH", "/etc/archive-agent.conf")
 
 DEFAULTS = {
-    "SOCKET_PATH": "/run/comfy-archive-agent.sock",
+    "SOCKET_PATH": "/run/archive-agent.sock",
     "SOCKET_MODE": "0666",
-    "MOUNT_DIR": "/var/lib/comfy-archive/mnt",
+    "MOUNT_DIR": "/var/lib/archive-agent/mnt",
     # zuluCrypt-cli's -m is a path *component* appended to /run/media/private/$USER,
     # not an absolute path, so we mount under this name and then bind it onto
     # MOUNT_DIR (which propagates into the container).
     "MOUNT_NAME": "comfy-archive",
 }
 
-log = logging.getLogger("comfy-archive-agent")
+log = logging.getLogger("archive-agent")
 
 
 def load_config():

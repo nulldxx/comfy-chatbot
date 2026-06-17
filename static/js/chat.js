@@ -721,7 +721,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-session</code> — copy this session's images into the encrypted volume, then remove the originals</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-today</code> — archive images generated today into the encrypted volume</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all</code> — archive every image in the output folder into the encrypted volume (asks y/n first)
-          <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>comfy-archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review [all|today]</code> — grid of images, oldest first (no arg this session · <code>all</code> every image · <code>today</code> only today's)</div>
