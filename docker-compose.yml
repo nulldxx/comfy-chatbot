@@ -21,7 +21,8 @@ services:
       - COMFY_SERVER=192.168.1.135:8000
       # "unix" or "windows" (controls LoRA path separator sent to the server)
       - COMFY_SERVER_OS=unix
-      # Workflow template name (without .json) inside COMFY_WORKFLOW_DIR
+      # Generation workflow template name (without .json) inside the generation/
+      # subdir of COMFY_WORKFLOW_DIR
       - COMFY_WORKFLOW=z_image_turbo_api
       # Default face-detailer workflow (without .json) inside the facedetailer/
       # subdir of COMFY_WORKFLOW_DIR, used by /face-detail. Leave blank to fall

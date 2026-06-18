@@ -41,6 +41,10 @@ COMFY_SERVER_OS = os.environ.get('COMFY_SERVER_OS', 'unix')
 COMFY_WORKFLOW = os.environ.get('COMFY_WORKFLOW', 'z_image_turbo_api')
 COMFY_WORKFLOW_DIR = Path(os.environ.get('COMFY_WORKFLOW_DIR', '/app/workflows'))
 COMFY_LORAS_FILE = Path(os.environ.get('COMFY_LORAS_FILE', '/app/workflows/loras.json'))
+# Generation workflows live in a subdir of the main workflow folder, alongside
+# the facedetailer/ and upscaler/ subdirs. (loras.json and servers.json stay in
+# the workflow folder root.)
+COMFY_GENERATION_DIR = COMFY_WORKFLOW_DIR / 'generation'
 # Face-detailer workflows live in a subdir of the main workflow folder. They take
 # the last generated image as input (via an <INPUT_IMAGE> LoadImage placeholder).
 COMFY_FACEDETAILER_DIR = COMFY_WORKFLOW_DIR / 'facedetailer'
@@ -448,14 +452,9 @@ def api_add_server():
 @app.route("/api/workflows")
 @login_required
 def api_workflows():
-    skip = {"loras.json", "servers.json"}
     workflows = []
-    if COMFY_WORKFLOW_DIR.is_dir():
-        workflows = [
-            f.stem
-            for f in sorted(COMFY_WORKFLOW_DIR.glob("*.json"))
-            if f.name not in skip
-        ]
+    if COMFY_GENERATION_DIR.is_dir():
+        workflows = [f.stem for f in sorted(COMFY_GENERATION_DIR.glob("*.json"))]
     return jsonify(workflows)
 
 
@@ -513,8 +512,9 @@ def api_upload_workflow():
         return jsonify({"error": f"Invalid workflow file: {e}"}), 400
 
     filename = secure_filename(f.filename)
-    dest = COMFY_WORKFLOW_DIR / filename
+    dest = COMFY_GENERATION_DIR / filename
     try:
+        COMFY_GENERATION_DIR.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(content)
     except OSError as e:
         return jsonify({"error": f"Could not save file: {e}"}), 500
@@ -599,6 +599,7 @@ def api_generate():
 
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
+        workflow_dir=COMFY_GENERATION_DIR,
         width=width, height=height, preserve_mtime_from=preserve_mtime_from,
     )
     return jsonify({"job_id": job_id})
