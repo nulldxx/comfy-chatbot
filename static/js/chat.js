@@ -1692,39 +1692,51 @@ function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject) {
   slider.addEventListener('pointerup', endDrag);
   slider.addEventListener('pointercancel', endDrag);
 
+  // Corner badges so it's obvious which side is which: 1 = original (left),
+  // 2 = edited result (right). The numbered buttons below match these.
+  const label1 = document.createElement('div');
+  label1.className = 'ba-label ba-label-1';
+  label1.textContent = '1';
+  const label2 = document.createElement('div');
+  label2.className = 'ba-label ba-label-2';
+  label2.textContent = '2';
+
   slider.appendChild(before);
   slider.appendChild(after);
   slider.appendChild(handle);
+  slider.appendChild(label1);
+  slider.appendChild(label2);
 
   const actions = document.createElement('div');
   actions.className = 'ba-actions';
 
-  const accept = document.createElement('button');
-  accept.className = 'ba-accept';
-  accept.title = 'Keep this image';
-  accept.textContent = '✓';
+  // 1 keeps the original (discards the edit); 2 keeps the edited result.
+  const pick1 = document.createElement('button');
+  pick1.className = 'ba-pick ba-pick-1';
+  pick1.title = 'Keep image 1 (original)';
+  pick1.textContent = '1';
 
-  const reject = document.createElement('button');
-  reject.className = 'ba-reject';
-  reject.title = 'Discard, keep original';
-  reject.textContent = '✗';
+  const pick2 = document.createElement('button');
+  pick2.className = 'ba-pick ba-pick-2';
+  pick2.title = 'Keep image 2 (edited)';
+  pick2.textContent = '2';
 
   let settled = false;
-  accept.addEventListener('click', () => {
+  pick1.addEventListener('click', () => {
     if (settled) return;
     settled = true;
-    accept.disabled = reject.disabled = true;
-    onAccept(container);
-  });
-  reject.addEventListener('click', () => {
-    if (settled) return;
-    settled = true;
-    accept.disabled = reject.disabled = true;
+    pick1.disabled = pick2.disabled = true;
     onReject(container);
   });
+  pick2.addEventListener('click', () => {
+    if (settled) return;
+    settled = true;
+    pick1.disabled = pick2.disabled = true;
+    onAccept(container);
+  });
 
-  actions.appendChild(accept);
-  actions.appendChild(reject);
+  actions.appendChild(pick1);
+  actions.appendChild(pick2);
 
   container.appendChild(slider);
   container.appendChild(actions);
@@ -1963,6 +1975,10 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const upscale = opts.upscale || null;
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
+  // Either in-place flow (do-over or before/after slider) edits an existing
+  // image rather than appending a new one, so the progress bubble belongs
+  // beside that image, not at the bottom of the chat.
+  const inPlaceWrap = sliderReplace || replaceWrap;
   const job = face || upscale; // an image-input job (face-detail or upscale) vs a plain generation
   const endpoint = face ? '/api/face-detail' : upscale ? '/api/upscale' : '/api/generate';
   const botBubble = addMessage('bot', `
@@ -1975,11 +1991,11 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const dotsEl     = botBubble.querySelector('.dots');
   const barWrap    = botBubble.querySelector('.progress-bar-wrap');
 
-  // For an in-place edit (face-detail / upscale slider), move the progress
-  // bubble from the bottom of the chat to directly beneath the image being
-  // edited, so the user can watch progress without leaving the comparison.
-  if (sliderReplace && sliderReplace.parentNode) {
-    const srcMessage = sliderReplace.closest('.message');
+  // For an in-place edit (do-over, or face-detail / upscale slider), move the
+  // progress bubble from the bottom of the chat to directly beneath the image
+  // being edited, so the user can watch progress without leaving the comparison.
+  if (inPlaceWrap && inPlaceWrap.parentNode) {
+    const srcMessage = inPlaceWrap.closest('.message');
     if (srcMessage) srcMessage.after(botBubble.parentElement);
   }
 
@@ -2026,7 +2042,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
 
       if (msg.type === 'progress') {
         statusLine.textContent = msg.message + label;
-        if (!sliderReplace) scrollBottom();
+        if (!inPlaceWrap) scrollBottom();
 
       } else if (msg.type === 'done') {
         es.close();
@@ -2100,7 +2116,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         barWrap.remove();
         cancelBtn.remove();
         statusLine.textContent = 'Cancelled' + label;
-        if (!sliderReplace) scrollBottom();
+        if (!inPlaceWrap) scrollBottom();
         resolve(false);
 
       } else if (msg.type === 'error') {
@@ -2110,7 +2126,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         cancelBtn.remove();
         statusLine.textContent = '';
         botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
-        if (!sliderReplace) scrollBottom();
+        if (!inPlaceWrap) scrollBottom();
         resolve(false);
       }
       // 'tick' and 'ping' need no UI update

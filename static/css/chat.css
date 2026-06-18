@@ -233,17 +233,28 @@ header a:hover { color: #a78bfa; }
   background: rgba(15,23,42,0.85);
   border: 2px solid #38bdf8;
 }
+/* Corner badges identifying each side of the comparison */
+.ba-label {
+  position: absolute; top: 8px;
+  background: rgba(15,23,42,0.8); border: 1px solid #334155;
+  border-radius: 6px; padding: 2px 9px;
+  font-size: 0.9rem; font-weight: 600; line-height: 1.3;
+  pointer-events: none;
+}
+.ba-label-1 { left: 8px; border-color: #38bdf8; color: #7dd3fc; }
+.ba-label-2 { right: 8px; border-color: #34d399; color: #6ee7b7; }
+
 .ba-actions { display: flex; gap: 10px; margin-top: 8px; }
-.ba-accept, .ba-reject {
+.ba-pick {
   background: rgba(15,23,42,0.75); border: 1px solid #334155;
   color: #cbd5e1; border-radius: 8px;
-  padding: 5px 14px; font-size: 1rem;
+  padding: 5px 16px; font-size: 1rem; font-weight: 600;
   cursor: pointer; line-height: 1;
   transition: border-color 0.15s, color 0.15s, opacity 0.15s;
 }
-.ba-accept:hover:not(:disabled) { border-color: #34d399; color: #34d399; }
-.ba-reject:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
-.ba-accept:disabled, .ba-reject:disabled { opacity: 0.4; cursor: default; }
+.ba-pick-1:hover:not(:disabled) { border-color: #38bdf8; color: #7dd3fc; }
+.ba-pick-2:hover:not(:disabled) { border-color: #34d399; color: #6ee7b7; }
+.ba-pick:disabled { opacity: 0.4; cursor: default; }
 
 /* Review grid (/review) */
 .review-grid {
