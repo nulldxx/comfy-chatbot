@@ -61,10 +61,13 @@ def _mount_output():
     volume = _env("OUTPUT_VOLUME")
     if not volume:
         return 0  # output encryption disabled — nothing to do
-    password = _env("OUTPUT_PASSWORD") or _env("ARCHIVE_PASSWORD")
+    # Passphrase: explicit OUTPUT_PASSWORD, else reuse SECRET_KEY so a deployment
+    # only has to declare one secret. SECRET_KEY is always set, so this never
+    # leaves the volume passphrase-less.
+    password = _env("OUTPUT_PASSWORD") or _env("SECRET_KEY")
     if not password:
         print("output-volume: OUTPUT_VOLUME is set but no OUTPUT_PASSWORD/"
-              "ARCHIVE_PASSWORD configured", file=sys.stderr)
+              "SECRET_KEY configured", file=sys.stderr)
         return 1
     socket_path = _env("ARCHIVE_AGENT_SOCKET", "/run/archive-agent.sock")
     images_dir = _env("COMFY_OUTPUT_DIR", "/app/output")

@@ -53,7 +53,7 @@ All settings are environment variables in `docker-compose.yml`:
 | `ARCHIVE_AGENT_SOCKET` | `/run/archive-agent.sock` | Unix socket of the host archive agent |
 | `ARCHIVE_MOUNT_DIR` | `/app/archive` | Where the host mount appears inside the container |
 | `OUTPUT_VOLUME` | *(empty)* | Host path to the encrypted **live-output** volume (blank = plain, unencrypted output). Auto-created on first deploy |
-| `OUTPUT_PASSWORD` | *(empty)* | Passphrase for the output volume (falls back to `ARCHIVE_PASSWORD`) |
+| `OUTPUT_PASSWORD` | *(empty)* | Passphrase for the output volume (falls back to `SECRET_KEY`, so you can declare one secret) |
 | `OUTPUT_SIZE` | `20G` | Size of the output volume created on first deploy (zuluCrypt-cli units) |
 
 ### loras.json
@@ -157,7 +157,7 @@ silently writes plaintext images to disk.
 ```yaml
 environment:
   - OUTPUT_VOLUME=/srv/comfy/live-output.luks   # auto-created on first deploy
-  - OUTPUT_PASSWORD=change-me                    # or reuse ARCHIVE_PASSWORD
+  - OUTPUT_PASSWORD=change-me                    # omit to reuse SECRET_KEY
   - OUTPUT_SIZE=20G
 volumes:
   # Replace the plain `~/Pictures/ComfyUI:/app/output` line with the encrypted bind:

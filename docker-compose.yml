@@ -68,7 +68,8 @@ services:
       # first deploy if absent):
       - OUTPUT_VOLUME=${OUTPUT_VOLUME:-}
       # Passphrase for the output volume — sent to the agent per request, never
-      # stored. Falls back to ARCHIVE_PASSWORD if left blank.
+      # stored. Falls back to SECRET_KEY if left blank, so you can declare a
+      # single secret for the deployment.
       - OUTPUT_PASSWORD=${OUTPUT_PASSWORD:-}
       # Size of the volume created on first deploy (zuluCrypt-cli units, e.g. 20G).
       - OUTPUT_SIZE=${OUTPUT_SIZE:-20G}

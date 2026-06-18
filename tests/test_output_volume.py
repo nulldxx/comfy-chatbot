@@ -169,14 +169,14 @@ class TestAgentClient(unittest.TestCase):
         self.assertEqual(req["password"], "s3cret")
         self.assertEqual(req["size"], "5G")
 
-    def test_mount_output_password_fallback(self):
+    def test_mount_output_password_falls_back_to_secret_key(self):
         os.environ.pop("OUTPUT_PASSWORD", None)
-        os.environ["ARCHIVE_PASSWORD"] = "fallback"
+        os.environ["SECRET_KEY"] = "session-secret"
         try:
             self.assertEqual(agent_client._mount_output(), 0)
-            self.assertEqual(self.agent.requests[0]["password"], "fallback")
+            self.assertEqual(self.agent.requests[0]["password"], "session-secret")
         finally:
-            os.environ.pop("ARCHIVE_PASSWORD", None)
+            os.environ.pop("SECRET_KEY", None)
 
     def test_mount_output_fails_without_marker(self):
         self.agent.skip_marker = True
