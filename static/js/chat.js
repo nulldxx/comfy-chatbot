@@ -1997,6 +1997,10 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   if (inPlaceWrap && inPlaceWrap.parentNode) {
     const srcMessage = inPlaceWrap.closest('.message');
     if (srcMessage) srcMessage.after(botBubble.parentElement);
+    // addMessage() scrolled to the bottom when it appended the progress bubble;
+    // undo that by bringing the image being edited back into view so it (and the
+    // progress bubble now beneath it) stay visible throughout the job.
+    inPlaceWrap.scrollIntoView({ block: 'center' });
   }
 
   // ✕ cancel button — enabled once we have a job_id, removed when the job
