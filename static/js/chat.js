@@ -138,6 +138,7 @@ const SLASH_COMMANDS = [
   { cmd: '/face-detail',       desc: 'face-detail the last N images (default 1)', args: ' ' },
   { cmd: '/face-detail-prompt', desc: 'set the prompt the face-detail icons use', args: ' ' },
   { cmd: '/face-detail-prompt-reset', desc: 'clear the override; derive prompts again', args: '' },
+  { cmd: '/face-detail-session', desc: 'face-detail every image from this session', args: '' },
   { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
@@ -699,6 +700,28 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/face-detail-session') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!sessionImages.length) {
+      addMessage('bot', 'No images from this session to face-detail — generate some first.');
+      return;
+    }
+    const fdSessionTargets = sessionImages.slice();
+    let fdSessionChain = Promise.resolve();
+    fdSessionTargets.forEach(img => {
+      fdSessionChain = fdSessionChain.then(() => {
+        const prompt = lastFaceDetailPrompt || deriveFaceDetailPrompt(imagePrompts[img]);
+        if (!prompt) {
+          addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
+          return;
+        }
+        addMessage('user', 'Face detail: ' + escapeHtml(prompt));
+        return runFaceDetail(prompt, img);
+      });
+    });
+    return;
+  }
+
   if (cmd === '/face-detail') {
     addMessage('user', escapeHtml(raw), raw);
     if (!sessionImages.length) {
@@ -757,6 +780,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail [N]</code> — run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image's prompt</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt &lt;prompt&gt;</code> — set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image's own prompt (needs a <code>&lt;lora:…&gt;</code> tag)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt-reset</code> — clear that override so the face icons derive a prompt from each image again</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-session</code> — face-detail every image from this session, one after another</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale [N]</code> — run an upscaler workflow over the last N generated images (default 1, no prompt needed)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
