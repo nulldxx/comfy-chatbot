@@ -45,24 +45,32 @@ COMFY_LORAS_FILE = Path(os.environ.get('COMFY_LORAS_FILE', '/app/workflows/loras
 # the facedetailer/ and upscaler/ subdirs. (loras.json and servers.json stay in
 # the workflow folder root.)
 COMFY_GENERATION_DIR = COMFY_WORKFLOW_DIR / 'generation'
+def _norm_workflow_default(raw):
+    """Normalise a workflow env-default to the same relative, '/'-joined, no-.json
+    form returned by list_workflow_names() — so a nested default like
+    'flux/zit-face-detailer(.json)' matches a listed name."""
+    if not raw:
+        return None
+    raw = raw.replace("\\", "/")
+    return raw[:-5] if raw.endswith(".json") else raw
+
+
 # Face-detailer workflows live in a subdir of the main workflow folder. They take
 # the last generated image as input (via an <INPUT_IMAGE> LoadImage placeholder).
 COMFY_FACEDETAILER_DIR = COMFY_WORKFLOW_DIR / 'facedetailer'
-# Default face-detailer workflow. Accepts a bare stem ("zit-face-detailer") or a
-# fuller form like "facedetailer/zit-face-detailer.json"; we normalise to the
-# stem so it matches the names returned by list_facedetailer_workflows().
-_FACEDETAILER_WORKFLOW_RAW = os.environ.get('COMFY_FACEDETAILER_WORKFLOW') or None
-COMFY_FACEDETAILER_WORKFLOW = Path(_FACEDETAILER_WORKFLOW_RAW).stem if _FACEDETAILER_WORKFLOW_RAW else None
+# Default face-detailer workflow. Accepts a bare name ("zit-face-detailer") or a
+# nested one like "flux/zit-face-detailer(.json)"; normalised to match the names
+# returned by list_facedetailer_workflows().
+COMFY_FACEDETAILER_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_FACEDETAILER_WORKFLOW'))
 
 # Upscaler workflows live in a subdir of the main workflow folder. Like the
 # face-detailer ones they take the last generated image as input (via an
 # <INPUT_IMAGE> LoadImage placeholder), but they take no prompt or LoRA tags.
 COMFY_UPSCALER_DIR = COMFY_WORKFLOW_DIR / 'upscaler'
-# Default upscaler workflow. Accepts a bare stem ("zip-2k-upscale") or a fuller
-# form like "upscaler/zip-2k-upscale.json"; normalised to the stem so it matches
-# the names returned by list_upscaler_workflows().
-_UPSCALER_WORKFLOW_RAW = os.environ.get('COMFY_UPSCALER_WORKFLOW') or None
-COMFY_UPSCALER_WORKFLOW = Path(_UPSCALER_WORKFLOW_RAW).stem if _UPSCALER_WORKFLOW_RAW else None
+# Default upscaler workflow. Accepts a bare name ("zip-2k-upscale") or a nested
+# one like "flux/zip-2k-upscale(.json)"; normalised to match the names returned
+# by list_upscaler_workflows().
+COMFY_UPSCALER_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_UPSCALER_WORKFLOW'))
 
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -231,11 +239,13 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
 
     purge_generation_started(server_address)
     try:
-        base_dir = workflow_dir or COMFY_WORKFLOW_DIR
+        base_dir = (workflow_dir or COMFY_GENERATION_DIR).resolve()
         name_with_ext = workflow_name if workflow_name.endswith(".json") else f"{workflow_name}.json"
-        workflow_path = base_dir / name_with_ext
-        if not workflow_path.is_file():
-            raise FileNotFoundError(f"Workflow template not found: {workflow_path}")
+        # Resolve and confine to base_dir: workflow_name is client-supplied (and
+        # may name a subfolder), so a "../" can't be allowed to escape the dir.
+        workflow_path = (base_dir / name_with_ext).resolve()
+        if not workflow_path.is_relative_to(base_dir) or not workflow_path.is_file():
+            raise FileNotFoundError(f"Workflow template not found: {workflow_name}")
 
         send("progress", message=f"Loading workflow: {workflow_path.name}")
         template = workflow_path.read_text()
@@ -449,19 +459,24 @@ def api_add_server():
     return jsonify(entry)
 
 
+def list_workflow_names(base_dir):
+    """Relative '/'-joined workflow names (no .json) found recursively under base_dir."""
+    if not base_dir.is_dir():
+        return []
+    return sorted(
+        f.relative_to(base_dir).with_suffix("").as_posix()
+        for f in base_dir.glob("**/*.json")
+    )
+
+
 @app.route("/api/workflows")
 @login_required
 def api_workflows():
-    workflows = []
-    if COMFY_GENERATION_DIR.is_dir():
-        workflows = [f.stem for f in sorted(COMFY_GENERATION_DIR.glob("*.json"))]
-    return jsonify(workflows)
+    return jsonify(list_workflow_names(COMFY_GENERATION_DIR))
 
 
 def list_facedetailer_workflows():
-    if not COMFY_FACEDETAILER_DIR.is_dir():
-        return []
-    return [f.stem for f in sorted(COMFY_FACEDETAILER_DIR.glob("*.json"))]
+    return list_workflow_names(COMFY_FACEDETAILER_DIR)
 
 
 @app.route("/api/facedetailer-workflows")
@@ -471,9 +486,7 @@ def api_facedetailer_workflows():
 
 
 def list_upscaler_workflows():
-    if not COMFY_UPSCALER_DIR.is_dir():
-        return []
-    return [f.stem for f in sorted(COMFY_UPSCALER_DIR.glob("*.json"))]
+    return list_workflow_names(COMFY_UPSCALER_DIR)
 
 
 @app.route("/api/upscaler-workflows")
@@ -637,10 +650,10 @@ def api_face_detail():
     available = list_facedetailer_workflows()
     workflow_name = data.get("workflow") or COMFY_FACEDETAILER_WORKFLOW
     if workflow_name:
-        stem = Path(workflow_name).stem
-        if stem not in available:
+        name = workflow_name[:-5] if workflow_name.endswith(".json") else workflow_name
+        if name not in available:
             return jsonify({"error": f"Unknown face-detailer workflow: {workflow_name}"}), 400
-        workflow_name = stem
+        workflow_name = name
     elif available:
         workflow_name = available[0]
     else:
@@ -686,10 +699,10 @@ def api_upscale():
     available = list_upscaler_workflows()
     workflow_name = data.get("workflow") or COMFY_UPSCALER_WORKFLOW
     if workflow_name:
-        stem = Path(workflow_name).stem
-        if stem not in available:
+        name = workflow_name[:-5] if workflow_name.endswith(".json") else workflow_name
+        if name not in available:
             return jsonify({"error": f"Unknown upscaler workflow: {workflow_name}"}), 400
-        workflow_name = stem
+        workflow_name = name
     elif available:
         workflow_name = available[0]
     else:
