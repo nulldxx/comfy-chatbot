@@ -1975,6 +1975,14 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const dotsEl     = botBubble.querySelector('.dots');
   const barWrap    = botBubble.querySelector('.progress-bar-wrap');
 
+  // For an in-place edit (face-detail / upscale slider), move the progress
+  // bubble from the bottom of the chat to directly beneath the image being
+  // edited, so the user can watch progress without leaving the comparison.
+  if (sliderReplace && sliderReplace.parentNode) {
+    const srcMessage = sliderReplace.closest('.message');
+    if (srcMessage) srcMessage.after(botBubble.parentElement);
+  }
+
   // ✕ cancel button — enabled once we have a job_id, removed when the job
   // ends (done/error/cancelled). Lives on the bubble (not the status line,
   // whose textContent is rewritten on every progress update).
@@ -2018,7 +2026,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
 
       if (msg.type === 'progress') {
         statusLine.textContent = msg.message + label;
-        scrollBottom();
+        if (!sliderReplace) scrollBottom();
 
       } else if (msg.type === 'done') {
         es.close();
@@ -2092,7 +2100,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         barWrap.remove();
         cancelBtn.remove();
         statusLine.textContent = 'Cancelled' + label;
-        scrollBottom();
+        if (!sliderReplace) scrollBottom();
         resolve(false);
 
       } else if (msg.type === 'error') {
@@ -2102,7 +2110,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         cancelBtn.remove();
         statusLine.textContent = '';
         botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
-        scrollBottom();
+        if (!sliderReplace) scrollBottom();
         resolve(false);
       }
       // 'tick' and 'ping' need no UI update
