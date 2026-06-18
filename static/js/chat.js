@@ -144,12 +144,14 @@ const SLASH_COMMANDS = [
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
   { cmd: '/purge',      desc: 'free GPU memory on active server',   args: ''  },
   { cmd: '/resolution', desc: 'set output resolution (e.g. 640x480 or phone)', args: ' ' },
+  { cmd: '/review',         desc: 'grid of the last N images, oldest first', args: ' ' },
   { cmd: '/review-all',     desc: 'grid of every image (tap to view, trash to delete)', args: '' },
   { cmd: '/review-session', desc: 'grid of this session\'s images (tap to view, trash to delete)', args: '' },
   { cmd: '/review-today',   desc: 'grid of today\'s images (tap to view, trash to delete)', args: '' },
   { cmd: '/sequence',   desc: 'generate a prompt sequence from a master prompt (Grok)', args: ' ' },
   { cmd: '/sequence-replacement', desc: 'add a find→replace applied to Grok prompts', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
+  { cmd: '/slideshow',         desc: 'browse the last N images, oldest first',  args: ' ' },
   { cmd: '/slideshow-all',     desc: 'browse every image, oldest first',       args: '' },
   { cmd: '/slideshow-reverse', desc: 'browse every image, newest first',       args: '' },
   { cmd: '/slideshow-session', desc: 'browse this session\'s images',          args: '' },
@@ -731,9 +733,11 @@ function handleSlashCommand(raw) {
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/review &lt;n&gt;</code> — grid of the last N images, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-all</code> — grid of every image, oldest first (tap to view, trash to delete)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-today</code> — grid of today's images, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-session</code> — grid of this session's images</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow &lt;n&gt;</code> — browse the last N images, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-all</code> — browse every image, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-reverse</code> — browse every image, newest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-today</code> — browse today's images, oldest first</div>
@@ -880,6 +884,27 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/slideshow') {
+    const n = parseInt(parts[1], 10);
+    if (!Number.isInteger(n) || n < 1) {
+      addMessage('bot', 'Usage: <code>/slideshow &lt;n&gt;</code> — browse the last N images, oldest first.');
+      return;
+    }
+    const bubble = addMessage('bot', '<div class="status-text">Loading images…</div>');
+    fetch('/api/images')
+      .then(r => r.json())
+      .then(images => {
+        if (!images.length) {
+          bubble.innerHTML = 'No images yet — generate some first!';
+          return;
+        }
+        // The API returns newest-first; take the last N, then show oldest-first.
+        activeSlideshowCtrl = createSlideshow(bubble, images.slice(0, n).reverse());
+      })
+      .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
+    return;
+  }
+
   if (cmd === '/slideshow-all' || cmd === '/slideshow-today' || cmd === '/slideshow-reverse') {
     const todayOnly = cmd === '/slideshow-today';
     const reverse   = cmd === '/slideshow-reverse';
@@ -908,6 +933,27 @@ function handleSlashCommand(raw) {
     }
     const bubble = addMessage('bot', '');
     renderReviewGrid(bubble, sessionImages.slice());
+    return;
+  }
+
+  if (cmd === '/review') {
+    const n = parseInt(parts[1], 10);
+    if (!Number.isInteger(n) || n < 1) {
+      addMessage('bot', 'Usage: <code>/review &lt;n&gt;</code> — grid of the last N images, oldest first.');
+      return;
+    }
+    const bubble = addMessage('bot', '<div class="status-text">Loading images…</div>');
+    fetch('/api/images')
+      .then(r => r.json())
+      .then(images => {
+        if (!images.length) {
+          bubble.innerHTML = 'No images yet — generate some first!';
+          return;
+        }
+        // The API returns newest-first; take the last N, then show oldest-first.
+        renderReviewGrid(bubble, images.slice(0, n).reverse());
+      })
+      .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
     return;
   }
 
