@@ -2092,9 +2092,11 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
           if (i === 0 && replaceWrap && replaceWrap.parentNode) {
             const oldImg = replaceWrap.querySelector('img');
             if (oldImg) {
-              const oldIdx = sessionImages.indexOf(oldImg.src);
+              const oldSrc = oldImg.getAttribute('src');
+              deleteImageFile(oldSrc).catch(() => {});  // discard the old file from disk so it doesn't linger in /review-session
+              const oldIdx = sessionImages.indexOf(oldSrc);
               if (oldIdx !== -1) sessionImages.splice(oldIdx, 1);
-              delete imagePrompts[oldImg.src];
+              delete imagePrompts[oldSrc];
             }
             const tmp = document.createElement('div');
             appendChatImage(tmp, url);
