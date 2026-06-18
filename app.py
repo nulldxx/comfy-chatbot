@@ -210,7 +210,8 @@ def cancel_auto_purge(server_address):
 # ---------------------------------------------------------------------------
 
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
-                   width=None, height=None, workflow_dir=None, input_image=None):
+                   width=None, height=None, workflow_dir=None, input_image=None,
+                   preserve_mtime_from=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
         cancel_event = jobs[job_id]["cancel"]
@@ -302,12 +303,29 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_urls = []
+        dest_paths = []
         for fp in downloaded:
             fp = Path(fp)
             dest = IMAGES_DIR / f"{timestamp}_{fp.name}"
             fp.rename(dest)
+            dest_paths.append(dest)
             image_urls.append(f"/images/{dest.name}")
         tmp_dir.rmdir()
+
+        # When this job replaces an existing image (a do-over, or an accepted
+        # face-detail / upscale), copy the source image's mtime onto the result
+        # so mtime-ordered views (/review-all, /review-today, the slideshow)
+        # keep the original position instead of jumping the new image to the top.
+        if preserve_mtime_from:
+            src_name = secure_filename(Path(preserve_mtime_from).name)
+            src_path = IMAGES_DIR / src_name
+            if src_name and src_path.is_file():
+                src_stat = src_path.stat()
+                for dest in dest_paths:
+                    try:
+                        os.utime(dest, (src_stat.st_atime, src_stat.st_mtime))
+                    except OSError:
+                        pass
 
         with jobs_lock:
             jobs[job_id]["status"] = "done"
@@ -575,9 +593,13 @@ def api_generate():
     if err:
         return err
 
+    # A do-over passes the image it replaces so the result can inherit its mtime
+    # and keep its place in mtime-ordered reviews/slideshow.
+    preserve_mtime_from = (data.get("preserve_mtime_from") or "").strip() or None
+
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
-        width=width, height=height,
+        width=width, height=height, preserve_mtime_from=preserve_mtime_from,
     )
     return jsonify({"job_id": job_id})
 
@@ -633,6 +655,7 @@ def api_face_detail():
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_FACEDETAILER_DIR, input_image=image_path,
+        preserve_mtime_from=safe,
     )
     return jsonify({"job_id": job_id})
 
@@ -681,6 +704,7 @@ def api_upscale():
     job_id = start_generation_job(
         "", [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_UPSCALER_DIR, input_image=image_path,
+        preserve_mtime_from=safe,
     )
     return jsonify({"job_id": job_id})
 

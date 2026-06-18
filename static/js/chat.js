@@ -1636,7 +1636,7 @@ function runUpscale(image, imgWrap) {
 
 function runDoOver(url, imgWrap) {
   const prompt = imagePrompts[url] || '';
-  return runGeneration(prompt, '', null, { replaceWrap: imgWrap });
+  return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url });
 }
 
 // Builds a before/after comparison slider for a face-detail or upscale result.
@@ -1975,6 +1975,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const upscale = opts.upscale || null;
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
+  const preserveMtimeFrom = opts.preserveMtimeFrom || null;
   // Either in-place flow (do-over or before/after slider) edits an existing
   // image rather than appending a new one, so the progress bubble belongs
   // beside that image, not at the bottom of the chat.
@@ -2025,6 +2026,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(wf ? { workflow: wf } : {}),
       ...(!job && currentResolution ? { width: currentResolution.width, height: currentResolution.height } : {}),
       ...(job ? { image: job.image } : {}),
+      ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),
   })
   .then(r => r.json())
@@ -2094,21 +2096,24 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         }
 
         msg.images.forEach((url, i) => {
-          sessionImages.push(url);
           if (originPrompt) imagePrompts[url] = originPrompt;
           if (i === 0 && replaceWrap && replaceWrap.parentNode) {
             const oldImg = replaceWrap.querySelector('img');
-            if (oldImg) {
-              const oldSrc = oldImg.getAttribute('src');
+            const oldSrc = oldImg ? oldImg.getAttribute('src') : null;
+            if (oldSrc) {
               deleteImageFile(oldSrc).catch(() => {});  // discard the old file from disk so it doesn't linger in /review-session
-              const oldIdx = sessionImages.indexOf(oldSrc);
-              if (oldIdx !== -1) sessionImages.splice(oldIdx, 1);
               delete imagePrompts[oldSrc];
             }
+            // Replace the old image in-place in sessionImages so /review-session
+            // keeps its position rather than moving the regenerated image to the end.
+            const oldIdx = oldSrc ? sessionImages.indexOf(oldSrc) : -1;
+            if (oldIdx !== -1) sessionImages.splice(oldIdx, 1, url);
+            else sessionImages.push(url);
             const tmp = document.createElement('div');
             appendChatImage(tmp, url);
             replaceWrap.replaceWith(tmp.firstChild);
           } else {
+            sessionImages.push(url);
             appendChatImage(botBubble, url);
           }
         });
