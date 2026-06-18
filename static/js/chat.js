@@ -1600,6 +1600,11 @@ function runUpscale(image) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+function runDoOver(url, imgWrap) {
+  const prompt = imagePrompts[url] || '';
+  return runGeneration(prompt, '', null, { replaceWrap: imgWrap });
+}
+
 // Appends a generated image to a bubble with a trash-icon overlay (top-right,
 // deletes from chat + output folder) and a face-icon overlay (bottom-right,
 // runs face detail over this image using the /face-detail-prompt override or a
@@ -1662,10 +1667,22 @@ function appendChatImage(container, url) {
       });
   });
 
+  const redo = document.createElement('button');
+  redo.className = 'img-redo';
+  redo.title = 'Regenerate this image';
+  redo.innerHTML = '&#x21BA;&#xFE0E;';
+  redo.addEventListener('click', e => {
+    e.stopPropagation();
+    if (redo.disabled || sendBtn.disabled) return;
+    redo.disabled = true;
+    runDoOver(url, wrap).finally(() => { redo.disabled = false; });
+  });
+
   wrap.appendChild(img);
   wrap.appendChild(del);
   wrap.appendChild(face);
   wrap.appendChild(up);
+  wrap.appendChild(redo);
   container.appendChild(wrap);
 }
 
@@ -1820,6 +1837,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   return new Promise(resolve => {
   const face = opts.face || null;
   const upscale = opts.upscale || null;
+  const replaceWrap = opts.replaceWrap || null;
   const job = face || upscale; // an image-input job (face-detail or upscale) vs a plain generation
   const endpoint = face ? '/api/face-detail' : upscale ? '/api/upscale' : '/api/generate';
   const botBubble = addMessage('bot', `
@@ -1887,12 +1905,28 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         // for prompt-less jobs (upscale) the source image's own prompt, so a
         // face icon on the result can still derive a face-detail prompt.
         const originPrompt = raw || (job && imagePrompts[job.image]) || '';
-        msg.images.forEach(url => {
+        msg.images.forEach((url, i) => {
           sessionImages.push(url);
           if (originPrompt) imagePrompts[url] = originPrompt;
-          appendChatImage(botBubble, url);
+          if (i === 0 && replaceWrap && replaceWrap.parentNode) {
+            const oldImg = replaceWrap.querySelector('img');
+            if (oldImg) {
+              const oldIdx = sessionImages.indexOf(oldImg.src);
+              if (oldIdx !== -1) sessionImages.splice(oldIdx, 1);
+              delete imagePrompts[oldImg.src];
+            }
+            const tmp = document.createElement('div');
+            appendChatImage(tmp, url);
+            replaceWrap.replaceWith(tmp.firstChild);
+          } else {
+            appendChatImage(botBubble, url);
+          }
         });
-        scrollBottom();
+        if (replaceWrap && msg.images.length === 1) {
+          botBubble.parentElement.remove();
+        } else {
+          scrollBottom();
+        }
         resolve(true);
 
       } else if (msg.type === 'cancelled') {
