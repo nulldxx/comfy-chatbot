@@ -135,6 +135,7 @@ const SLASH_COMMANDS = [
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
   { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
   { cmd: '/delete-today',   desc: 'delete every image generated today',            args: '' },
+  { cmd: '/face-detail',       desc: 'face-detail the last N images (default 1)', args: ' ' },
   { cmd: '/face-detail-prompt', desc: 'set the prompt the face-detail icons use', args: ' ' },
   { cmd: '/face-detail-prompt-reset', desc: 'clear the override; derive prompts again', args: '' },
   { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
@@ -157,7 +158,7 @@ const SLASH_COMMANDS = [
   { cmd: '/slideshow-session', desc: 'browse this session\'s images',          args: '' },
   { cmd: '/slideshow-today',   desc: 'browse today\'s images, oldest first',   args: '' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
-  { cmd: '/upscale',    desc: 'upscale the last image (no prompt)', args: ''  },
+  { cmd: '/upscale',    desc: 'upscale the last N images (default 1, no prompt)', args: ' ' },
   { cmd: '/workflow',   desc: 'choose a workflow template',         args: ''  },
   { cmd: '/workflow-iterate', desc: 'run a prompt against several workflows', args: ' ' },
 ];
@@ -686,7 +687,43 @@ function handleSlashCommand(raw) {
       addMessage('bot', 'No image from this session to upscale — generate one first.');
       return;
     }
-    runUpscale(sessionImages[sessionImages.length - 1]);
+    const upscaleArg = raw.slice('/upscale'.length).trim();
+    const upscaleN = upscaleArg ? parseInt(upscaleArg, 10) : 1;
+    if (isNaN(upscaleN) || upscaleN < 1) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/upscale</code> or <code>/upscale &lt;N&gt;</code> — upscale the last N images</span>');
+      return;
+    }
+    const upscaleTargets = sessionImages.slice(-upscaleN);
+    let upscaleChain = Promise.resolve();
+    upscaleTargets.forEach(img => { upscaleChain = upscaleChain.then(() => runUpscale(img)); });
+    return;
+  }
+
+  if (cmd === '/face-detail') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!sessionImages.length) {
+      addMessage('bot', 'No image from this session to face-detail — generate one first.');
+      return;
+    }
+    const fdArg = raw.slice('/face-detail'.length).trim();
+    const fdN = fdArg ? parseInt(fdArg, 10) : 1;
+    if (isNaN(fdN) || fdN < 1) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/face-detail</code> or <code>/face-detail &lt;N&gt;</code> — face-detail the last N images</span>');
+      return;
+    }
+    const fdTargets = sessionImages.slice(-fdN);
+    let fdChain = Promise.resolve();
+    fdTargets.forEach(img => {
+      fdChain = fdChain.then(() => {
+        const prompt = lastFaceDetailPrompt || deriveFaceDetailPrompt(imagePrompts[img]);
+        if (!prompt) {
+          addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
+          return;
+        }
+        addMessage('user', 'Face detail: ' + escapeHtml(prompt));
+        return runFaceDetail(prompt, img);
+      });
+    });
     return;
   }
 
@@ -717,10 +754,11 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to each Grok prompt (no args lists them; <code>clear</code> removes them)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several workflows, then run the prompt against each one</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail [N]</code> — run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image's prompt</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt &lt;prompt&gt;</code> — set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image's own prompt (needs a <code>&lt;lora:…&gt;</code> tag)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt-reset</code> — clear that override so the face icons derive a prompt from each image again</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale</code> — run an upscaler workflow over the last generated image (no prompt needed)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale [N]</code> — run an upscaler workflow over the last N generated images (default 1, no prompt needed)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
