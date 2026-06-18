@@ -3,9 +3,10 @@ set -e
 
 case "$1" in
     configure)
-        # Mount directory for the encrypted volume (kept in sync with the
-        # MOUNT_DIR default in /etc/archive-agent.conf).
+        # Mount directories for the encrypted volumes (kept in sync with the
+        # MOUNT_DIR / OUTPUT_MOUNT_DIR defaults in /etc/archive-agent.conf).
         mkdir -p /var/lib/archive-agent/mnt
+        mkdir -p /var/lib/archive-agent/output
 
         if [ -d /run/systemd/system ]; then
             systemctl daemon-reload || true

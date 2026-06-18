@@ -52,6 +52,9 @@ All settings are environment variables in `docker-compose.yml`:
 | `ARCHIVE_PASSWORD` | *(empty)* | Passphrase for the encrypted volume (sent to the host agent per request) |
 | `ARCHIVE_AGENT_SOCKET` | `/run/archive-agent.sock` | Unix socket of the host archive agent |
 | `ARCHIVE_MOUNT_DIR` | `/app/archive` | Where the host mount appears inside the container |
+| `OUTPUT_VOLUME` | *(empty)* | Host path to the encrypted **live-output** volume (blank = plain, unencrypted output). Auto-created on first deploy |
+| `OUTPUT_PASSWORD` | *(empty)* | Passphrase for the output volume (falls back to `ARCHIVE_PASSWORD`) |
+| `OUTPUT_SIZE` | `20G` | Size of the output volume created on first deploy (zuluCrypt-cli units) |
 
 ### loras.json
 
@@ -134,6 +137,42 @@ volumes:
 
 zuluCrypt auto-detects LUKS/VeraCrypt, so the volume can be either. Tune the agent
 (socket path/permissions, mount dir) in `/etc/archive-agent.conf`.
+
+## Encrypting the live output folder
+
+`/archive-*` secures images you've finished with, but freshly generated images
+still land in the **plain** output folder (`~/Pictures/ComfyUI` by default), where
+anyone with host or disk access can browse them. Setting `OUTPUT_VOLUME` encrypts
+that live output too, reusing the same `archive-agent`.
+
+When `OUTPUT_VOLUME` is set, the container entrypoint asks the agent (on start) to
+**create the LUKS volume if it doesn't exist yet** — so it self-provisions on first
+deploy — then mounts it at `/app/output`, and **unmounts it when the container
+stops**. Generated images are therefore encrypted at rest whenever the chatbot
+isn't running. The app refuses to generate if the volume didn't mount, so it never
+silently writes plaintext images to disk.
+
+**To enable**, install the same `archive-agent` (above), then in `docker-compose.yml`:
+
+```yaml
+environment:
+  - OUTPUT_VOLUME=/srv/comfy/live-output.luks   # auto-created on first deploy
+  - OUTPUT_PASSWORD=change-me                    # or reuse ARCHIVE_PASSWORD
+  - OUTPUT_SIZE=20G
+volumes:
+  # Replace the plain `~/Pictures/ComfyUI:/app/output` line with the encrypted bind:
+  - type: bind
+    source: /var/lib/archive-agent/output        # = agent OUTPUT_MOUNT_DIR (shared mount)
+    target: /app/output
+    bind:
+      propagation: rshared
+```
+
+**Threat model.** This protects images **at rest** — when the container is stopped,
+the host is powered off, or the disk is removed, `OUTPUT_VOLUME` is just an opaque
+LUKS blob. It does **not** protect against a compromised running host (the volume is
+mounted and readable while the app runs) and the passphrase lives in the container
+environment. Same trade-off as `/archive-*`.
 
 ## Adding Workflows
 

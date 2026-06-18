@@ -56,12 +56,45 @@ services:
       # Where the host mount appears inside the container (bind-mounted below).
       - ARCHIVE_MOUNT_DIR=/app/archive
 
+      # Live-output encryption (opt-in). When OUTPUT_VOLUME is set, the container
+      # entrypoint asks the same host archive-agent to create-if-missing + mount
+      # a LUKS volume at COMFY_OUTPUT_DIR on start and unmount it on stop, so
+      # generated images are encrypted at rest whenever the container is stopped.
+      # To enable: set OUTPUT_VOLUME + OUTPUT_PASSWORD below AND switch the
+      # /app/output volume mount to the encrypted rshared bind (see volumes:).
+      # Leave OUTPUT_VOLUME blank to keep plain (unencrypted) output.
+      #
+      # Host path the agent creates/opens for live output (LUKS, auto-created on
+      # first deploy if absent):
+      - OUTPUT_VOLUME=${OUTPUT_VOLUME:-}
+      # Passphrase for the output volume — sent to the agent per request, never
+      # stored. Falls back to ARCHIVE_PASSWORD if left blank.
+      - OUTPUT_PASSWORD=${OUTPUT_PASSWORD:-}
+      # Size of the volume created on first deploy (zuluCrypt-cli units, e.g. 20G).
+      - OUTPUT_SIZE=${OUTPUT_SIZE:-20G}
+
     volumes:
       # Mount your existing dot-files comfyui directory so workflow templates
       # and loras.json are available without being baked into the image.
       - ~/dot-files/comfyui:/app/workflows:ro
       # Persist generated images across container restarts.
+      #
+      # DEFAULT (unencrypted): a plain host directory. Images are readable on the
+      # host at all times.
       - ~/Pictures/ComfyUI:/app/output
+      #
+      # ENCRYPTED (opt-in): comment out the line above and uncomment the bind
+      # below to store live output in the agent's encrypted volume instead. The
+      # agent mounts the decrypted volume at its OUTPUT_MOUNT_DIR (default
+      # /var/lib/archive-agent/output, set up as a shared mount); rshared
+      # propagation makes it visible here. The source MUST match the agent's
+      # OUTPUT_MOUNT_DIR in /etc/archive-agent.conf. Requires OUTPUT_VOLUME +
+      # OUTPUT_PASSWORD above.
+      # - type: bind
+      #   source: /var/lib/archive-agent/output
+      #   target: /app/output
+      #   bind:
+      #     propagation: rshared
       # Archive agent socket — lets the app ask the host agent to mount/unmount.
       - /run/archive-agent.sock:/run/archive-agent.sock
       # Archive mount point. The host agent mounts the encrypted volume at its

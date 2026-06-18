@@ -26,15 +26,18 @@ COPY --from=builder /root/.local /usr/local
 
 # Copy application code
 COPY app.py .
+COPY agent_client.py .
 COPY ComfyServer.py .
 COPY workflow.py .
 COPY grok.py .
 COPY gunicorn.conf.py .
+COPY docker-entrypoint.sh .
 COPY templates/ templates/
 COPY static/ static/
 
 # Create a non-root user for security
-RUN adduser --disabled-password --gecos '' appuser && \
+RUN chmod +x docker-entrypoint.sh && \
+    adduser --disabled-password --gecos '' appuser && \
     chown -R appuser:appuser /app
 
 # Switch to non-root user
@@ -52,6 +55,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # Kept near the end so a changing version doesn't bust the cache above it.
 ARG BUILD_VERSION=unknown
 ENV BUILD_VERSION=$BUILD_VERSION
+
+# The entrypoint mounts/unmounts the encrypted output volume (when configured)
+# around the app, then runs the CMD below. With encryption disabled it's a
+# transparent passthrough to gunicorn.
+ENTRYPOINT ["./docker-entrypoint.sh"]
 
 # Run the application with Gunicorn
 CMD ["gunicorn", "--config", "gunicorn.conf.py", "app:app"]

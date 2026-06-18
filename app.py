@@ -4,7 +4,6 @@ import json
 import uuid
 import queue
 import shutil
-import socket
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -14,6 +13,7 @@ from flask import (
     session, redirect, url_for, Response, send_from_directory,
 )
 from werkzeug.utils import secure_filename
+from agent_client import send as agent_send
 from ComfyServer import ComfyServer, JobCancelled
 from grok import generate_prompt_sequence, GrokError
 from workflow import (
@@ -79,6 +79,17 @@ ARCHIVE_MOUNT_DIR = Path(os.environ.get('ARCHIVE_MOUNT_DIR', '/app/archive'))
 # propagated into the container and we're not writing to plain disk. Keep in
 # sync with MARKER_NAME in packaging/agent/archive-agent.
 ARCHIVE_MARKER = '.comfy-archive'
+
+# Live-output encryption (opt-in). When OUTPUT_VOLUME is set, the container
+# entrypoint asks the host agent to create-if-missing + mount a LUKS volume at
+# IMAGES_DIR before serving, and to unmount it on stop — so generated images are
+# encrypted at rest whenever the container isn't running. We refuse to generate
+# if the mount marker isn't visible here (the agent drops it on mount, same as
+# the archive flow): proof the encrypted volume actually propagated in, so a
+# bind/propagation failure never silently writes plaintext images to disk.
+OUTPUT_VOLUME = os.environ.get('OUTPUT_VOLUME', '')   # host path to the output volume
+OUTPUT_MARKER = ARCHIVE_MARKER                        # same marker file the agent drops
+
 # Only one mount/copy/unmount cycle at a time (gunicorn runs gthread workers).
 archive_lock = threading.Lock()
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -493,6 +504,17 @@ def api_upload_workflow():
     return jsonify({"name": dest.stem})
 
 
+def output_storage_error():
+    """If live-output encryption is enabled (OUTPUT_VOLUME set) but the encrypted
+    volume isn't mounted here, return a Flask (response, status) tuple so callers
+    refuse to start a generation that would write images to plain disk. Returns
+    None when storage is healthy or encryption is disabled."""
+    if OUTPUT_VOLUME and not (IMAGES_DIR / OUTPUT_MARKER).exists():
+        return jsonify({"error": "Encrypted output volume is not mounted; "
+                                 "refusing to write images to plain disk."}), 503
+    return None
+
+
 def start_generation_job(prompt, loras, server_address, server_os, workflow_name, **kwargs):
     """Create a tracked job and spawn its generation thread; return the job_id.
 
@@ -549,6 +571,10 @@ def api_generate():
         except (ValueError, TypeError):
             return jsonify({"error": "height must be an integer"}), 400
 
+    err = output_storage_error()
+    if err:
+        return err
+
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
         width=width, height=height,
@@ -600,6 +626,10 @@ def api_face_detail():
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
 
+    err = output_storage_error()
+    if err:
+        return err
+
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_FACEDETAILER_DIR, input_image=image_path,
@@ -643,6 +673,10 @@ def api_upscale():
 
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
+
+    err = output_storage_error()
+    if err:
+        return err
 
     job_id = start_generation_job(
         "", [], server_address, server_os, workflow_name,
@@ -827,28 +861,9 @@ def api_images():
 def _agent_request(payload: dict, timeout: float = 120.0) -> dict:
     """Send one newline-delimited JSON request to the host archive agent over its
     Unix socket and return the parsed JSON reply. Raises RuntimeError on transport
-    failure so callers can surface a clean error to the user."""
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect(ARCHIVE_AGENT_SOCKET)
-            sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
-            sock.shutdown(socket.SHUT_WR)
-            chunks = []
-            while True:
-                data = sock.recv(4096)
-                if not data:
-                    break
-                chunks.append(data)
-    except OSError as exc:
-        raise RuntimeError(f"archive agent unavailable: {exc}") from exc
-    raw = b"".join(chunks).decode("utf-8").strip()
-    if not raw:
-        raise RuntimeError("archive agent returned no response")
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"archive agent returned invalid response: {raw!r}") from exc
+    failure so callers can surface a clean error to the user. The transport lives
+    in agent_client so the container entrypoint can reuse it."""
+    return agent_send(payload, ARCHIVE_AGENT_SOCKET, timeout)
 
 
 @app.route("/api/archive", methods=["POST"])
