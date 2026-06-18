@@ -1992,6 +1992,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const dotsEl     = botBubble.querySelector('.dots');
   const barWrap    = botBubble.querySelector('.progress-bar-wrap');
 
+  // Wall-clock start, used to report generation time when the job completes.
+  const startTime = Date.now();
+
   // For an in-place edit (do-over, or face-detail / upscale slider), move the
   // progress bubble from the bottom of the chat to directly beneath the image
   // being edited, so the user can watch progress without leaving the comparison.
@@ -2055,7 +2058,8 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         dotsEl.remove();
         barWrap.remove();
         cancelBtn.remove();
-        statusLine.textContent = `Done — ${msg.images.length} image(s)${label}`;
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        statusLine.textContent = `Done — ${msg.images.length} image(s) in ${elapsed}s${label}`;
         // The prompt to remember for this image. For an image-input job
         // (face-detail or upscale) we inherit the *source image's* original
         // generation prompt — not `raw`, which for face-detail is the derived
