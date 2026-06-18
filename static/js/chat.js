@@ -127,9 +127,9 @@ function exitFauxFs(el) {
 
 const SLASH_COMMANDS = [
   { cmd: '/addserver',  desc: 'add a server  (name host:port:os)',  args: ' ' },
-  { cmd: '/archive-all',     desc: 'archive every image to the encrypted volume',     args: '' },
-  { cmd: '/archive-session', desc: 'archive all images from this session',            args: '' },
-  { cmd: '/archive-today',   desc: 'archive images generated today',                  args: '' },
+  { cmd: '/archive-all',     desc: 'archive every image to the encrypted volume (optional folder name)',     args: ' ' },
+  { cmd: '/archive-session', desc: 'archive all images from this session (optional folder name)',            args: ' ' },
+  { cmd: '/archive-today',   desc: 'archive images generated today (optional folder name)',                  args: ' ' },
   { cmd: '/clear',      desc: 'clear the chat history',             args: ''  },
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
@@ -727,9 +727,9 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-session</code> — delete all images from this session (chat + output folder)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-today</code> — delete every image generated today (asks y/n first)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-all</code> — delete every image in the output folder (asks y/n first)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-session</code> — copy this session's images into the encrypted volume, then remove the originals</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-today</code> — archive images generated today into the encrypted volume</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all</code> — archive every image in the output folder into the encrypted volume (asks y/n first)
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-session [name]</code> — copy this session's images into the encrypted volume, then remove the originals (optional folder name, e.g. <code>/archive-session man walking on beach</code>)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-today [name]</code> — archive images generated today into the encrypted volume (optional folder name)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all [name]</code> — archive every image in the output folder into the encrypted volume (asks y/n first; optional folder name)
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
@@ -1093,20 +1093,21 @@ function handleSlashCommand(raw) {
       addMessage('bot', 'No images from this session to archive.');
       return;
     }
+    const name = raw.trim().slice(parts[0].length).trim();
     const targets = [...sessionImages];
     const filenames = targets.map(url => decodeURIComponent(url.split('/').pop()));
     const bubble = addMessage('bot', '<div class="status-text">Archiving…</div>').parentElement.querySelector('.bubble');
     fetch('/api/archive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scope: 'session', filenames }),
+      body: JSON.stringify({ scope: 'session', filenames, name }),
     })
       .then(r => r.json().then(data => ({ ok: r.ok, data })))
       .then(({ ok, data }) => {
         if (!ok || data.error) throw new Error(data.error || 'Archive failed');
         // Originals are deleted after archiving, so drop them from the chat.
         targets.forEach(removeImageFromChat);
-        bubble.innerHTML = `Archived ${data.archived} image(s) to the encrypted volume.`;
+        bubble.innerHTML = `Archived ${data.archived} image(s) to <code>${escapeHtml(data.folder)}</code> on the encrypted volume.`;
         scrollBottom();
       })
       .catch(err => {
@@ -1117,11 +1118,12 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/archive-today') {
+    const name = raw.trim().slice(parts[0].length).trim();
     const bubble = addMessage('bot', '<div class="status-text">Archiving today\'s images…</div>').parentElement.querySelector('.bubble');
     fetch('/api/archive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scope: 'today' }),
+      body: JSON.stringify({ scope: 'today', name }),
     })
       .then(r => r.json().then(data => ({ ok: r.ok, data })))
       .then(({ ok, data }) => {
@@ -1140,7 +1142,7 @@ function handleSlashCommand(raw) {
         fauxFullscreenEls.clear();
         document.body.style.overflow = '';
         messagesEl.innerHTML = '';
-        addMessage('bot', `Archived ${data.archived} image(s) generated today to the encrypted volume.`);
+        addMessage('bot', `Archived ${data.archived} image(s) generated today to <code>${escapeHtml(data.folder)}</code> on the encrypted volume.`);
       })
       .catch(err => {
         bubble.innerHTML = `<span style="color:#f87171">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
@@ -1150,6 +1152,7 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/archive-all') {
+    const name = raw.trim().slice(parts[0].length).trim();
     addMessage('bot', 'This archives <strong>every</strong> image in the output folder to the encrypted volume and then <strong>removes the originals</strong>. Type <code>y</code> to confirm or <code>n</code> to cancel.');
     pendingConfirm = (answer) => {
       if (!/^y(es)?$/i.test(answer)) {
@@ -1160,7 +1163,7 @@ function handleSlashCommand(raw) {
       fetch('/api/archive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope: 'all' }),
+        body: JSON.stringify({ scope: 'all', name }),
       })
         .then(r => r.json().then(data => ({ ok: r.ok, data })))
         .then(({ ok, data }) => {
@@ -1173,7 +1176,7 @@ function handleSlashCommand(raw) {
           fauxFullscreenEls.clear();
           document.body.style.overflow = '';
           messagesEl.innerHTML = '';
-          addMessage('bot', `Archived ${data.archived} image(s) from the output folder to the encrypted volume.`);
+          addMessage('bot', `Archived ${data.archived} image(s) from the output folder to <code>${escapeHtml(data.folder)}</code> on the encrypted volume.`);
         })
         .catch(err => {
           bubble.innerHTML = `<span style="color:#f87171">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;

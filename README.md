@@ -92,15 +92,21 @@ volumes:
 | `/face-detail <prompt>` | Run a face-detailer workflow over the last generated image (supports `<lora:…>` tags) |
 | `/face-detail-workflow` | Pick which face-detailer workflow `/face-detail` uses (from the `facedetailer/` subdir) |
 | `/upload` | Upload a new workflow `.json` file |
-| `/archive-session` | Copy this session's images into the encrypted volume, then delete the originals |
-| `/archive-today` | Archive images generated today into the encrypted volume |
-| `/archive-all` | Archive every image in the output folder (asks y/n first) |
+| `/archive-session [name]` | Copy this session's images into the encrypted volume, then delete the originals |
+| `/archive-today [name]` | Archive images generated today into the encrypted volume |
+| `/archive-all [name]` | Archive every image in the output folder (asks y/n first) |
 
 ## Encrypted Archiving
 
 The `/archive-*` commands copy images into a password-encrypted volume (opened
 with [zuluCrypt](https://github.com/mhogomchungu/zuluCrypt)) and then delete the
 originals from the output folder — a *move*, not a backup copy.
+
+Each command stages its images under `staging/<folder>` on the volume. By
+default `<folder>` is a random GUID, but you can supply a name to use instead —
+e.g. `/archive-session man walking on beach` stages into
+`staging/man-walking-on-beach`. Names are lower-cased and hyphenated; if the name
+contains nothing usable, a GUID is used.
 
 Because the container runs unprivileged, it cannot mount the volume itself.
 Instead it asks a small **host-side root agent** (`archive-agent`) to run

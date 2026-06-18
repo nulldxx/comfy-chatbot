@@ -866,6 +866,16 @@ def _agent_request(payload: dict, timeout: float = 120.0) -> dict:
     return agent_send(payload, ARCHIVE_AGENT_SOCKET, timeout)
 
 
+def _slugify_archive_name(name):
+    """Turn a user-supplied archive name into a safe folder name: lower-cased,
+    with runs of non-alphanumeric characters collapsed to single hyphens and
+    leading/trailing hyphens stripped. E.g. "Man walking on Beach" ->
+    "man-walking-on-beach". Returns "" if nothing usable remains, so callers
+    can fall back to a generated name."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return slug
+
+
 @app.route("/api/archive", methods=["POST"])
 @login_required
 def api_archive():
@@ -882,7 +892,9 @@ def api_archive():
     if not files:
         return jsonify({"archived": 0})
 
-    guid = uuid.uuid4().hex
+    # Use the caller's name (slugified) as the staging folder, falling back to a
+    # random guid when no usable name was supplied.
+    folder = _slugify_archive_name(body.get("name")) or uuid.uuid4().hex
     with archive_lock:
         try:
             resp = _agent_request({
@@ -903,7 +915,7 @@ def api_archive():
             if not (ARCHIVE_MOUNT_DIR / ARCHIVE_MARKER).exists():
                 return jsonify({"error": "archive volume not mounted (safety check "
                                          "failed); no files were deleted"}), 500
-            dest_dir = ARCHIVE_MOUNT_DIR / "staging" / guid
+            dest_dir = ARCHIVE_MOUNT_DIR / "staging" / folder
             dest_dir.mkdir(parents=True, exist_ok=True)
             # Copy + verify every file before deleting any original (move semantics).
             copied = []
@@ -925,7 +937,7 @@ def api_archive():
             except RuntimeError as exc:
                 app.logger.warning("archive agent unmount failed: %s", exc)
 
-    return jsonify({"archived": len(files), "guid": guid})
+    return jsonify({"archived": len(files), "folder": folder})
 
 
 @app.route("/health")

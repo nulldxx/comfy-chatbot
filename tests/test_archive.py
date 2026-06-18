@@ -125,6 +125,12 @@ class TestArchive(unittest.TestCase):
                 found.append(f)
         return sorted(found)
 
+    def _staging_dirs(self):
+        staging = os.path.join(self.mount_dir, "staging")
+        if not os.path.isdir(staging):
+            return []
+        return sorted(os.listdir(staging))
+
     def test_requires_auth(self):
         resp = self.client.post("/api/archive", json={"scope": "all"})
         self.assertEqual(resp.status_code, 302)
@@ -199,6 +205,38 @@ class TestArchive(unittest.TestCase):
         # The volume was still unmounted afterwards.
         actions = [r["action"] for r in self.agent.requests]
         self.assertEqual(actions, ["mount", "unmount"])
+
+    def test_archive_name_slugified_into_folder(self):
+        self._auth()
+        self._make_image("a.png")
+        resp = self.client.post(
+            "/api/archive", json={"scope": "all", "name": "Man walking on Beach"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["folder"], "man-walking-on-beach")
+        self.assertEqual(self._staging_dirs(), ["man-walking-on-beach"])
+        self.assertEqual(self._staged_files(), ["a.png"])
+
+    def test_archive_name_falls_back_to_guid(self):
+        self._auth()
+        self._make_image("a.png")
+        # A name that slugifies to nothing usable falls back to a generated guid.
+        resp = self.client.post(
+            "/api/archive", json={"scope": "all", "name": "  !!! "}
+        )
+        self.assertEqual(resp.status_code, 200)
+        folder = resp.get_json()["folder"]
+        # 32-char hex guid, not the punctuation we sent.
+        self.assertRegex(folder, r"^[0-9a-f]{32}$")
+        self.assertEqual(self._staging_dirs(), [folder])
+
+    def test_archive_no_name_uses_guid(self):
+        self._auth()
+        self._make_image("a.png")
+        resp = self.client.post("/api/archive", json={"scope": "all"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertRegex(resp.get_json()["folder"], r"^[0-9a-f]{32}$")
 
     def test_archive_empty_scope_noop(self):
         self._auth()
