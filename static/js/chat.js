@@ -2054,10 +2054,13 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         barWrap.remove();
         cancelBtn.remove();
         statusLine.textContent = `Done — ${msg.images.length} image(s)${label}`;
-        // The prompt to remember for this image: the raw generation prompt, or
-        // for prompt-less jobs (upscale) the source image's own prompt, so a
-        // face icon on the result can still derive a face-detail prompt.
-        const originPrompt = raw || (job && imagePrompts[job.image]) || '';
+        // The prompt to remember for this image. For an image-input job
+        // (face-detail or upscale) we inherit the *source image's* original
+        // generation prompt — not `raw`, which for face-detail is the derived
+        // face-detail prompt. This keeps the result's do-over regenerating from
+        // the original prompt (not the face prompt) and lets a face icon on the
+        // result re-derive cleanly. A plain generation just uses its own prompt.
+        const originPrompt = job ? (imagePrompts[job.image] || '') : (raw || '');
 
         // In-place before/after slider for a single-image face-detail / upscale
         // result: replace the source .img-wrap with a comparison slider and let
