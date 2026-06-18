@@ -1605,28 +1605,130 @@ function deriveFaceDetailPrompt(genPrompt) {
 }
 
 // Runs a face-detailer workflow over `image` using `prompt`. Driven by the
-// per-image face icons. Returns the generation promise so callers can
-// re-enable their own controls when it settles.
-function runFaceDetail(prompt, image) {
+// per-image face icons. When `imgWrap` (the source image's .img-wrap) is given,
+// the result is offered in place as a before/after slider with accept/reject
+// instead of being appended to the timeline. Returns the generation promise so
+// callers can re-enable their own controls when it settles.
+function runFaceDetail(prompt, image, imgWrap) {
   iterationsFromSequence = false; // a face-detail run is a single image, not a sequence
   sendBtn.disabled = true;
-  return runGeneration(prompt, '', null, { face: { image, workflow: currentFaceWorkflow || DEFAULT_FACE_WORKFLOW } })
+  return runGeneration(prompt, '', null, {
+    face: { image, workflow: currentFaceWorkflow || DEFAULT_FACE_WORKFLOW },
+    sliderReplace: imgWrap || null,
+  })
     .finally(() => { sendBtn.disabled = false; });
 }
 
 // Runs an upscaler workflow over `image`. Shared by the /upscale command and the
-// per-image "up" button. Takes no prompt. Returns the generation promise so
-// callers can re-enable their own controls when it settles.
-function runUpscale(image) {
+// per-image "up" button. Takes no prompt. When `imgWrap` is given (the per-image
+// button case) the result is offered in place as a before/after slider with
+// accept/reject. Returns the generation promise so callers can re-enable their
+// own controls when it settles.
+function runUpscale(image, imgWrap) {
   iterationsFromSequence = false; // an upscale run is a single image, not a sequence
   sendBtn.disabled = true;
-  return runGeneration('', '', null, { upscale: { image, workflow: currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW } })
+  return runGeneration('', '', null, {
+    upscale: { image, workflow: currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW },
+    sliderReplace: imgWrap || null,
+  })
     .finally(() => { sendBtn.disabled = false; });
 }
 
 function runDoOver(url, imgWrap) {
   const prompt = imagePrompts[url] || '';
   return runGeneration(prompt, '', null, { replaceWrap: imgWrap });
+}
+
+// Builds a before/after comparison slider for a face-detail or upscale result.
+// `oldUrl` (the source image) shows on the left, `newUrl` (the result) on the
+// right; dragging the handle wipes between them. A ✓/✗ row underneath calls
+// `onAccept`/`onReject`. Returns a single container node so the caller can swap
+// it in for the original .img-wrap via replaceWith().
+function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject) {
+  const container = document.createElement('div');
+  container.className = 'ba-container';
+
+  const slider = document.createElement('div');
+  slider.className = 'ba-slider';
+
+  const before = document.createElement('img');
+  before.className = 'ba-before';
+  before.src = oldUrl;
+  before.alt = 'Original image';
+
+  const after = document.createElement('img');
+  after.className = 'ba-after';
+  after.src = newUrl;
+  after.alt = 'Processed image';
+
+  const handle = document.createElement('div');
+  handle.className = 'ba-handle';
+
+  const setPos = pct => {
+    pct = Math.max(0, Math.min(100, pct));
+    after.style.clipPath = `inset(0 0 0 ${pct}%)`;
+    handle.style.left = pct + '%';
+  };
+  setPos(50);
+
+  const posFromEvent = e => {
+    const rect = slider.getBoundingClientRect();
+    return ((e.clientX - rect.left) / rect.width) * 100;
+  };
+  let dragging = false;
+  slider.addEventListener('pointerdown', e => {
+    dragging = true;
+    slider.setPointerCapture(e.pointerId);
+    setPos(posFromEvent(e));
+  });
+  slider.addEventListener('pointermove', e => {
+    if (dragging) setPos(posFromEvent(e));
+  });
+  const endDrag = e => {
+    if (!dragging) return;
+    dragging = false;
+    try { slider.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+  slider.addEventListener('pointerup', endDrag);
+  slider.addEventListener('pointercancel', endDrag);
+
+  slider.appendChild(before);
+  slider.appendChild(after);
+  slider.appendChild(handle);
+
+  const actions = document.createElement('div');
+  actions.className = 'ba-actions';
+
+  const accept = document.createElement('button');
+  accept.className = 'ba-accept';
+  accept.title = 'Keep this image';
+  accept.textContent = '✓';
+
+  const reject = document.createElement('button');
+  reject.className = 'ba-reject';
+  reject.title = 'Discard, keep original';
+  reject.textContent = '✗';
+
+  let settled = false;
+  accept.addEventListener('click', () => {
+    if (settled) return;
+    settled = true;
+    accept.disabled = reject.disabled = true;
+    onAccept(container);
+  });
+  reject.addEventListener('click', () => {
+    if (settled) return;
+    settled = true;
+    accept.disabled = reject.disabled = true;
+    onReject(container);
+  });
+
+  actions.appendChild(accept);
+  actions.appendChild(reject);
+
+  container.appendChild(slider);
+  container.appendChild(actions);
+  return container;
 }
 
 // Appends a generated image to a bubble with a trash-icon overlay (top-right,
@@ -1654,8 +1756,7 @@ function appendChatImage(container, url) {
       return;
     }
     face.disabled = true;
-    addMessage('user', 'Face detail: ' + escapeHtml(prompt));
-    runFaceDetail(prompt, url).finally(() => { face.disabled = false; });
+    runFaceDetail(prompt, url, wrap).finally(() => { face.disabled = false; });
   });
 
   const up = document.createElement('button');
@@ -1666,8 +1767,7 @@ function appendChatImage(container, url) {
     e.stopPropagation();
     if (up.disabled || sendBtn.disabled) return;
     up.disabled = true;
-    addMessage('user', 'Upscale image');
-    runUpscale(url).finally(() => { up.disabled = false; });
+    runUpscale(url, wrap).finally(() => { up.disabled = false; });
   });
 
   const del = document.createElement('button');
@@ -1862,6 +1962,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const face = opts.face || null;
   const upscale = opts.upscale || null;
   const replaceWrap = opts.replaceWrap || null;
+  const sliderReplace = opts.sliderReplace || null;
   const job = face || upscale; // an image-input job (face-detail or upscale) vs a plain generation
   const endpoint = face ? '/api/face-detail' : upscale ? '/api/upscale' : '/api/generate';
   const botBubble = addMessage('bot', `
@@ -1929,6 +2030,38 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         // for prompt-less jobs (upscale) the source image's own prompt, so a
         // face icon on the result can still derive a face-detail prompt.
         const originPrompt = raw || (job && imagePrompts[job.image]) || '';
+
+        // In-place before/after slider for a single-image face-detail / upscale
+        // result: replace the source .img-wrap with a comparison slider and let
+        // the user accept (keep new, delete original) or reject (keep original,
+        // delete new). The result stays provisional — it is not tracked in
+        // sessionImages/imagePrompts until accepted.
+        if (sliderReplace && sliderReplace.parentNode && msg.images.length === 1) {
+          const oldUrl = sliderReplace.querySelector('img').getAttribute('src');
+          const newUrl = msg.images[0];
+          const onAccept = sliderEl => {
+            deleteImageFile(oldUrl).catch(() => {});
+            const idx = sessionImages.indexOf(oldUrl);
+            if (idx !== -1) sessionImages.splice(idx, 1, newUrl);
+            else sessionImages.push(newUrl);
+            delete imagePrompts[oldUrl];
+            if (originPrompt) imagePrompts[newUrl] = originPrompt;
+            const tmp = document.createElement('div');
+            appendChatImage(tmp, newUrl);
+            sliderEl.replaceWith(tmp.firstChild);
+          };
+          const onReject = sliderEl => {
+            deleteImageFile(newUrl).catch(() => {});
+            const tmp = document.createElement('div');
+            appendChatImage(tmp, oldUrl);
+            sliderEl.replaceWith(tmp.firstChild);
+          };
+          sliderReplace.replaceWith(buildComparisonSlider(oldUrl, newUrl, onAccept, onReject));
+          botBubble.parentElement.remove();
+          resolve(true);
+          return;
+        }
+
         msg.images.forEach((url, i) => {
           sessionImages.push(url);
           if (originPrompt) imagePrompts[url] = originPrompt;
