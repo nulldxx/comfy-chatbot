@@ -139,7 +139,7 @@ header a:hover { color: #a78bfa; }
   margin-top: 8px;
   cursor: pointer;
 }
-.bubble img:hover { opacity: 0.9; }
+.bubble img:not(.ba-before):not(.ba-after):hover { opacity: 0.9; }
 
 /* Generated chat images: wrapper with a delete-button overlay */
 .img-wrap { position: relative; max-width: 480px; margin-top: 8px; }
