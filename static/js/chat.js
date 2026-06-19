@@ -2406,15 +2406,49 @@ function openMaskEditor(imageUrl, imgWrap) {
   img.src = imageUrl;
   img.draggable = false;
 
+  // Drawing layer (colored pen strokes) sits between the image and the mask so the
+  // yellow mask always renders on top. It carries visible image content that becomes
+  // the inpaint source when the user draws a hint.
+  const drawCanvas = document.createElement('canvas');
+  drawCanvas.id = 'mask-editor-draw-canvas';
+
   const canvas = document.createElement('canvas');
   canvas.id = 'mask-editor-canvas';
 
   wrap.appendChild(img);
+  wrap.appendChild(drawCanvas);
   wrap.appendChild(canvas);
   overlay.appendChild(wrap);
 
   const actions = document.createElement('div');
   actions.id = 'mask-editor-actions';
+
+  // Tool group: switch between painting the inpaint mask (🩹) and drawing a colored
+  // hint (✏️) onto the image. The color picker drives the pen colour.
+  const toolGroup = document.createElement('div');
+  toolGroup.className = 'mask-editor-tools';
+
+  const maskToolBtn = document.createElement('button');
+  maskToolBtn.type = 'button';
+  maskToolBtn.className = 'mask-editor-tool';
+  maskToolBtn.textContent = '🩹';
+  maskToolBtn.title = 'Mask tool — paint the area to inpaint';
+
+  const penToolBtn = document.createElement('button');
+  penToolBtn.type = 'button';
+  penToolBtn.className = 'mask-editor-tool';
+  penToolBtn.textContent = '✏️';
+  penToolBtn.title = 'Pen tool — draw a colour hint for the inpainter';
+
+  const colorPicker = document.createElement('input');
+  colorPicker.type = 'color';
+  colorPicker.id = 'mask-editor-color';
+  colorPicker.value = '#ff3b30';
+  colorPicker.title = 'Pen colour';
+
+  toolGroup.appendChild(maskToolBtn);
+  toolGroup.appendChild(penToolBtn);
+  toolGroup.appendChild(colorPicker);
 
   const clearBtn = document.createElement('button');
   clearBtn.textContent = 'Clear';
@@ -2452,6 +2486,7 @@ function openMaskEditor(imageUrl, imgWrap) {
   applyBtn.className = 'mask-editor-btn mask-editor-btn-primary';
   applyBtn.disabled = true; // enabled once the image has loaded and been sized
 
+  actions.appendChild(toolGroup);
   actions.appendChild(denoiseControl);
   actions.appendChild(clearBtn);
   actions.appendChild(cancelBtn);
@@ -2460,6 +2495,7 @@ function openMaskEditor(imageUrl, imgWrap) {
   document.body.appendChild(overlay);
 
   const ctx = canvas.getContext('2d');
+  const drawCtx = drawCanvas.getContext('2d');
 
   // CSS-pixel dimensions used for clearRect (after the DPR scale transform is active).
   let cssW = 0, cssH = 0;
@@ -2469,12 +2505,14 @@ function openMaskEditor(imageUrl, imgWrap) {
     const rect = img.getBoundingClientRect();
     cssW = rect.width;
     cssH = rect.height;
-    canvas.width  = Math.round(rect.width  * dpr);
-    canvas.height = Math.round(rect.height * dpr);
-    canvas.style.width  = rect.width  + 'px';
-    canvas.style.height = rect.height + 'px';
+    for (const c of [canvas, drawCanvas]) {
+      c.width  = Math.round(rect.width  * dpr);
+      c.height = Math.round(rect.height * dpr);
+      c.style.width  = rect.width  + 'px';
+      c.style.height = rect.height + 'px';
+      c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0); // absolute — safe to re-call on resize
+    }
     canvas.style.opacity = denoiseSlider.value;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // absolute — safe to call again on resize
     applyBtn.disabled = false;
   }
 
@@ -2493,6 +2531,10 @@ function openMaskEditor(imageUrl, imgWrap) {
   let lastX = null, lastY = null;
   let brushRadius = 30;
 
+  // Active tool: 'mask' paints the yellow inpaint mask, 'pen' draws a colour hint.
+  let tool = 'mask';
+  let penColor = colorPicker.value;
+
   const cursorEl = document.createElement('div');
   cursorEl.style.cssText = 'position:fixed;border-radius:50%;border:2px solid rgba(255,255,255,0.85);box-shadow:0 0 0 1px rgba(0,0,0,0.5);pointer-events:none;transform:translate(-50%,-50%);display:none;z-index:10001';
   overlay.appendChild(cursorEl);
@@ -2505,29 +2547,53 @@ function openMaskEditor(imageUrl, imgWrap) {
   updateCursorSize();
   canvas.style.cursor = 'none';
 
+  function setTool(name) {
+    tool = name;
+    maskToolBtn.classList.toggle('is-active', name === 'mask');
+    penToolBtn.classList.toggle('is-active', name === 'pen');
+    // Tint the cursor border to the pen colour while drawing, white while masking.
+    cursorEl.style.borderColor = name === 'pen' ? penColor : 'rgba(255,255,255,0.85)';
+  }
+  setTool('mask');
+
+  penToolBtn.addEventListener('click', () => setTool('pen'));
+  maskToolBtn.addEventListener('click', () => setTool('mask'));
+  colorPicker.addEventListener('input', () => {
+    penColor = colorPicker.value;
+    setTool('pen'); // picking a colour implies drawing
+  });
+
   const onResize = () => { cachedRect = null; };
   window.addEventListener('resize', onResize);
+
+  // Sweep a thick round-capped line from the previous point so the stroke is a
+  // solid, gap-free region. Also dab a circle so a single click still paints.
+  function stroke(targetCtx, color, x, y) {
+    targetCtx.fillStyle = color;
+    if (lastX !== null) {
+      targetCtx.strokeStyle = color;
+      targetCtx.lineWidth = brushRadius * 2;
+      targetCtx.lineCap = 'round';
+      targetCtx.lineJoin = 'round';
+      targetCtx.beginPath();
+      targetCtx.moveTo(lastX, lastY);
+      targetCtx.lineTo(x, y);
+      targetCtx.stroke();
+    }
+    targetCtx.beginPath();
+    targetCtx.arc(x, y, brushRadius, 0, Math.PI * 2);
+    targetCtx.fill();
+  }
 
   function paint(e) {
     if (!painting || !cachedRect) return;
     const x = e.clientX - cachedRect.left;
     const y = e.clientY - cachedRect.top;
-    ctx.fillStyle = 'rgba(255, 220, 0, 1.0)';
-    // Sweep a thick round-capped line from the previous point so the stroke is a
-    // solid, gap-free region. Also dab a circle so a single click still paints.
-    if (lastX !== null) {
-      ctx.strokeStyle = 'rgba(255, 220, 0, 1.0)';
-      ctx.lineWidth = brushRadius * 2;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.beginPath();
-      ctx.moveTo(lastX, lastY);
-      ctx.lineTo(x, y);
-      ctx.stroke();
+    if (tool === 'pen') {
+      stroke(drawCtx, penColor, x, y);
+    } else {
+      stroke(ctx, 'rgba(255, 220, 0, 1.0)', x, y);
     }
-    ctx.beginPath();
-    ctx.arc(x, y, brushRadius, 0, Math.PI * 2);
-    ctx.fill();
     lastX = x; lastY = y;
   }
 
@@ -2551,7 +2617,11 @@ function openMaskEditor(imageUrl, imgWrap) {
   canvas.addEventListener('pointerup',     endStroke);
   canvas.addEventListener('pointercancel', endStroke);
 
-  clearBtn.addEventListener('click', () => ctx.clearRect(0, 0, cssW, cssH));
+  // Clear only the active layer so resetting scribbles doesn't wipe the mask, and
+  // vice-versa.
+  clearBtn.addEventListener('click', () => {
+    (tool === 'pen' ? drawCtx : ctx).clearRect(0, 0, cssW, cssH);
+  });
 
   function closeEditor() {
     aborted = true;
@@ -2595,19 +2665,50 @@ function openMaskEditor(imageUrl, imgWrap) {
 
     const b64 = offscreen.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
 
-    fetch('/api/upload-mask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: b64 }),
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.error) throw new Error(data.error);
+    // If the user drew a hint, composite it onto the source image and upload the
+    // result as a temporary inpaint source (consumed once). Detect any drawn pixel
+    // by scanning the draw layer's alpha channel.
+    const drawn = drawCtx.getImageData(0, 0, drawCanvas.width, drawCanvas.height).data;
+    let hasDrawing = false;
+    for (let i = 3; i < drawn.length; i += 4) {
+      if (drawn[i] > 0) { hasDrawing = true; break; }
+    }
+
+    // Returns a Promise resolving to a draw token (or null when nothing was drawn).
+    function uploadDrawing() {
+      if (!hasDrawing) return Promise.resolve(null);
+      const comp = document.createElement('canvas');
+      comp.width  = img.naturalWidth;
+      comp.height = img.naturalHeight;
+      const compCtx = comp.getContext('2d');
+      // Colour content — smoothing on is fine (unlike the strict B&W mask above).
+      compCtx.imageSmoothingEnabled = true;
+      compCtx.drawImage(img, 0, 0, comp.width, comp.height);
+      compCtx.drawImage(drawCanvas, 0, 0, comp.width, comp.height);
+      const drawB64 = comp.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+      return fetch('/api/upload-inpaint-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: drawB64 }),
+      })
+        .then(r => r.json())
+        .then(d => { if (d.error) throw new Error(d.error); return d.token; });
+    }
+
+    Promise.all([
+      fetch('/api/upload-mask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: b64 }),
+      }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error); return d.token; }),
+      uploadDrawing(),
+    ])
+    .then(([maskToken, drawToken]) => {
       if (aborted) return; // user cancelled while upload was in-flight
       const capturedDenoise = parseFloat(denoiseSlider.value);
       closeEditor();
       addMessage('user', `Inpaint: ${escapeHtml(capturedPrompt || '')}`);
-      runInpaint(imageUrl, data.token, imgWrap, capturedPrompt, capturedDenoise, b64);
+      runInpaint(imageUrl, maskToken, imgWrap, capturedPrompt, capturedDenoise, b64, drawToken);
     })
     .catch(err => {
       if (aborted) return;
@@ -2884,11 +2985,11 @@ function openCompositeEditor(oldUrl, newUrl, onComposite) {
 // in place as a before/after slider. Returns the generation promise.
 // `maskB64` (the raw mask PNG) is retained so the result's "re-run inpaint"
 // button can re-upload the same mask for a fresh single-use token.
-function runInpaint(image, mask, imgWrap, prompt, denoise, maskB64) {
+function runInpaint(image, mask, imgWrap, prompt, denoise, maskB64, drawToken) {
   iterationsFromSequence = false;
   sendBtn.disabled = true;
   return runGeneration(prompt || '', '', null, {
-    inpaint: { image, mask, workflow: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW, denoise, maskB64, prompt },
+    inpaint: { image, mask, workflow: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW, denoise, maskB64, prompt, drawToken },
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
@@ -3632,6 +3733,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(!job && currentGenerationSteps !== null ? { steps: currentGenerationSteps } : {}),
       ...(job ? { image: job.image } : {}),
       ...(inpaint ? { mask: inpaint.mask } : {}),
+      ...(inpaint && inpaint.drawToken ? { draw_token: inpaint.drawToken } : {}),
       ...(face        ? { denoise: currentDenoise.face } : {}),
       ...(upscale     ? { denoise: currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: currentDenoise.image2image } : {}),

@@ -97,6 +97,12 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 # appear in review grids, slideshows, or bulk-delete/archive operations.
 MASKS_DIR = IMAGES_DIR / '.masks'
 MASKS_DIR.mkdir(parents=True, exist_ok=True)
+# Temporary inpaint source images — when the user draws on the image in the mask
+# editor, the original + drawing are composited into a temporary source image used
+# only for that one inpaint job. Kept out of IMAGES_DIR so it never appears in
+# galleries; consumed and deleted once the job uploads it to ComfyUI.
+INPAINT_INPUTS_DIR = IMAGES_DIR / '.inpaint-inputs'
+INPAINT_INPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Archive config — the /archive-* commands copy images into a password-encrypted
 # volume and then delete the originals (move semantics). The container is
@@ -136,6 +142,12 @@ jobs_lock = threading.Lock()
 # Mask token registry: opaque token → (session_user, Path). Single-use; consumed atomically on /api/inpaint.
 mask_tokens: dict = {}
 mask_tokens_lock = threading.Lock()
+
+# Drawn-input token registry: opaque token → (session_user, Path). Same single-use
+# lifecycle as mask_tokens; consumed atomically on /api/inpaint when the user drew
+# a hint onto the image.
+draw_tokens: dict = {}
+draw_tokens_lock = threading.Lock()
 
 # Auto-purge: free GPU memory on a ComfyUI server after a period of idleness.
 # Runs server-side so it fires even if the user closes their browser.
@@ -250,7 +262,8 @@ def cancel_auto_purge(server_address):
 
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
                    width=None, height=None, steps=None, denoise=None, workflow_dir=None,
-                   input_image=None, input_mask=None, preserve_mtime_from=None):
+                   input_image=None, input_mask=None, preserve_mtime_from=None,
+                   cleanup_input_image=False):
     with jobs_lock:
         q = jobs[job_id]["queue"]
         cancel_event = jobs[job_id]["cancel"]
@@ -293,7 +306,17 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
 
         if input_image is not None:
             send("progress", message="Uploading source image to ComfyUI...")
-            mapping["INPUT_IMAGE"] = server.upload_image(input_image)
+            try:
+                mapping["INPUT_IMAGE"] = server.upload_image(input_image)
+            finally:
+                # A drawn-hint composite is a single-use temp file; delete it once
+                # uploaded. Normal gallery source images (cleanup_input_image=False)
+                # are left in place.
+                if cleanup_input_image:
+                    try:
+                        input_image.unlink()
+                    except OSError:
+                        pass
 
         if input_mask is not None:
             send("progress", message="Uploading mask to ComfyUI...")
@@ -591,6 +614,24 @@ def _resolve_mask(token, user):
     return mask_path, None
 
 
+def _resolve_draw_image(token, user):
+    """Atomically consume a drawn-input token. Return (path, None) or (None, error_response).
+
+    Mirrors _resolve_mask: pops under lock for single-use enforcement and validates
+    that the token belongs to the requesting session user.
+    """
+    with draw_tokens_lock:
+        entry = draw_tokens.pop(token, None)
+    if entry is None:
+        return None, (jsonify({"error": "Drawn image not found"}), 404)
+    owner, draw_path = entry
+    if owner != user:
+        return None, (jsonify({"error": "Drawn image not found"}), 404)
+    if not draw_path.is_file():
+        return None, (jsonify({"error": "Drawn image not found"}), 404)
+    return draw_path, None
+
+
 @app.route("/api/upload-mask", methods=["POST"])
 @login_required
 def api_upload_mask():
@@ -652,6 +693,37 @@ def api_save_image():
     return jsonify({"url": f"/images/{filename}"})
 
 
+@app.route("/api/upload-inpaint-image", methods=["POST"])
+@login_required
+def api_upload_inpaint_image():
+    """Accept a base64-encoded PNG (original image + the user's drawn hint) from the browser.
+
+    Returns a short-lived opaque token the client passes back in the /api/inpaint call as
+    `draw_token`. Same single-use, session-bound lifecycle as /api/upload-mask. Stored
+    outside IMAGES_DIR so the temporary composite never appears in galleries; consumed and
+    deleted once the inpaint job uploads it to ComfyUI.
+    """
+    data = request.get_json(force=True)
+    b64 = (data.get("data") or "").strip()
+    if not b64:
+        return jsonify({"error": "data is required"}), 400
+    _MAX_DRAW_BYTES = 50 * 1024 * 1024  # 50 MB decoded — matches /api/save-image
+    if len(b64) > _MAX_DRAW_BYTES * 4 // 3 + 4:
+        return jsonify({"error": "Image too large (50 MB limit)"}), 413
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        return jsonify({"error": "invalid base64"}), 400
+    if len(raw) > _MAX_DRAW_BYTES:
+        return jsonify({"error": "Image too large (50 MB limit)"}), 413
+    draw_path = INPAINT_INPUTS_DIR / f"draw_{uuid.uuid4().hex}.png"
+    draw_path.write_bytes(raw)
+    token = secrets.token_urlsafe(32)
+    with draw_tokens_lock:
+        draw_tokens[token] = (session.get("user"), draw_path)
+    return jsonify({"token": token})
+
+
 @app.route("/api/inpaint", methods=["POST"])
 @login_required
 def api_inpaint():
@@ -683,6 +755,17 @@ def api_inpaint():
     if err:
         return err
 
+    # Optional drawn-hint composite (original image + the user's pen strokes). When
+    # present it becomes the ComfyUI INPUT_IMAGE in place of the original, while the
+    # original `safe` filename is still used for preserve_mtime_from so the result
+    # sorts/replaces correctly in the gallery. The temp file is consumed once.
+    draw_token = (data.get("draw_token") or "").strip()
+    draw_path = None
+    if draw_token:
+        draw_path, err = _resolve_draw_image(draw_token, session.get("user"))
+        if err:
+            return err
+
     available = list_inpainting_workflows()
     workflow_name, err = _resolve_workflow(
         data.get("workflow") or COMFY_INPAINTING_WORKFLOW, available, "inpainting"
@@ -708,9 +791,10 @@ def api_inpaint():
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_INPAINTING_DIR,
-        input_image=image_path, input_mask=mask_path,
+        input_image=draw_path or image_path, input_mask=mask_path,
         preserve_mtime_from=safe,
         denoise=denoise,
+        cleanup_input_image=draw_path is not None,
     )
     return jsonify({"job_id": job_id})
 

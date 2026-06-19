@@ -291,6 +291,14 @@ header a:hover { color: #a78bfa; }
   cursor: crosshair;
   touch-action: none;
 }
+/* Drawing layer sits under the mask canvas; pointer events stay on the top mask
+   canvas, which drives whichever layer the active tool selects. */
+#mask-editor-draw-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  touch-action: none;
+  pointer-events: none;
+}
 #mask-editor-actions {
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center;
 }
@@ -314,6 +322,25 @@ header a:hover { color: #a78bfa; }
 }
 .mask-editor-btn-primary:hover { border-color: #ec4899; color: #ec4899; }
 .mask-editor-btn:disabled { cursor: default; opacity: 0.5; }
+/* Tool group (pen / mask toggle + colour picker) */
+.mask-editor-tools {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(15,23,42,0.85); border: 1px solid #475569;
+  border-radius: 8px; padding: 6px 8px;
+}
+.mask-editor-tool {
+  background: transparent; border: 1px solid transparent;
+  border-radius: 6px; padding: 4px 8px;
+  font-size: 1.1rem; line-height: 1; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.mask-editor-tool:hover { border-color: #94a3b8; }
+.mask-editor-tool.is-active { border-color: #f472b6; background: rgba(244,114,182,0.15); }
+#mask-editor-color {
+  width: 28px; height: 28px; padding: 0;
+  border: 1px solid #475569; border-radius: 6px;
+  background: transparent; cursor: pointer;
+}
 
 /* Before/after comparison slider (face-detail / upscale accept-reject) */
 .ba-container { margin-top: 8px; max-width: 480px; }
