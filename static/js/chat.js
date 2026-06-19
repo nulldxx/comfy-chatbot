@@ -2244,15 +2244,26 @@ function runImage2Image(prompt, image, imgWrap) {
 }
 
 // Opens a full-screen mask editor over `imageUrl`. The user paints a translucent
-// yellow mask; on "Apply Inpaint" the mask is exported as a PNG, uploaded to the
-// server, and runInpaint() is called. `imgWrap` is passed through to runInpaint
+// yellow mask; on "Apply Inpaint" the mask is exported as a binary PNG, uploaded
+// to the server, and runInpaint() is called. `imgWrap` is the source .img-wrap
 // for the in-place comparison slider (null in the review-grid case).
 function openMaskEditor(imageUrl, imgWrap) {
-  // Overlay
+  // Prevent opening a second editor while one is already active.
+  if (document.getElementById('mask-editor-overlay')) return;
+
+  // Capture the prompt at editor-open time so a concurrent /inpainting-prompt
+  // command can't silently change what gets submitted.
+  const capturedPrompt = lastInpaintingPrompt;
+
+  // Set once closeEditor() is called so an in-flight upload doesn't launch a
+  // job after the user has cancelled.
+  let aborted = false;
+
+  const dpr = window.devicePixelRatio || 1;
+
   const overlay = document.createElement('div');
   overlay.id = 'mask-editor-overlay';
 
-  // Image + canvas wrapper
   const wrap = document.createElement('div');
   wrap.id = 'mask-editor-wrap';
 
@@ -2260,19 +2271,13 @@ function openMaskEditor(imageUrl, imgWrap) {
   img.src = imageUrl;
   img.draggable = false;
 
-  // Visual canvas (yellow translucent paint shown to the user)
   const canvas = document.createElement('canvas');
   canvas.id = 'mask-editor-canvas';
-
-  // Hidden mask canvas (white strokes on black — exported as the actual mask)
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.style.display = 'none';
 
   wrap.appendChild(img);
   wrap.appendChild(canvas);
   overlay.appendChild(wrap);
 
-  // Action bar
   const actions = document.createElement('div');
   actions.id = 'mask-editor-actions';
 
@@ -2287,6 +2292,7 @@ function openMaskEditor(imageUrl, imgWrap) {
   const applyBtn = document.createElement('button');
   applyBtn.textContent = 'Apply Inpaint';
   applyBtn.className = 'mask-editor-btn mask-editor-btn-primary';
+  applyBtn.disabled = true; // enabled once the image has loaded and been sized
 
   actions.appendChild(clearBtn);
   actions.appendChild(cancelBtn);
@@ -2294,82 +2300,93 @@ function openMaskEditor(imageUrl, imgWrap) {
   overlay.appendChild(actions);
   document.body.appendChild(overlay);
 
-  // Size the canvases to match the displayed image once it loads
+  const ctx = canvas.getContext('2d');
+
+  // CSS-pixel dimensions used for clearRect (after the DPR scale transform is active).
+  let cssW = 0, cssH = 0;
+
   function syncCanvasSize() {
+    if (!img.naturalWidth) return; // guard: broken/undecodable image
     const rect = img.getBoundingClientRect();
-    canvas.width  = rect.width;
-    canvas.height = rect.height;
-    maskCanvas.width  = rect.width;
-    maskCanvas.height = rect.height;
-    // Black background on the mask canvas
-    const mctx = maskCanvas.getContext('2d');
-    mctx.fillStyle = '#000';
-    mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+    cssW = rect.width;
+    cssH = rect.height;
+    canvas.width  = Math.round(rect.width  * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    canvas.style.width  = rect.width  + 'px';
+    canvas.style.height = rect.height + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // absolute — safe to call again on resize
+    applyBtn.disabled = false;
   }
 
-  if (img.complete) {
+  if (img.complete && img.naturalWidth) {
     syncCanvasSize();
   } else {
     img.addEventListener('load', syncCanvasSize, { once: true });
   }
 
-  // Paint logic
-  const ctx = canvas.getContext('2d');
-  const mctx = maskCanvas.getContext('2d');
+  // Cache the bounding rect at pointerdown to avoid forced layout on every move.
   let painting = false;
+  let cachedRect = null;
   const BRUSH_RADIUS = 10;
 
-  function paint(e) {
-    if (!painting) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX ?? e.touches[0].clientX) - rect.left;
-    const y = (e.clientY ?? e.touches[0].clientY) - rect.top;
+  const onResize = () => { cachedRect = null; };
+  window.addEventListener('resize', onResize);
 
-    // Visual: yellow translucent
-    ctx.globalCompositeOperation = 'source-over';
+  function paint(e) {
+    if (!painting || !cachedRect) return;
+    const x = e.clientX - cachedRect.left;
+    const y = e.clientY - cachedRect.top;
     ctx.fillStyle = 'rgba(255, 220, 0, 0.45)';
     ctx.beginPath();
     ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
     ctx.fill();
-
-    // Mask: white opaque
-    mctx.fillStyle = '#fff';
-    mctx.beginPath();
-    mctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
-    mctx.fill();
   }
 
-  canvas.addEventListener('pointerdown', e => { painting = true; canvas.setPointerCapture(e.pointerId); paint(e); });
+  canvas.addEventListener('pointerdown', e => {
+    cachedRect = canvas.getBoundingClientRect();
+    painting = true;
+    canvas.setPointerCapture(e.pointerId);
+    paint(e);
+  });
   canvas.addEventListener('pointermove', paint);
-  canvas.addEventListener('pointerup',   () => { painting = false; });
+  canvas.addEventListener('pointerup',     () => { painting = false; });
   canvas.addEventListener('pointercancel', () => { painting = false; });
 
-  // Clear button: wipe both canvases
-  clearBtn.addEventListener('click', () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    mctx.fillStyle = '#000';
-    mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
-  });
+  clearBtn.addEventListener('click', () => ctx.clearRect(0, 0, cssW, cssH));
 
   function closeEditor() {
-    overlay.remove();
+    aborted = true;
+    window.removeEventListener('resize', onResize);
     document.removeEventListener('keydown', onKey);
+    overlay.remove();
   }
 
-  // Cancel
   cancelBtn.addEventListener('click', closeEditor);
 
-  // Apply: scale mask to natural image dimensions, upload, then run inpaint
   applyBtn.addEventListener('click', () => {
+    if (!img.naturalWidth || !img.naturalHeight) return;
     applyBtn.disabled = true;
     applyBtn.textContent = 'Uploading…';
 
-    // Scale mask canvas strokes to the source image's natural pixel dimensions
+    // Derive a binary mask from the visual canvas: any painted pixel (alpha > 0)
+    // becomes white; unpainted pixels become black. Then scale to the image's
+    // natural pixel dimensions for ComfyUI.
+    const src = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const binary = new ImageData(canvas.width, canvas.height);
+    for (let i = 0; i < src.data.length; i += 4) {
+      const v = src.data[i + 3] > 0 ? 255 : 0;
+      binary.data[i] = binary.data[i + 1] = binary.data[i + 2] = v;
+      binary.data[i + 3] = 255;
+    }
+    const binaryCanvas = document.createElement('canvas');
+    binaryCanvas.width  = canvas.width;
+    binaryCanvas.height = canvas.height;
+    binaryCanvas.getContext('2d').putImageData(binary, 0, 0);
+
     const offscreen = document.createElement('canvas');
     offscreen.width  = img.naturalWidth;
     offscreen.height = img.naturalHeight;
-    const octx = offscreen.getContext('2d');
-    octx.drawImage(maskCanvas, 0, 0, offscreen.width, offscreen.height);
+    offscreen.getContext('2d').drawImage(binaryCanvas, 0, 0, offscreen.width, offscreen.height);
 
     const b64 = offscreen.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
 
@@ -2381,32 +2398,32 @@ function openMaskEditor(imageUrl, imgWrap) {
     .then(r => r.json())
     .then(data => {
       if (data.error) throw new Error(data.error);
+      if (aborted) return; // user cancelled while upload was in-flight
       closeEditor();
-      addMessage('user', `Inpaint: ${escapeHtml(lastInpaintingPrompt || '')}`);
-      runInpaint(imageUrl, data.url, imgWrap);
+      addMessage('user', `Inpaint: ${escapeHtml(capturedPrompt || '')}`);
+      runInpaint(imageUrl, data.token, imgWrap, capturedPrompt);
     })
     .catch(err => {
+      if (aborted) return;
       applyBtn.disabled = false;
       applyBtn.textContent = 'Apply Inpaint';
       addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
     });
   });
 
-  // Close on Escape
   function onKey(e) {
     if (e.key === 'Escape') closeEditor();
   }
   document.addEventListener('keydown', onKey);
 }
 
-// Runs an inpainting workflow over `image` using `mask` and `prompt`. Driven by
-// the per-image 🩹 button after the user paints a mask. When `imgWrap` (the source
-// image's .img-wrap) is given, the result is offered in place as a before/after
-// slider. Returns the generation promise so callers can re-enable their controls.
-function runInpaint(image, mask, imgWrap) {
+// Runs an inpainting workflow over `image` using `mask` (a server token) and
+// `prompt`. When `imgWrap` (the source .img-wrap) is given the result is offered
+// in place as a before/after slider. Returns the generation promise.
+function runInpaint(image, mask, imgWrap, prompt) {
   iterationsFromSequence = false;
   sendBtn.disabled = true;
-  return runGeneration(lastInpaintingPrompt || '', '', null, {
+  return runGeneration(prompt || '', '', null, {
     inpaint: { image, mask, workflow: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW },
     sliderReplace: imgWrap || null,
   })

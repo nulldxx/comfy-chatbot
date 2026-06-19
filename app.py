@@ -92,6 +92,10 @@ COMFY_INPAINTING_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_INPAINT
 
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+# Temporary mask storage — kept separate from IMAGES_DIR so mask files never
+# appear in review grids, slideshows, or bulk-delete/archive operations.
+MASKS_DIR = IMAGES_DIR / '.masks'
+MASKS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Archive config — the /archive-* commands copy images into a password-encrypted
 # volume and then delete the originals (move semantics). The container is
@@ -282,6 +286,10 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if input_mask is not None:
             send("progress", message="Uploading mask to ComfyUI...")
             mapping["INPUT_MASK"] = server.upload_image(input_mask)
+            try:
+                input_mask.unlink()
+            except OSError:
+                pass
 
         filled = apply_placeholders(template, mapping)
 
@@ -543,25 +551,49 @@ def api_inpainting_workflows():
     return jsonify(list_inpainting_workflows())
 
 
+_MAX_MASK_BYTES = 10 * 1024 * 1024  # 10 MB decoded
+
+
+def _resolve_mask(token):
+    """Return (path, None) on success or (None, error_response) on failure.
+
+    Masks live in MASKS_DIR, not IMAGES_DIR, so they never appear in reviews.
+    """
+    safe = secure_filename(token)
+    if not safe or safe != token:
+        return None, (jsonify({"error": "Invalid mask token"}), 400)
+    if Path(safe).suffix.lower() not in IMAGE_EXTS:
+        return None, (jsonify({"error": "Invalid mask file type"}), 400)
+    mask_path = MASKS_DIR / safe
+    if not mask_path.is_file():
+        return None, (jsonify({"error": "Mask not found"}), 404)
+    return mask_path, None
+
+
 @app.route("/api/upload-mask", methods=["POST"])
 @login_required
 def api_upload_mask():
-    """Accept a base64-encoded PNG mask from the browser and save it to IMAGES_DIR.
+    """Accept a base64-encoded PNG mask from the browser and save it to MASKS_DIR.
 
-    Returns the URL path the mask can be referenced by in a subsequent /api/inpaint call.
+    Returns a short-lived token the client passes back in the /api/inpaint call.
+    Masks are stored outside IMAGES_DIR so they never appear in review grids or
+    slideshow views. They are deleted from disk once uploaded to ComfyUI.
     """
     data = request.get_json(force=True)
     b64 = (data.get("data") or "").strip()
     if not b64:
         return jsonify({"error": "data is required"}), 400
+    if len(b64) > _MAX_MASK_BYTES * 4 // 3 + 4:
+        return jsonify({"error": "Mask too large (10 MB limit)"}), 413
     try:
         raw = base64.b64decode(b64)
     except Exception:
         return jsonify({"error": "invalid base64"}), 400
+    if len(raw) > _MAX_MASK_BYTES:
+        return jsonify({"error": "Mask too large (10 MB limit)"}), 413
     fname = f"mask_{uuid.uuid4().hex[:8]}.png"
-    path = IMAGES_DIR / fname
-    path.write_bytes(raw)
-    return jsonify({"url": f"/images/{fname}"})
+    (MASKS_DIR / fname).write_bytes(raw)
+    return jsonify({"token": fname})
 
 
 @app.route("/api/inpaint", methods=["POST"])
@@ -578,6 +610,8 @@ def api_inpaint():
     if not raw_prompt:
         return jsonify({"error": "inpainting prompt is required"}), 400
     prompt, loras = parse_loras_from_prompt(raw_prompt)
+    if not prompt:
+        return jsonify({"error": "Prompt is empty after removing LoRA tags"}), 400
 
     image_url = (data.get("image") or "").strip()
     if not image_url:
@@ -586,10 +620,10 @@ def api_inpaint():
     if err:
         return err
 
-    mask_url = (data.get("mask") or "").strip()
-    if not mask_url:
+    mask_token = (data.get("mask") or "").strip()
+    if not mask_token:
         return jsonify({"error": "mask is required"}), 400
-    _, mask_path, err = _resolve_input_image(mask_url)
+    mask_path, err = _resolve_mask(mask_token)
     if err:
         return err
 
