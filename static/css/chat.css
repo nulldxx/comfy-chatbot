@@ -29,7 +29,9 @@ header a:hover { color: #a78bfa; }
 
 /* Slash-command selection bubbles */
 .sel-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.sel-row  { display: flex; gap: 6px; align-items: stretch; }
 .sel-btn {
+  flex: 1;
   background: #0f172a; border: 1px solid #334155;
   border-radius: 8px; color: #94a3b8;
   padding: 7px 12px; font-size: 0.85rem;
@@ -38,6 +40,15 @@ header a:hover { color: #a78bfa; }
 }
 .sel-btn:hover   { border-color: #7c3aed; color: #e2e8f0; }
 .sel-btn.current { border-color: #7c3aed; color: #a78bfa; background: #1e1040; }
+.sel-del-btn {
+  background: #0f172a; border: 1px solid #334155;
+  border-radius: 8px; color: #64748b;
+  padding: 7px 10px; font-size: 0.9rem;
+  cursor: pointer; font-family: inherit; line-height: 1;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.sel-del-btn:hover:not(:disabled) { border-color: #ef4444; color: #ef4444; background: #1a0808; }
 
 /* Upload drop zone */
 .upload-zone {

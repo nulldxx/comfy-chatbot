@@ -1439,34 +1439,77 @@ function handleSlashCommand(raw) {
         scrollBottom();
         return;
       }
-      let html = '<strong>Select a session to restore:</strong><div class="sel-list">';
-      sessions.forEach(s => {
-        const date = s.saved_at ? new Date(s.saved_at).toLocaleDateString() : '';
-        html += `<button class="sel-btn" data-name="${escapeHtml(s.name)}">
-          <span>${escapeHtml(s.name)}</span>
-          <span style="color:#475569;font-size:0.8em">${s.image_count} image(s)${date ? ' · ' + date : ''}</span>
-        </button>`;
-      });
-      html += '</div>';
-      bubble.innerHTML = html;
-      bubble.querySelectorAll('.sel-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const name = btn.dataset.name;
-          bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
-          fetch('/api/sessions/' + encodeURIComponent(name))
-          .then(parseJsonResponse)
-          .then(data => {
-            if (data.error) throw new Error(data.error);
-            restoreSession(data);
-            bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
-            scrollBottom();
-          })
-          .catch(err => {
-            bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
-            scrollBottom();
+      const list = document.createElement('div');
+      list.innerHTML = '<strong>Select a session to restore:</strong>';
+      const selList = document.createElement('div');
+      selList.className = 'sel-list';
+
+      const buildRows = (sessionList) => {
+        selList.innerHTML = '';
+        sessionList.forEach(s => {
+          const date = s.saved_at ? new Date(s.saved_at).toLocaleDateString() : '';
+          const row = document.createElement('div');
+          row.className = 'sel-row';
+
+          const btn = document.createElement('button');
+          btn.className = 'sel-btn';
+          btn.dataset.name = s.name;
+          btn.innerHTML = `<span>${escapeHtml(s.name)}</span>
+            <span style="color:#475569;font-size:0.8em">${s.image_count} image(s)${date ? ' · ' + date : ''}</span>`;
+          btn.addEventListener('click', () => {
+            const name = btn.dataset.name;
+            bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
+            fetch('/api/sessions/' + encodeURIComponent(name))
+            .then(parseJsonResponse)
+            .then(data => {
+              if (data.error) throw new Error(data.error);
+              restoreSession(data);
+              bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
+              scrollBottom();
+            })
+            .catch(err => {
+              bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
+              scrollBottom();
+            });
           });
+
+          const delBtn = document.createElement('button');
+          delBtn.className = 'sel-del-btn';
+          delBtn.title = 'Delete session';
+          delBtn.innerHTML = '🗑';
+          delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const name = btn.dataset.name;
+            delBtn.disabled = true;
+            delBtn.style.opacity = '0.4';
+            fetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' })
+            .then(parseJsonResponse)
+            .then(data => {
+              if (data.error) throw new Error(data.error);
+              row.remove();
+              if (!selList.querySelector('.sel-row')) {
+                bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
+              }
+              scrollBottom();
+            })
+            .catch(err => {
+              delBtn.disabled = false;
+              delBtn.style.opacity = '';
+              addMessage('bot', `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
+              scrollBottom();
+            });
+          });
+
+          row.appendChild(btn);
+          row.appendChild(delBtn);
+          selList.appendChild(row);
         });
-      });
+      };
+
+      buildRows(sessions);
+      list.appendChild(selList);
+      bubble.innerHTML = '';
+      bubble.appendChild(list);
       scrollBottom();
     })
     .catch(() => {
