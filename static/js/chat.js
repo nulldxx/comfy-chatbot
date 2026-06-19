@@ -127,6 +127,9 @@ function exitFauxFs(el) {
 
 const SLASH_COMMANDS = [
   { cmd: '/addserver',  desc: 'add a server  (name host:port:os)',  args: ' ' },
+  { cmd: '/alias-create', desc: 'create or update a prompt text alias  (<from> <to>)', args: ' ' },
+  { cmd: '/alias-delete', desc: 'delete a prompt text alias',                          args: ' ' },
+  { cmd: '/alias-list',   desc: 'list all defined prompt text aliases',                args: ''  },
   { cmd: '/archive-all',     desc: 'archive every image to the encrypted volume (optional folder name)',     args: ' ' },
   { cmd: '/archive-session', desc: 'archive all images from this session (optional folder name)',            args: ' ' },
   { cmd: '/archive-today',   desc: 'archive images generated today (optional folder name)',                  args: ' ' },
@@ -183,6 +186,47 @@ fetch('/api/loras')
     });
   })
   .catch(() => {});
+
+// Prompt alias catalogue — word → expansion, loaded from the server.
+// Persisted in the encrypted output volume as aliases.json.
+let ALIASES = {};
+fetch('/api/aliases')
+  .then(r => r.json())
+  .then(data => { if (data && typeof data === 'object') ALIASES = data; })
+  .catch(() => {});
+
+// Expand a word-for-word alias in `text`.  Called at send time so any alias
+// that slipped past the real-time expansion (e.g. no trailing space) is still
+// caught.  Split on runs of whitespace so separators are preserved.
+function expandAliases(text) {
+  if (!Object.keys(ALIASES).length) return text;
+  return text.split(/(\s+)/).map(tok => (/\S/.test(tok) && ALIASES[tok] !== undefined) ? ALIASES[tok] : tok).join('');
+}
+
+// Try to expand the word that the user just finished typing (detected by a
+// trailing space or newline at the cursor position).  Replaces the word
+// in-place in the textarea so the expansion is visible immediately.
+function tryExpandAlias() {
+  if (!Object.keys(ALIASES).length) return;
+  const val    = inputEl.value;
+  const cursor = inputEl.selectionStart;
+  if (cursor === 0) return;
+  const sep = val[cursor - 1];
+  if (sep !== ' ' && sep !== '\n') return;
+  const before = val.slice(0, cursor - 1);
+  const m = before.match(/(\S+)$/);
+  if (!m) return;
+  const word      = m[1];
+  if (word.startsWith('/')) return;   // never expand slash command names/args
+  const expansion = ALIASES[word];
+  if (expansion === undefined) return;
+  const wordStart = cursor - 1 - word.length;
+  inputEl.value   = val.slice(0, wordStart) + expansion + val.slice(cursor - 1);
+  const newCursor = wordStart + expansion.length + 1;
+  inputEl.setSelectionRange(newCursor, newCursor);
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
+}
 
 // Parse a fetch Response as JSON, but degrade gracefully when the body isn't
 // JSON at all (e.g. a gunicorn/proxy timeout page or an empty body). Without
@@ -340,10 +384,11 @@ function updateHeaderStatus() {
 }
 updateHeaderStatus();
 
-// Auto-resize textarea + slash autocomplete
+// Auto-resize textarea + alias expansion + slash autocomplete
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
+  tryExpandAlias();
   updateSlashAc();
 });
 
@@ -523,8 +568,9 @@ function handleSlashCommand(raw) {
     sendBtn.disabled = true;
     (async () => {
       for (const prompt of lines) {
-        addMessage('user', escapeHtml(prompt), prompt);
-        const ok = await runGeneration(prompt, '');
+        const expanded = expandAliases(prompt);
+        addMessage('user', escapeHtml(expanded), expanded);
+        const ok = await runGeneration(expanded, '');
         if (!ok) break;
       }
       sendBtn.disabled = false;
@@ -533,7 +579,7 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/sequence') {
-    const master = raw.slice('/sequence'.length).trim();
+    const master = expandAliases(raw.slice('/sequence'.length).trim());
     addMessage('user', escapeHtml(raw), raw);
     if (!master) {
       addMessage('bot', '<span style="color:#f87171">⚠ Provide a master prompt, e.g. <code>/sequence a woman practising yoga at sunrise</code></span>');
@@ -849,6 +895,11 @@ function handleSlashCommand(raw) {
       <strong>Available commands</strong>
       <div class="sel-list" style="margin-top:10px;gap:4px">
         <div style="font-size:0.85rem;color:#94a3b8"><code>/help</code> — show this message</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/alias-create &lt;word&gt; &lt;expansion&gt;</code> — create or update a text alias; typing the word in a prompt and pressing space expands it immediately
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code> &nbsp;·&nbsp; quotes are optional</div>
+        </div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/alias-delete &lt;word&gt;</code> — delete a text alias</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/alias-list</code> — list all defined aliases</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/server</code> — choose a ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/addserver &lt;name&gt; &lt;host:port:os&gt;</code> — add a server
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">
@@ -1635,6 +1686,143 @@ function handleSlashCommand(raw) {
     iterations = n;
     iterationsFromSequence = false; // explicit user choice — don't auto-reset it later
     addMessage('bot', `Each prompt will now generate <strong style="color:#a78bfa">${iterations}</strong> image(s)${n > 1 ? ', one after another' : ''}.`);
+    return;
+  }
+
+  if (cmd === '/alias-create') {
+    const argStr = raw.slice('/alias-create'.length).trim();
+    addMessage('user', escapeHtml(raw), raw);
+    if (!argStr) {
+      addMessage('bot', 'Usage: <code>/alias-create &lt;word&gt; &lt;expansion&gt;</code><br>' +
+        'e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code><br>' +
+        'Quotes around the expansion are optional but useful when it contains special characters.');
+      return;
+    }
+    const spaceIdx = argStr.indexOf(' ');
+    if (spaceIdx === -1) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide both a word and an expansion — e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code></span>');
+      return;
+    }
+    const aliasFrom = argStr.slice(0, spaceIdx);
+    let aliasTo = argStr.slice(spaceIdx + 1).trim();
+    // Strip surrounding quotes
+    if ((aliasTo.startsWith('"') && aliasTo.endsWith('"')) ||
+        (aliasTo.startsWith("'") && aliasTo.endsWith("'"))) {
+      aliasTo = aliasTo.slice(1, -1).trim();
+    } else if (aliasTo.startsWith('"') || aliasTo.startsWith("'")) {
+      aliasTo = aliasTo.slice(1).trim();
+    }
+    if (!aliasTo) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Expansion cannot be empty.</span>');
+      return;
+    }
+    const bubble = addMessage('bot', '<div class="status-text">Saving alias…</div>').parentElement.querySelector('.bubble');
+    fetch('/api/aliases', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: aliasFrom, to: aliasTo }),
+    })
+    .then(parseJsonResponse)
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      ALIASES[aliasFrom] = aliasTo;
+      const verb = data.updated ? 'Updated' : 'Created';
+      bubble.innerHTML = `${verb} alias: <code>${escapeHtml(aliasFrom)}</code> → <code>${escapeHtml(aliasTo)}</code>`;
+      scrollBottom();
+    })
+    .catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+      scrollBottom();
+    });
+    return;
+  }
+
+  if (cmd === '/alias-delete') {
+    const aliasFrom = parts[1];
+    addMessage('user', escapeHtml(raw), raw);
+    if (!aliasFrom) {
+      addMessage('bot', 'Usage: <code>/alias-delete &lt;word&gt;</code>');
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(ALIASES, aliasFrom)) {
+      addMessage('bot', `<span style="color:#f87171">⚠ No alias named <code>${escapeHtml(aliasFrom)}</code> — use <code>/alias-list</code> to see what's defined.</span>`);
+      return;
+    }
+    const bubble = addMessage('bot', '<div class="status-text">Deleting alias…</div>').parentElement.querySelector('.bubble');
+    fetch('/api/aliases/' + encodeURIComponent(aliasFrom), { method: 'DELETE' })
+    .then(parseJsonResponse)
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      delete ALIASES[aliasFrom];
+      bubble.innerHTML = `Alias <code>${escapeHtml(aliasFrom)}</code> deleted.`;
+      scrollBottom();
+    })
+    .catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+      scrollBottom();
+    });
+    return;
+  }
+
+  if (cmd === '/alias-list') {
+    addMessage('user', escapeHtml(raw), raw);
+    const entries = Object.entries(ALIASES).sort(([a], [b]) => a.localeCompare(b));
+    if (!entries.length) {
+      addMessage('bot', 'No aliases defined. Use <code>/alias-create &lt;word&gt; &lt;expansion&gt;</code> to create one.');
+      return;
+    }
+    const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+    const header = document.createElement('strong');
+    header.textContent = `Aliases (${entries.length}):`;
+    const selList = document.createElement('div');
+    selList.className = 'sel-list';
+    selList.style.cssText = 'margin-top:8px;gap:4px';
+
+    entries.forEach(([k, v]) => {
+      const row = document.createElement('div');
+      row.className = 'sel-row';
+
+      const label = document.createElement('div');
+      label.style.cssText = 'font-size:0.85rem;color:#94a3b8;flex:1;min-width:0;overflow-wrap:break-word';
+      label.innerHTML = `<code>${escapeHtml(k)}</code> → <code>${escapeHtml(v)}</code>`;
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'sel-del-btn';
+      delBtn.title = 'Delete alias';
+      delBtn.innerHTML = '&#128465;&#xFE0E;';
+      delBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        delBtn.disabled = true;
+        delBtn.style.opacity = '0.4';
+        fetch('/api/aliases/' + encodeURIComponent(k), { method: 'DELETE' })
+        .then(parseJsonResponse)
+        .then(data => {
+          if (data.error) throw new Error(data.error);
+          delete ALIASES[k];
+          row.remove();
+          if (!selList.querySelector('.sel-row')) {
+            bubble.innerHTML = 'No aliases defined. Use <code>/alias-create &lt;word&gt; &lt;expansion&gt;</code> to create one.';
+          } else {
+            header.textContent = `Aliases (${selList.querySelectorAll('.sel-row').length}):`;
+          }
+          scrollBottom();
+        })
+        .catch(err => {
+          delBtn.disabled = false;
+          delBtn.style.opacity = '';
+          addMessage('bot', `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
+          scrollBottom();
+        });
+      });
+
+      row.appendChild(label);
+      row.appendChild(delBtn);
+      selList.appendChild(row);
+    });
+
+    bubble.appendChild(header);
+    bubble.appendChild(selList);
+    scrollBottom();
     return;
   }
 
@@ -2441,6 +2629,10 @@ function sendMessage() {
     iterations = 1;
     iterationsFromSequence = false;
   }
+
+  // Expand any aliases that weren't caught by the real-time trigger (e.g. no
+  // trailing space before Enter was pressed).
+  raw = expandAliases(raw);
 
   addMessage('user', escapeHtml(raw), raw);
   inputEl.value = '';

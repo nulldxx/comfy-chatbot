@@ -1158,6 +1158,70 @@ def api_session_delete(name):
     return jsonify({"ok": True})
 
 
+# ---------------------------------------------------------------------------
+# Prompt aliases
+# ---------------------------------------------------------------------------
+
+def _aliases_file():
+    return IMAGES_DIR / "aliases.json"
+
+
+def load_aliases():
+    f = _aliases_file()
+    if not f.is_file():
+        return {}
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return {}
+
+
+def save_aliases(aliases):
+    _aliases_file().write_text(json.dumps(aliases, indent=2))
+
+
+@app.route("/api/aliases")
+@login_required
+def api_aliases():
+    return jsonify(load_aliases())
+
+
+@app.route("/api/aliases", methods=["POST"])
+@login_required
+def api_alias_create():
+    data = request.get_json(force=True) or {}
+    alias_from = (data.get("from") or "").strip()
+    alias_to   = (data.get("to")   or "").strip()
+    if not alias_from:
+        return jsonify({"error": "from is required"}), 400
+    if not alias_to:
+        return jsonify({"error": "to is required"}), 400
+    if " " in alias_from or "/" in alias_from:
+        return jsonify({"error": "alias name cannot contain spaces or slashes"}), 400
+    aliases = load_aliases()
+    updated = alias_from in aliases
+    aliases[alias_from] = alias_to
+    try:
+        save_aliases(aliases)
+    except OSError as e:
+        return jsonify({"error": f"Could not save aliases: {e}"}), 500
+    return jsonify({"ok": True, "from": alias_from, "to": alias_to, "updated": updated})
+
+
+@app.route("/api/aliases/<alias_from>", methods=["DELETE"])
+@login_required
+def api_alias_delete(alias_from):
+    aliases = load_aliases()
+    if alias_from not in aliases:
+        return jsonify({"error": "Alias not found"}), 404
+    del aliases[alias_from]
+    try:
+        save_aliases(aliases)
+    except OSError as e:
+        return jsonify({"error": f"Could not save aliases: {e}"}), 500
+    return jsonify({"ok": True})
+
+
 @app.route("/health")
 def health():
     return jsonify({"status": "healthy"})
