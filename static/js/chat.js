@@ -3528,6 +3528,17 @@ function renderReviewGrid(bubble, urls) {
       runImage2Image(prompt, url).finally(() => { ri2i.disabled = false; });
     });
 
+    const rredo = document.createElement('button');
+    rredo.className = 'img-redo review-redo';
+    rredo.title = 'Regenerate this image';
+    rredo.innerHTML = '&#x21BA;&#xFE0E;';
+    rredo.addEventListener('click', e => {
+      e.stopPropagation();
+      if (rredo.disabled || sendBtn.disabled) return;
+      rredo.disabled = true;
+      runDoOver(url).finally(() => { rredo.disabled = false; });
+    });
+
     const rinpaint = document.createElement('button');
     rinpaint.className = 'img-inpaint review-inpaint';
     rinpaint.title = 'Inpaint';
@@ -3542,6 +3553,7 @@ function renderReviewGrid(bubble, urls) {
     cell.appendChild(del);
     cell.appendChild(face);
     cell.appendChild(up);
+    cell.appendChild(rredo);
     cell.appendChild(ri2i);
     cell.appendChild(rinpaint);
     grid.appendChild(cell);

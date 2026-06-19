@@ -495,12 +495,28 @@ header a:hover { color: #a78bfa; }
   font-size: 0.8rem;
 }
 .review-thumb:hover .review-i2i { opacity: 1; }
+.review-redo {
+  position: absolute;
+  bottom: 4px; left: 4px;
+  padding: 3px 6px;          /* tighter than the in-chat regenerate button */
+  font-size: 0.8rem;
+}
+.review-thumb:hover .review-redo { opacity: 1; }
+.review-inpaint {
+  position: absolute;
+  right: 4px; top: 50%; transform: translateY(-50%);
+  padding: 3px 6px;          /* tighter than the in-chat inpaint button */
+  font-size: 0.8rem;
+}
+.review-thumb:hover .review-inpaint { opacity: 1; }
 @media (max-width: 600px) {
   .review-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
   .review-del { opacity: 0.6; }   /* always visible where there's no hover */
   .review-face { opacity: 0.6; }
   .review-up { opacity: 0.6; }
   .review-i2i { opacity: 0.6; }
+  .review-redo { opacity: 0.6; }
+  .review-inpaint { opacity: 0.6; }
 }
 
 .bubble code { background: #0f172a; padding: 1px 5px; border-radius: 4px; font-size: 0.82em; }
