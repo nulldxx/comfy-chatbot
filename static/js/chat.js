@@ -3385,10 +3385,6 @@ function appendChatImage(container, url) {
   inpaintBtn.addEventListener('click', e => {
     e.stopPropagation();
     if (inpaintBtn.disabled || sendBtn.disabled) return;
-    if (!lastInpaintingPrompt) {
-      addMessage('bot', '<span style="color:#f87171">⚠ Set an inpainting prompt first with <code>/inpainting-prompt &lt;text&gt;</code></span>');
-      return;
-    }
     openMaskEditor(url, wrap);
   });
 
@@ -3539,10 +3535,6 @@ function renderReviewGrid(bubble, urls) {
     rinpaint.addEventListener('click', e => {
       e.stopPropagation();
       if (rinpaint.disabled || sendBtn.disabled) return;
-      if (!lastInpaintingPrompt) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Set an inpainting prompt first with <code>/inpainting-prompt &lt;text&gt;</code></span>');
-        return;
-      }
       openMaskEditor(url, null);
     });
 
