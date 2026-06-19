@@ -693,6 +693,46 @@ def api_save_image():
     return jsonify({"url": f"/images/{filename}"})
 
 
+@app.route("/api/import-image", methods=["POST"])
+@login_required
+def api_import_image():
+    """Accept an image file dragged into the browser and save it to IMAGES_DIR.
+
+    Lets the user drop an image from outside the app into the current session; it
+    gets a permanent /images/ URL and is treated like any other generated image
+    (review grids, slideshow, do-over, etc.). The original file extension is
+    preserved (restricted to the formats we serve) and the bytes are written
+    verbatim — no re-encoding.
+    """
+    err = output_storage_error()
+    if err:
+        return err
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+    ext = Path(f.filename).suffix.lower()
+    if ext not in IMAGE_EXTS:
+        return jsonify({"error": f"Unsupported image type '{ext}'"}), 400
+
+    _MAX_IMPORT_BYTES = 50 * 1024 * 1024  # 50 MB
+    raw = f.read()
+    if not raw:
+        return jsonify({"error": "Empty file"}), 400
+    if len(raw) > _MAX_IMPORT_BYTES:
+        return jsonify({"error": "Image too large (50 MB limit)"}), 413
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_imported_{uuid.uuid4().hex[:8]}{ext}"
+    path = IMAGES_DIR / filename
+    try:
+        path.write_bytes(raw)
+    except OSError as e:
+        return jsonify({"error": f"Could not save file: {e}"}), 500
+    return jsonify({"url": f"/images/{filename}"})
+
+
 @app.route("/api/upload-inpaint-image", methods=["POST"])
 @login_required
 def api_upload_inpaint_image():

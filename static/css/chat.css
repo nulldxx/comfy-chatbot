@@ -703,3 +703,16 @@ header a:hover { color: #a78bfa; }
   position: absolute; top: 16px; right: 20px;
   color: #fff; font-size: 2rem; cursor: pointer; line-height: 1;
 }
+
+#drop-overlay {
+  display: none; position: fixed; inset: 0; z-index: 400;
+  background: rgba(0,0,0,0.7);
+  align-items: center; justify-content: center;
+  pointer-events: none;
+}
+#drop-overlay.open { display: flex; }
+#drop-overlay-msg {
+  border: 3px dashed #a78bfa; border-radius: 16px;
+  padding: 2rem 3rem; color: #ede9fe; font-size: 1.4rem; font-weight: 600;
+  background: rgba(167,139,250,0.12);
+}

@@ -490,6 +490,64 @@ document.addEventListener('click', e => {
 document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
 lightbox.addEventListener('click', e => { if (e.target === lightbox) closeLightbox(); });
 
+// ---------------------------------------------------------------------------
+// Drag-and-drop image import: drop an image from outside the app to copy it
+// into the current session. The file is uploaded as-is, gets a permanent
+// /images/ URL, and is rendered (and tracked in sessionImages) like any other
+// generated image so it works with do-over, review, slideshow, etc.
+// ---------------------------------------------------------------------------
+(function setupImageDrop() {
+  const overlay = document.getElementById('drop-overlay');
+  let dragDepth = 0;
+
+  // Only react to drags that carry files (not internal text/image drags).
+  const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+
+  document.addEventListener('dragenter', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    overlay.classList.add('open');
+  });
+  document.addEventListener('dragover', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  document.addEventListener('dragleave', e => {
+    if (!hasFiles(e)) return;
+    dragDepth--;
+    if (dragDepth <= 0) { dragDepth = 0; overlay.classList.remove('open'); }
+  });
+  document.addEventListener('drop', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    overlay.classList.remove('open');
+    const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith('image/'));
+    if (!files.length) return;
+    files.forEach(importDroppedImage);
+  });
+})();
+
+function importDroppedImage(file) {
+  const bubble = addMessage('bot', `<div class="status-text">Importing <code>${escapeHtml(file.name)}</code>…</div>`);
+  const fd = new FormData();
+  fd.append('file', file);
+  fetch('/api/import-image', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      bubble.innerHTML = '';
+      sessionImages.push(data.url);
+      appendChatImage(bubble, data.url);
+      scrollBottom();
+    })
+    .catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ Could not import image: ${escapeHtml(err.message)}</span>`;
+    });
+}
+
 // Tap a user bubble to re-edit that prompt
 messagesEl.addEventListener('click', e => {
   if (e.target.tagName === 'IMG') return;
