@@ -621,6 +621,37 @@ def api_upload_mask():
     return jsonify({"token": token})
 
 
+@app.route("/api/save-image", methods=["POST"])
+@login_required
+def api_save_image():
+    """Accept a base64-encoded PNG from the browser and save it to IMAGES_DIR.
+
+    Used by the client-side selective-composite flow: after the user paints a mask
+    over the face-detail result and the browser composites the two images, the
+    resulting PNG is uploaded here so it gets a permanent /images/ URL and appears
+    in review/slideshow views like any other generated image.
+    """
+    data = request.get_json(force=True)
+    b64 = (data.get("data") or "").strip()
+    if not b64:
+        return jsonify({"error": "data is required"}), 400
+    _MAX_COMPOSITE_BYTES = 50 * 1024 * 1024  # 50 MB decoded
+    if len(b64) > _MAX_COMPOSITE_BYTES * 4 // 3 + 4:
+        return jsonify({"error": "Image too large (50 MB limit)"}), 413
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        return jsonify({"error": "invalid base64"}), 400
+    if len(raw) > _MAX_COMPOSITE_BYTES:
+        return jsonify({"error": "Image too large (50 MB limit)"}), 413
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_composite_{uuid.uuid4().hex[:8]}.png"
+    path = IMAGES_DIR / filename
+    path.write_bytes(raw)
+    return jsonify({"url": f"/images/{filename}"})
+
+
 @app.route("/api/inpaint", methods=["POST"])
 @login_required
 def api_inpaint():

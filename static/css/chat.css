@@ -367,6 +367,17 @@ header a:hover { color: #a78bfa; }
 .ba-pick-2:hover:not(:disabled) { border-color: #34d399; color: #6ee7b7; }
 .ba-pick:disabled { opacity: 0.4; cursor: default; }
 
+/* Selective-composite (🩹) button — paints which parts of image 2 to keep */
+.ba-composite-btn {
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #94a3b8; border-radius: 8px;
+  padding: 5px 10px; font-size: 0.9rem;
+  cursor: pointer; line-height: 1;
+  transition: border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.ba-composite-btn:hover:not(:disabled) { border-color: #f472b6; color: #f472b6; }
+.ba-composite-btn:disabled { opacity: 0.4; cursor: default; }
+
 /* Maximize button (pushed right in actions row) */
 .ba-maximize-btn {
   margin-left: auto;

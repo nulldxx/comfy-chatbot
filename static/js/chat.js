@@ -2476,6 +2476,232 @@ function openMaskEditor(imageUrl, imgWrap) {
   document.addEventListener('keydown', onKey);
 }
 
+// Opens a mask editor over `newUrl` (image 2 / face-detail result) that lets
+// the user paint which faces to keep from image 2. On "Apply", the browser
+// composites image 1 (oldUrl) as the base with image 2 pixels only where the
+// mask was painted, uploads the result via /api/save-image, and calls
+// onComposite(compositeUrl). Never sends anything to ComfyUI.
+function openCompositeEditor(oldUrl, newUrl, onComposite) {
+  if (document.getElementById('mask-editor-overlay')) return;
+
+  let aborted = false;
+  const dpr = window.devicePixelRatio || 1;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'mask-editor-overlay';
+
+  const wrap = document.createElement('div');
+  wrap.id = 'mask-editor-wrap';
+
+  const img = document.createElement('img');
+  img.src = newUrl;
+  img.draggable = false;
+
+  const canvas = document.createElement('canvas');
+  canvas.id = 'mask-editor-canvas';
+
+  wrap.appendChild(img);
+  wrap.appendChild(canvas);
+  overlay.appendChild(wrap);
+
+  const actions = document.createElement('div');
+  actions.id = 'mask-editor-actions';
+
+  const hint = document.createElement('div');
+  hint.style.cssText = 'color:#94a3b8;font-size:0.8rem;white-space:normal;flex:1 1 100%;order:-1;margin-bottom:2px';
+  hint.textContent = 'Paint over the face(s) from ② to keep — unpainted areas will use ①';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear';
+  clearBtn.className = 'mask-editor-btn';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.className = 'mask-editor-btn';
+
+  const applyBtn = document.createElement('button');
+  applyBtn.textContent = 'Apply Composite';
+  applyBtn.className = 'mask-editor-btn mask-editor-btn-primary';
+  applyBtn.disabled = true;
+
+  actions.appendChild(hint);
+  actions.appendChild(clearBtn);
+  actions.appendChild(cancelBtn);
+  actions.appendChild(applyBtn);
+  overlay.appendChild(actions);
+  document.body.appendChild(overlay);
+
+  const ctx = canvas.getContext('2d');
+  let cssW = 0, cssH = 0;
+
+  function syncCanvasSize() {
+    if (!img.naturalWidth) return;
+    const rect = img.getBoundingClientRect();
+    cssW = rect.width;
+    cssH = rect.height;
+    canvas.width  = Math.round(rect.width  * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    canvas.style.width  = rect.width  + 'px';
+    canvas.style.height = rect.height + 'px';
+    canvas.style.opacity = '0.6';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    applyBtn.disabled = false;
+  }
+
+  if (img.complete && img.naturalWidth) {
+    syncCanvasSize();
+  } else {
+    img.addEventListener('load', syncCanvasSize, { once: true });
+  }
+
+  let painting = false;
+  let cachedRect = null;
+  let lastX = null, lastY = null;
+  const BRUSH_RADIUS = 30;
+
+  const onResize = () => { cachedRect = null; };
+  window.addEventListener('resize', onResize);
+
+  function paint(e) {
+    if (!painting || !cachedRect) return;
+    const x = e.clientX - cachedRect.left;
+    const y = e.clientY - cachedRect.top;
+    ctx.fillStyle = 'rgba(255, 220, 0, 1.0)';
+    if (lastX !== null) {
+      ctx.strokeStyle = 'rgba(255, 220, 0, 1.0)';
+      ctx.lineWidth = BRUSH_RADIUS * 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    lastX = x; lastY = y;
+  }
+
+  function endStroke() { painting = false; lastX = lastY = null; }
+
+  canvas.addEventListener('pointerdown', e => {
+    cachedRect = canvas.getBoundingClientRect();
+    painting = true;
+    lastX = lastY = null;
+    canvas.setPointerCapture(e.pointerId);
+    paint(e);
+  });
+  canvas.addEventListener('pointermove', paint);
+  canvas.addEventListener('pointerup',     endStroke);
+  canvas.addEventListener('pointercancel', endStroke);
+
+  clearBtn.addEventListener('click', () => ctx.clearRect(0, 0, cssW, cssH));
+
+  function closeEditor() {
+    aborted = true;
+    window.removeEventListener('resize', onResize);
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+  }
+
+  cancelBtn.addEventListener('click', closeEditor);
+
+  applyBtn.addEventListener('click', () => {
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    applyBtn.disabled = true;
+    applyBtn.textContent = 'Compositing…';
+
+    // Convert the painted canvas to a binary mask at display resolution
+    const src = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const binary = new ImageData(canvas.width, canvas.height);
+    for (let i = 0; i < src.data.length; i += 4) {
+      const v = src.data[i + 3] > 0 ? 255 : 0;
+      binary.data[i] = binary.data[i + 1] = binary.data[i + 2] = v;
+      binary.data[i + 3] = 255;
+    }
+    const binaryCanvas = document.createElement('canvas');
+    binaryCanvas.width  = canvas.width;
+    binaryCanvas.height = canvas.height;
+    binaryCanvas.getContext('2d').putImageData(binary, 0, 0);
+
+    const natW = img.naturalWidth;
+    const natH = img.naturalHeight;
+
+    // Scale mask to the natural image resolution (nearest-neighbour keeps it binary)
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width  = natW;
+    maskCanvas.height = natH;
+    const maskCtx = maskCanvas.getContext('2d');
+    maskCtx.imageSmoothingEnabled = false;
+    maskCtx.drawImage(binaryCanvas, 0, 0, natW, natH);
+    const maskData = maskCtx.getImageData(0, 0, natW, natH);
+
+    // Draw image 2 (already loaded in `img`) to an offscreen canvas
+    const img2Canvas = document.createElement('canvas');
+    img2Canvas.width  = natW;
+    img2Canvas.height = natH;
+    const img2Ctx = img2Canvas.getContext('2d');
+    img2Ctx.drawImage(img, 0, 0, natW, natH);
+    const img2Data = img2Ctx.getImageData(0, 0, natW, natH);
+
+    // Load image 1 (original) and composite
+    const img1El = new Image();
+    img1El.onload = () => {
+      const img1Canvas = document.createElement('canvas');
+      img1Canvas.width  = natW;
+      img1Canvas.height = natH;
+      const img1Ctx = img1Canvas.getContext('2d');
+      img1Ctx.drawImage(img1El, 0, 0, natW, natH);
+      const img1Data = img1Ctx.getImageData(0, 0, natW, natH);
+
+      // Where mask is white → take image 2 pixel; otherwise keep image 1 pixel
+      for (let i = 0; i < img1Data.data.length; i += 4) {
+        if (maskData.data[i] > 128) {
+          img1Data.data[i]     = img2Data.data[i];
+          img1Data.data[i + 1] = img2Data.data[i + 1];
+          img1Data.data[i + 2] = img2Data.data[i + 2];
+          img1Data.data[i + 3] = img2Data.data[i + 3];
+        }
+      }
+      img1Ctx.putImageData(img1Data, 0, 0);
+
+      const b64 = img1Canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+
+      fetch('/api/save-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: b64 }),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        if (aborted) return;
+        closeEditor();
+        onComposite(data.url);
+      })
+      .catch(err => {
+        if (aborted) return;
+        applyBtn.disabled = false;
+        applyBtn.textContent = 'Apply Composite';
+        addMessage('bot', `<span style="color:#f87171">⚠ Composite failed: ${escapeHtml(err.message)}</span>`);
+      });
+    };
+    img1El.onerror = () => {
+      if (aborted) return;
+      applyBtn.disabled = false;
+      applyBtn.textContent = 'Apply Composite';
+      addMessage('bot', '<span style="color:#f87171">⚠ Failed to load original image for compositing.</span>');
+    };
+    img1El.src = oldUrl;
+  });
+
+  function onKey(e) {
+    if (e.key === 'Escape') closeEditor();
+  }
+  document.addEventListener('keydown', onKey);
+}
+
 // Runs an inpainting workflow over `image` using `mask` (a server token) and
 // `prompt`. When `imgWrap` (the source .img-wrap) is given the result is offered
 // in place as a before/after slider. Returns the generation promise.
@@ -2499,9 +2725,11 @@ function runDoOver(url, imgWrap) {
 // Builds a before/after comparison slider for a face-detail or upscale result.
 // `oldUrl` (the source image) shows on the left, `newUrl` (the result) on the
 // right; dragging the handle wipes between them. A ✓/✗ row underneath calls
-// `onAccept`/`onReject`. Returns a single container node so the caller can swap
-// it in for the original .img-wrap via replaceWith().
-function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject) {
+// `onAccept`/`onReject`. The optional `onComposite(compositeUrl, sliderEl)`
+// enables the 🩹 button, which opens a mask editor so the user can paint which
+// parts of image 2 to apply to image 1 (useful for keeping only one face from a
+// face-detail result). Returns a single container node.
+function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComposite) {
   const container = document.createElement('div');
   container.className = 'ba-container';
 
@@ -2685,7 +2913,30 @@ function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject) {
     mPick1.addEventListener('click', () => { dismiss(); pick1.click(); });
     mPick2.addEventListener('click', () => { dismiss(); pick2.click(); });
 
-    header.append(mPick1, mPick2, closeBtn);
+    header.append(mPick1, mPick2);
+
+    if (onComposite) {
+      const mMaskBtn = document.createElement('button');
+      mMaskBtn.className = 'ba-composite-btn';
+      mMaskBtn.textContent = '🩹';
+      mMaskBtn.title = 'Selective composite — paint which parts of ② to keep';
+      if (settled) mMaskBtn.disabled = true;
+      mMaskBtn.addEventListener('click', () => {
+        dismiss();
+        // Delegate to the inline mask button logic via the inline container
+        // by re-opening the composite editor in the non-modal context.
+        if (settled) return;
+        openCompositeEditor(oldUrl, newUrl, compositeUrl => {
+          if (settled) return;
+          settled = true;
+          pick1.disabled = pick2.disabled = true;
+          onComposite(compositeUrl, container);
+        });
+      });
+      header.append(mMaskBtn);
+    }
+
+    header.append(closeBtn);
     overlay.append(header, modalSlider);
     document.body.appendChild(overlay);
 
@@ -2698,6 +2949,24 @@ function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject) {
 
   actions.appendChild(pick1);
   actions.appendChild(pick2);
+
+  if (onComposite) {
+    const maskBtn = document.createElement('button');
+    maskBtn.className = 'ba-composite-btn';
+    maskBtn.textContent = '🩹';
+    maskBtn.title = 'Selective composite — paint which parts of ② to keep';
+    maskBtn.addEventListener('click', () => {
+      if (settled) return;
+      openCompositeEditor(oldUrl, newUrl, compositeUrl => {
+        if (settled) return;
+        settled = true;
+        pick1.disabled = pick2.disabled = maskBtn.disabled = true;
+        onComposite(compositeUrl, container);
+      });
+    });
+    actions.appendChild(maskBtn);
+  }
+
   actions.appendChild(maximizeBtn);
 
   container.appendChild(slider);
@@ -3254,7 +3523,24 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             appendChatImage(tmp, oldUrl);
             sliderEl.replaceWith(tmp.firstChild);
           };
-          sliderReplace.replaceWith(buildComparisonSlider(oldUrl, newUrl, onAccept, onReject));
+          // For face-detail results, offer selective compositing: the user paints
+          // which faces from image 2 to apply to image 1, so only chosen faces get
+          // the detailer treatment. Not shown for non-face ops (upscale, i2i) where
+          // the concept doesn't apply.
+          const onComposite = face ? (compositeUrl, sliderEl) => {
+            deleteImageFile(oldUrl).catch(() => {});
+            deleteImageFile(newUrl).catch(() => {});
+            const idx = sessionImages.indexOf(oldUrl);
+            if (idx !== -1) sessionImages.splice(idx, 1, compositeUrl);
+            else sessionImages.push(compositeUrl);
+            delete imagePrompts[oldUrl];
+            delete imageMasks[oldUrl];
+            if (originPrompt) imagePrompts[compositeUrl] = originPrompt;
+            const tmp = document.createElement('div');
+            appendChatImage(tmp, compositeUrl);
+            sliderEl.replaceWith(tmp.firstChild);
+          } : null;
+          sliderReplace.replaceWith(buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComposite));
           botBubble.parentElement.remove();
           resolve(true);
           return;
