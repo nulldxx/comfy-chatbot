@@ -1849,8 +1849,113 @@ function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject) {
     onAccept(container);
   });
 
+  const maximizeBtn = document.createElement('button');
+  maximizeBtn.className = 'ba-maximize-btn';
+  maximizeBtn.title = 'Maximise comparison';
+  maximizeBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>`;
+
+  maximizeBtn.addEventListener('click', () => {
+    const overlay = document.createElement('div');
+    overlay.className = 'ba-overlay';
+
+    const modalSlider = document.createElement('div');
+    modalSlider.className = 'ba-slider';
+
+    const mBefore = document.createElement('img');
+    mBefore.className = 'ba-before';
+    mBefore.src = oldUrl;
+    mBefore.alt = 'Original image';
+
+    const mAfter = document.createElement('img');
+    mAfter.className = 'ba-after';
+    mAfter.src = newUrl;
+    mAfter.alt = 'Processed image';
+
+    const mHandle = document.createElement('div');
+    mHandle.className = 'ba-handle';
+
+    const mSetPos = pct => {
+      pct = Math.max(0, Math.min(100, pct));
+      mAfter.style.clipPath = `inset(0 0 0 ${pct}%)`;
+      mHandle.style.left = pct + '%';
+    };
+    mSetPos(50);
+
+    let mDragging = false;
+    modalSlider.addEventListener('pointerdown', e => {
+      mDragging = true;
+      modalSlider.setPointerCapture(e.pointerId);
+      const rect = modalSlider.getBoundingClientRect();
+      mSetPos(((e.clientX - rect.left) / rect.width) * 100);
+    });
+    modalSlider.addEventListener('pointermove', e => {
+      if (!mDragging) return;
+      const rect = modalSlider.getBoundingClientRect();
+      mSetPos(((e.clientX - rect.left) / rect.width) * 100);
+    });
+    const mEndDrag = e => {
+      if (!mDragging) return;
+      mDragging = false;
+      try { modalSlider.releasePointerCapture(e.pointerId); } catch (_) {}
+    };
+    modalSlider.addEventListener('pointerup', mEndDrag);
+    modalSlider.addEventListener('pointercancel', mEndDrag);
+
+    const mLabel1 = document.createElement('div');
+    mLabel1.className = 'ba-label ba-label-1';
+    mLabel1.textContent = '1';
+    const mLabel2 = document.createElement('div');
+    mLabel2.className = 'ba-label ba-label-2';
+    mLabel2.textContent = '2';
+
+    modalSlider.append(mBefore, mAfter, mHandle, mLabel1, mLabel2);
+
+    // Size slider to fill viewport while preserving aspect ratio.
+    // `before` is already loaded in the in-page slider so naturalWidth is available.
+    const aspect = (before.naturalWidth || 1) / (before.naturalHeight || 1);
+    const maxW = window.innerWidth - 32;
+    const maxH = window.innerHeight - 120;
+    modalSlider.style.width = Math.min(maxW, maxH * aspect) + 'px';
+
+    const header = document.createElement('div');
+    header.className = 'ba-overlay-header';
+
+    const mPick1 = document.createElement('button');
+    mPick1.className = 'ba-pick ba-pick-1';
+    mPick1.textContent = '1';
+    mPick1.title = 'Keep image 1 (original)';
+
+    const mPick2 = document.createElement('button');
+    mPick2.className = 'ba-pick ba-pick-2';
+    mPick2.textContent = '2';
+    mPick2.title = 'Keep image 2 (edited)';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'ba-overlay-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Close';
+
+    if (settled) { mPick1.disabled = mPick2.disabled = true; }
+
+    const dismiss = () => overlay.remove();
+    closeBtn.addEventListener('click', dismiss);
+    mPick1.addEventListener('click', () => { dismiss(); pick1.click(); });
+    mPick2.addEventListener('click', () => { dismiss(); pick2.click(); });
+
+    header.append(mPick1, mPick2, closeBtn);
+    overlay.append(header, modalSlider);
+    document.body.appendChild(overlay);
+
+    const onKey = e => {
+      if (e.key === 'Escape') { dismiss(); document.removeEventListener('keydown', onKey); }
+    };
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+  });
+
   actions.appendChild(pick1);
   actions.appendChild(pick2);
+  actions.appendChild(maximizeBtn);
 
   container.appendChild(slider);
   container.appendChild(actions);
