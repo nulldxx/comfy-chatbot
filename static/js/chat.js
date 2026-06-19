@@ -134,9 +134,10 @@ const SLASH_COMMANDS = [
   { cmd: '/archive-session', desc: 'archive all images from this session (optional folder name)',            args: ' ' },
   { cmd: '/archive-today',   desc: 'archive images generated today (optional folder name)',                  args: ' ' },
   { cmd: '/clear',       desc: 'clear chat history (keeps settings)',  args: ''  },
-  { cmd: '/session-load', desc: 'load a previously saved session',    args: ''  },
-  { cmd: '/session-new',  desc: 'start a new session (resets all settings)', args: '' },
-  { cmd: '/session-save', desc: 'save the current session with a name', args: ' ' },
+  { cmd: '/session-load',    desc: 'load a previously saved session',                args: ''  },
+  { cmd: '/session-new',    desc: 'start a new session (resets all settings)',       args: '' },
+  { cmd: '/session-save',   desc: 'save the current session with a name',            args: ' ' },
+  { cmd: '/session-summary', desc: 'show active settings (workflow, replacements, etc.)', args: '' },
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
   { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
@@ -945,6 +946,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-new</code> — start a completely new session, resetting all settings to defaults</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-save &lt;name&gt;</code> — save the current session (chat history, images, settings) to disk</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-load</code> — pick and restore a previously saved session</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/session-summary</code> — show a summary of all active settings (server, workflow, resolution, replacements, etc.)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review &lt;n&gt;</code> — grid of the last N images, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-all</code> — grid of every image, oldest first (tap to view, trash to delete)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-today</code> — grid of today's images, oldest first</div>
@@ -1567,6 +1569,88 @@ function handleSlashCommand(raw) {
       bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load sessions.</span>';
       scrollBottom();
     });
+    return;
+  }
+
+  if (cmd === '/session-summary') {
+    const rows = [];
+
+    const srvName  = currentServer ? currentServer.name    : DEFAULT_SERVER;
+    const srvAddr  = currentServer ? currentServer.address : DEFAULT_SERVER;
+    const srvOs    = currentServer ? currentServer.os      : DEFAULT_SERVER_OS;
+    const srvLabel = currentServer
+      ? `<span style="color:#a78bfa">${escapeHtml(srvName)}</span> <span style="color:#475569">(${escapeHtml(srvAddr)}, ${escapeHtml(srvOs)})</span>`
+      : `<span style="color:#a78bfa">${escapeHtml(srvName)}</span> <span style="color:#475569">(default)</span>`;
+    rows.push({ label: 'Server', value: srvLabel });
+
+    const wfActive = currentWorkflow || DEFAULT_WORKFLOW;
+    const wfLabel  = currentWorkflow
+      ? `<span style="color:#a78bfa">${escapeHtml(wfActive)}</span>`
+      : `<span style="color:#a78bfa">${escapeHtml(wfActive)}</span> <span style="color:#475569">(default)</span>`;
+    rows.push({ label: 'Workflow', value: wfLabel });
+
+    const faceWfActive = currentFaceWorkflow || DEFAULT_FACE_WORKFLOW;
+    const faceWfLabel  = faceWfActive
+      ? (currentFaceWorkflow
+          ? `<span style="color:#a78bfa">${escapeHtml(faceWfActive)}</span>`
+          : `<span style="color:#a78bfa">${escapeHtml(faceWfActive)}</span> <span style="color:#475569">(default)</span>`)
+      : `<span style="color:#475569">not set</span>`;
+    rows.push({ label: 'Face-detail workflow', value: faceWfLabel });
+
+    const upWfActive = currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW;
+    const upWfLabel  = upWfActive
+      ? (currentUpscaleWorkflow
+          ? `<span style="color:#a78bfa">${escapeHtml(upWfActive)}</span>`
+          : `<span style="color:#a78bfa">${escapeHtml(upWfActive)}</span> <span style="color:#475569">(default)</span>`)
+      : `<span style="color:#475569">not set</span>`;
+    rows.push({ label: 'Upscale workflow', value: upWfLabel });
+
+    const i2iWfActive = currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW;
+    const i2iWfLabel  = i2iWfActive
+      ? (currentImage2ImageWorkflow
+          ? `<span style="color:#a78bfa">${escapeHtml(i2iWfActive)}</span>`
+          : `<span style="color:#a78bfa">${escapeHtml(i2iWfActive)}</span> <span style="color:#475569">(default)</span>`)
+      : `<span style="color:#475569">not set</span>`;
+    rows.push({ label: 'Image2image workflow', value: i2iWfLabel });
+
+    const resLabel = currentResolution
+      ? `<span style="color:#a78bfa">${currentResolution.width}×${currentResolution.height}</span>`
+      : `<span style="color:#475569">workflow default</span>`;
+    rows.push({ label: 'Resolution', value: resLabel });
+
+    rows.push({ label: 'Iterations', value: `<span style="color:#a78bfa">${iterations}</span>${iterations > 1 ? ' per prompt' : ''}` });
+
+    if (lastFaceDetailPrompt) {
+      rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(lastFaceDetailPrompt)}</code>` });
+    }
+
+    if (sequenceReplacements.length) {
+      const list = sequenceReplacements
+        .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
+        .join(', ');
+      rows.push({ label: `Sequence replacements (${sequenceReplacements.length})`, value: list });
+    }
+
+    if (image2imageReplacements.length) {
+      const list = image2imageReplacements
+        .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
+        .join(', ');
+      rows.push({ label: `Image2image replacements (${image2imageReplacements.length})`, value: list });
+    }
+
+    const aliasKeys = Object.keys(ALIASES).sort();
+    if (aliasKeys.length) {
+      const preview = aliasKeys.slice(0, 3).map(k => `<code>${escapeHtml(k)}</code>`).join(', ');
+      const more = aliasKeys.length > 3 ? ` <span style="color:#475569">+${aliasKeys.length - 3} more</span>` : '';
+      rows.push({ label: `Aliases (${aliasKeys.length})`, value: `${preview}${more} — <code>/alias-list</code> to see all` });
+    }
+
+    rows.push({ label: 'Session images', value: `<span style="color:#a78bfa">${sessionImages.length}</span>` });
+
+    const rowsHtml = rows
+      .map(r => `<div style="font-size:0.85rem;color:#94a3b8"><strong style="color:#cbd5e1">${r.label}:</strong> ${r.value}</div>`)
+      .join('');
+    addMessage('bot', `<strong>Session summary</strong><div class="sel-list" style="margin-top:10px;gap:4px">${rowsHtml}</div>`);
     return;
   }
 
