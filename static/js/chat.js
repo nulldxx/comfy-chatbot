@@ -153,6 +153,7 @@ const SLASH_COMMANDS = [
   { cmd: '/image2image-workflow', desc: 'choose an image2image workflow',     args: ''  },
   { cmd: '/inpaint-workflow',  desc: 'choose an inpainting workflow',        args: ''  },
   { cmd: '/inpainting-prompt', desc: 'set the prompt used by the inpaint button', args: ' ' },
+  { cmd: '/denoise', desc: 'set denoise defaults for face-detail, image2image, inpainting, upscale', args: '' },
   { cmd: '/generation-steps', desc: 'override steps for generation workflows (e.g. 20)', args: ' ' },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
@@ -375,6 +376,8 @@ let lastFaceDetailPrompt = null; // global override set by /face-detail-prompt; 
 let lastInpaintingPrompt = null; // set via /inpainting-prompt; required before the 🩹 button works
 let currentResolution = { width: 1365, height: 768 };  // {width, height} or null (null = workflow default); defaults to 16:9
 let currentGenerationSteps = null; // integer or null (null = workflow default)
+const DEFAULT_DENOISE = { face: 0.35, image2image: 0.30, inpaint: 0.45, upscale: 0.15 };
+let currentDenoise = { ...DEFAULT_DENOISE };
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
@@ -617,6 +620,15 @@ function showSessionSummary() {
 
   if (currentGenerationSteps !== null) {
     rows.push({ label: 'Generation steps', value: `<span style="color:#a78bfa">${currentGenerationSteps}</span>` });
+  }
+
+  const DENOISE_LABELS = { face: 'Face-detailer', image2image: 'Image2image', inpaint: 'Inpainting', upscale: 'Upscale' };
+  const denoiseOverrides = Object.entries(currentDenoise)
+    .filter(([k, v]) => v !== DEFAULT_DENOISE[k])
+    .map(([k, v]) => `${DENOISE_LABELS[k]}: <span style="color:#a78bfa">${v.toFixed(2)}</span>`)
+    .join(' · ');
+  if (denoiseOverrides) {
+    rows.push({ label: 'Denoise overrides', value: denoiseOverrides });
   }
 
   if (lastFaceDetailPrompt) {
@@ -1561,6 +1573,7 @@ function handleSlashCommand(raw) {
     lastInpaintingPrompt = null;
     currentResolution = { width: 1365, height: 768 };
     currentGenerationSteps = null;
+    currentDenoise = { ...DEFAULT_DENOISE };
     iterations = 1;
     iterationsFromSequence = false;
     sequenceReplacements = [];
@@ -1594,6 +1607,7 @@ function handleSlashCommand(raw) {
         image2imageReplacements: image2imageReplacements.slice(),
         lastFaceDetailPrompt,
         lastInpaintingPrompt,
+        currentDenoise: { ...currentDenoise },
       },
       sessionImages: sessionImages.slice(),
       imagePrompts: Object.assign({}, imagePrompts),
@@ -1853,6 +1867,80 @@ function handleSlashCommand(raw) {
     }
     currentGenerationSteps = n;
     addMessage('bot', `Generation steps set to <strong style="color:#a78bfa">${n}</strong>. Applies to generation workflows only, not face-detail or upscaling.`);
+    return;
+  }
+
+  if (cmd === '/denoise') {
+    addMessage('user', escapeHtml(raw), raw);
+    const DENOISE_ROWS = [
+      { key: 'face',       label: 'Face-detailer' },
+      { key: 'image2image', label: 'Image2image'  },
+      { key: 'inpaint',   label: 'Inpainting'    },
+      { key: 'upscale',   label: 'Upscale'       },
+    ];
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
+    const sliders = {};
+    const inputs  = {};
+    DENOISE_ROWS.forEach(({ key, label }) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1';
+      const lbl = document.createElement('span');
+      lbl.textContent = label + ':';
+      lbl.style.cssText = 'min-width:110px;color:#94a3b8';
+      const sl = document.createElement('input');
+      sl.type = 'range'; sl.min = '0.01'; sl.max = '1'; sl.step = '0.01';
+      sl.value = currentDenoise[key].toFixed(2);
+      sl.style.cssText = 'width:130px;accent-color:#f472b6;cursor:pointer';
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.value = currentDenoise[key].toFixed(2);
+      inp.style.cssText = 'width:44px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+      sl.addEventListener('input', () => { inp.value = parseFloat(sl.value).toFixed(2); });
+      inp.addEventListener('change', () => {
+        let v = parseFloat(inp.value);
+        if (isNaN(v)) v = currentDenoise[key];
+        v = Math.min(1, Math.max(0.01, Math.round(v * 100) / 100));
+        inp.value = v.toFixed(2);
+        sl.value  = v.toFixed(2);
+      });
+      sliders[key] = sl; inputs[key] = inp;
+      row.appendChild(lbl); row.appendChild(sl); row.appendChild(inp);
+      wrap.appendChild(row);
+    });
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
+    const applyBtn = document.createElement('button');
+    applyBtn.textContent = 'Apply';
+    applyBtn.className = 'sel-btn';
+    applyBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem';
+    const resetBtn = document.createElement('button');
+    resetBtn.textContent = 'Reset to defaults';
+    resetBtn.className = 'sel-btn';
+    resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+    applyBtn.addEventListener('click', () => {
+      DENOISE_ROWS.forEach(({ key }) => {
+        currentDenoise[key] = parseFloat(sliders[key].value);
+      });
+      const summary = DENOISE_ROWS.map(({ key, label }) =>
+        `${label}: <strong style="color:#a78bfa">${currentDenoise[key].toFixed(2)}</strong>`).join(' · ');
+      addMessage('bot', `Denoise defaults set — ${summary}`);
+      scrollBottom();
+    });
+    resetBtn.addEventListener('click', () => {
+      currentDenoise = { ...DEFAULT_DENOISE };
+      DENOISE_ROWS.forEach(({ key }) => {
+        sliders[key].value = DEFAULT_DENOISE[key].toFixed(2);
+        inputs[key].value  = DEFAULT_DENOISE[key].toFixed(2);
+      });
+      addMessage('bot', 'Denoise defaults reset to: Face-detailer <strong style="color:#a78bfa">0.35</strong> · Image2image <strong style="color:#a78bfa">0.30</strong> · Inpainting <strong style="color:#a78bfa">0.45</strong> · Upscale <strong style="color:#a78bfa">0.15</strong>');
+      scrollBottom();
+    });
+    btnRow.appendChild(applyBtn);
+    btnRow.appendChild(resetBtn);
+    wrap.appendChild(btnRow);
+    const bubble = addMessage('bot', '<strong>Denoise defaults</strong>').parentElement.querySelector('.bubble');
+    bubble.appendChild(wrap);
+    scrollBottom();
     return;
   }
 
@@ -2304,14 +2392,14 @@ function openMaskEditor(imageUrl, imgWrap) {
   denoiseLabel.className = 'mask-editor-denoise-label';
   const denoiseSlider = document.createElement('input');
   denoiseSlider.type = 'range';
-  denoiseSlider.min = '0';
+  denoiseSlider.min = '0.01';
   denoiseSlider.max = '1';
-  denoiseSlider.step = '0.05';
-  denoiseSlider.value = '0.4';
+  denoiseSlider.step = '0.01';
+  denoiseSlider.value = currentDenoise.inpaint.toFixed(2);
   denoiseSlider.className = 'mask-editor-denoise-slider';
   const denoiseValue = document.createElement('span');
   denoiseValue.className = 'mask-editor-denoise-value';
-  denoiseValue.textContent = '0.4';
+  denoiseValue.textContent = currentDenoise.inpaint.toFixed(2);
   denoiseSlider.addEventListener('input', () => {
     denoiseValue.textContent = parseFloat(denoiseSlider.value).toFixed(2);
     canvas.style.opacity = denoiseSlider.value;
@@ -3288,6 +3376,7 @@ function restoreSession(data) {
   if (s.image2imageReplacements !== undefined) image2imageReplacements = s.image2imageReplacements;
   if (s.lastFaceDetailPrompt    !== undefined) lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastInpaintingPrompt    !== undefined) lastInpaintingPrompt    = s.lastInpaintingPrompt;
+  if (s.currentDenoise          !== undefined) currentDenoise          = { ...DEFAULT_DENOISE, ...s.currentDenoise };
   iterationsFromSequence = false;
   updateHeaderStatus();
 
@@ -3443,7 +3532,10 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(!job && currentGenerationSteps !== null ? { steps: currentGenerationSteps } : {}),
       ...(job ? { image: job.image } : {}),
       ...(inpaint ? { mask: inpaint.mask } : {}),
-      ...(inpaint && inpaint.denoise != null ? { denoise: inpaint.denoise } : {}),
+      ...(face        ? { denoise: currentDenoise.face } : {}),
+      ...(upscale     ? { denoise: currentDenoise.upscale } : {}),
+      ...(image2image ? { denoise: currentDenoise.image2image } : {}),
+      ...(inpaint     ? { denoise: inpaint.denoise != null ? inpaint.denoise : currentDenoise.inpaint } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),
   })

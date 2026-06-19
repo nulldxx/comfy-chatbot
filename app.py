@@ -909,6 +909,14 @@ def api_face_detail():
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
 
+    raw_denoise = data.get("denoise")
+    try:
+        denoise = float(raw_denoise) if raw_denoise is not None else None
+        if denoise is not None and not (0.0 <= denoise <= 1.0):
+            return jsonify({"error": "denoise must be between 0.0 and 1.0"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "denoise must be a number"}), 400
+
     err = output_storage_error()
     if err:
         return err
@@ -916,7 +924,7 @@ def api_face_detail():
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_FACEDETAILER_DIR, input_image=image_path,
-        preserve_mtime_from=safe,
+        preserve_mtime_from=safe, denoise=denoise,
     )
     return jsonify({"job_id": job_id})
 
@@ -949,6 +957,14 @@ def api_upscale():
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
 
+    raw_denoise = data.get("denoise")
+    try:
+        denoise = float(raw_denoise) if raw_denoise is not None else None
+        if denoise is not None and not (0.0 <= denoise <= 1.0):
+            return jsonify({"error": "denoise must be between 0.0 and 1.0"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "denoise must be a number"}), 400
+
     err = output_storage_error()
     if err:
         return err
@@ -956,7 +972,7 @@ def api_upscale():
     job_id = start_generation_job(
         "", [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_UPSCALER_DIR, input_image=image_path,
-        preserve_mtime_from=safe,
+        preserve_mtime_from=safe, denoise=denoise,
     )
     return jsonify({"job_id": job_id})
 
@@ -993,6 +1009,14 @@ def api_image2image():
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
 
+    raw_denoise = data.get("denoise")
+    try:
+        denoise = float(raw_denoise) if raw_denoise is not None else None
+        if denoise is not None and not (0.0 <= denoise <= 1.0):
+            return jsonify({"error": "denoise must be between 0.0 and 1.0"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "denoise must be a number"}), 400
+
     err = output_storage_error()
     if err:
         return err
@@ -1000,7 +1024,7 @@ def api_image2image():
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2IMAGE_DIR, input_image=image_path,
-        preserve_mtime_from=safe,
+        preserve_mtime_from=safe, denoise=denoise,
     )
     return jsonify({"job_id": job_id})
 
