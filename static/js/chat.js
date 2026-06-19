@@ -147,9 +147,11 @@ const SLASH_COMMANDS = [
   { cmd: '/face-detail-session', desc: 'face-detail every image from this session', args: '' },
   { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
-  { cmd: '/image2image', desc: 'image2image the last N images (default 1); optional prompt', args: ' ' },
+  { cmd: '/image2image', desc: 'image2image the last N images (default 1)', args: ' ' },
   { cmd: '/image2image-replacement', desc: 'add a find→replace for prompt-less /image2image', args: ' ' },
   { cmd: '/image2image-replacement-reset', desc: 'clear all image2image replacements', args: '' },
+  { cmd: '/image2image-set-prompt', desc: 'set an override prompt for prompt-less /image2image', args: ' ' },
+  { cmd: '/image2image-set-prompt-reset', desc: 'clear the image2image override prompt', args: '' },
   { cmd: '/image2image-workflow', desc: 'choose an image2image workflow',     args: ''  },
   { cmd: '/inpaint-workflow',  desc: 'choose an inpainting workflow',        args: ''  },
   { cmd: '/inpainting-prompt', desc: 'set the prompt used by the inpaint button', args: ' ' },
@@ -382,6 +384,7 @@ let iterations        = 1;     // images generated per prompt (set via /iteratio
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
 let image2imageReplacements = []; // [from, to] pairs applied to the original generation prompt for prompt-less /image2image
+let image2imageOverridePrompt = null; // set via /image2image-set-prompt; overrides the per-image original prompt for prompt-less /image2image and the 🎨 button
 
 // Auto-purge of idle GPU memory is handled server-side (see app.py),
 // so it fires even after the browser is closed.
@@ -653,6 +656,10 @@ function showSessionSummary() {
     rows.push({ label: `Image2image replacements (${image2imageReplacements.length})`, value: list });
   }
 
+  if (image2imageOverridePrompt) {
+    rows.push({ label: 'Image2image override prompt', value: `<code>${escapeHtml(image2imageOverridePrompt)}</code>` });
+  }
+
   const aliasKeys = Object.keys(ALIASES).sort();
   if (aliasKeys.length) {
     const preview = aliasKeys.slice(0, 3).map(k => `<code>${escapeHtml(k)}</code>`).join(', ');
@@ -795,6 +802,29 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/image2image-set-prompt') {
+    addMessage('user', escapeHtml(raw), raw);
+    const override = raw.slice('/image2image-set-prompt'.length).trim();
+    if (!override) {
+      if (image2imageOverridePrompt) {
+        addMessage('bot', `Current image2image override prompt: <code>${escapeHtml(image2imageOverridePrompt)}</code><br>Usage: <code>/image2image-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/image2image</code> (or the 🎨 button) runs without its own prompt. <code>/image2image-set-prompt-reset</code> clears it.`);
+      } else {
+        addMessage('bot', 'No image2image override prompt set.<br>Usage: <code>/image2image-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/image2image</code> (or the 🎨 button) runs without its own prompt. Useful after a <code>/review</code> when the original prompts aren\'t available.');
+      }
+      return;
+    }
+    image2imageOverridePrompt = override;
+    addMessage('bot', `Image2image override prompt set: <code>${escapeHtml(override)}</code>. It will be used by <code>/image2image</code> and the 🎨 button until cleared with <code>/image2image-set-prompt-reset</code>.`);
+    return;
+  }
+
+  if (cmd === '/image2image-set-prompt-reset') {
+    addMessage('user', escapeHtml(raw), raw);
+    image2imageOverridePrompt = null;
+    addMessage('bot', 'Image2image override prompt cleared.');
+    return;
+  }
+
   if (cmd === '/image2image-workflow') {
     renderWorkflowPicker({
       url: '/api/image2image-workflows',
@@ -843,14 +873,17 @@ function handleSlashCommand(raw) {
       return;
     }
     const i2iArg = raw.slice('/image2image'.length).trim();
-    // A bare number runs over the last N images using each image's own original
-    // generation prompt (with replacements); anything else is a literal prompt
-    // for the single last image; empty means N=1 from the original prompt.
-    const i2iIsCount = i2iArg !== '' && /^\d+$/.test(i2iArg);
-    const explicitPrompt = (i2iArg !== '' && !i2iIsCount) ? i2iArg : null;
-    const i2iN = i2iIsCount ? parseInt(i2iArg, 10) : 1;
-    if (i2iIsCount && i2iN < 1) {
-      addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/image2image</code>, <code>/image2image &lt;N&gt;</code>, or <code>/image2image &lt;prompt&gt;</code></span>');
+    // The only argument is an integer N: run over the last N images, each from
+    // its own original generation prompt (with replacements), or the override
+    // prompt if one is set via /image2image-set-prompt. Empty means N=1. To run
+    // with a one-off prompt, set it first with /image2image-set-prompt.
+    if (i2iArg !== '' && !/^\d+$/.test(i2iArg)) {
+      addMessage('bot', '<span style="color:#f87171">⚠ <code>/image2image</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/image2image-set-prompt &lt;prompt&gt;</code> first.</span>');
+      return;
+    }
+    const i2iN = i2iArg !== '' ? parseInt(i2iArg, 10) : 1;
+    if (i2iN < 1) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/image2image</code> or <code>/image2image &lt;N&gt;</code></span>');
       return;
     }
     const i2iTargets = sessionImages.slice(-i2iN);
@@ -859,12 +892,14 @@ function handleSlashCommand(raw) {
     i2iTargets.forEach(img => {
       i2iChain = i2iChain.then(() => {
         if (i2iAborted) return;
-        let prompt = explicitPrompt;
-        if (prompt === null) {
+        let prompt;
+        if (image2imageOverridePrompt) {
+          prompt = image2imageOverridePrompt;
+        } else {
           const orig = imagePrompts[img];
           if (!orig) {
             i2iAborted = true;
-            addMessage('bot', '<span style="color:#f87171">No original prompt for this image — provide one with <code>/image2image &lt;prompt&gt;</code></span>');
+            addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
             return;
           }
           prompt = applyImage2ImageReplacements(orig);
@@ -1069,9 +1104,11 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-session</code> — face-detail every image from this session, one after another</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale [N]</code> — run an upscaler workflow over the last N generated images (default 1, no prompt needed)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image [prompt | N]</code> — re-run an image2image workflow over the last image; with no prompt it reuses that image's original prompt (a bare number runs over the last N images, each from its own prompt)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to the original prompt when <code>/image2image</code> runs with no prompt (no args lists them)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image [N]</code> — re-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement-reset</code> — clear all image2image replacements</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2image</code> and the 🎨 button instead of each image's original prompt (handy after a <code>/review</code>); no args shows it</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-set-prompt-reset</code> — clear the override prompt</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-workflow</code> — choose which image2image workflow <code>/image2image</code> uses</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
@@ -1578,6 +1615,7 @@ function handleSlashCommand(raw) {
     iterationsFromSequence = false;
     sequenceReplacements = [];
     image2imageReplacements = [];
+    image2imageOverridePrompt = null;
     messagesEl.innerHTML = '';
     updateHeaderStatus();
     addMessage('bot', 'New session started. Describe the image you\'d like to generate.');
@@ -1605,6 +1643,7 @@ function handleSlashCommand(raw) {
         iterations,
         sequenceReplacements: sequenceReplacements.slice(),
         image2imageReplacements: image2imageReplacements.slice(),
+        image2imageOverridePrompt,
         lastFaceDetailPrompt,
         lastInpaintingPrompt,
         currentDenoise: { ...currentDenoise },
@@ -3190,12 +3229,17 @@ function appendChatImage(container, url) {
   i2i.addEventListener('click', e => {
     e.stopPropagation();
     if (i2i.disabled || sendBtn.disabled) return;
-    const orig = imagePrompts[url];
-    if (!orig) {
-      addMessage('bot', '<span style="color:#f87171">No original prompt for this image — provide one with <code>/image2image &lt;prompt&gt;</code></span>');
-      return;
+    let prompt;
+    if (image2imageOverridePrompt) {
+      prompt = image2imageOverridePrompt;
+    } else {
+      const orig = imagePrompts[url];
+      if (!orig) {
+        addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
+        return;
+      }
+      prompt = applyImage2ImageReplacements(orig);
     }
-    const prompt = applyImage2ImageReplacements(orig);
     i2i.disabled = true;
     addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
     runImage2Image(prompt, url, wrap).finally(() => { i2i.disabled = false; });
@@ -3339,12 +3383,17 @@ function renderReviewGrid(bubble, urls) {
     ri2i.addEventListener('click', e => {
       e.stopPropagation();
       if (ri2i.disabled || sendBtn.disabled) return;
-      const orig = imagePrompts[url];
-      if (!orig) {
-        addMessage('bot', '<span style="color:#f87171">No original prompt for this image — provide one with <code>/image2image &lt;prompt&gt;</code></span>');
-        return;
+      let prompt;
+      if (image2imageOverridePrompt) {
+        prompt = image2imageOverridePrompt;
+      } else {
+        const orig = imagePrompts[url];
+        if (!orig) {
+          addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
+          return;
+        }
+        prompt = applyImage2ImageReplacements(orig);
       }
-      const prompt = applyImage2ImageReplacements(orig);
       ri2i.disabled = true;
       addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
       runImage2Image(prompt, url).finally(() => { ri2i.disabled = false; });
@@ -3424,6 +3473,7 @@ function restoreSession(data) {
   if (s.iterations          !== undefined) iterations                = s.iterations;
   if (s.sequenceReplacements    !== undefined) sequenceReplacements    = s.sequenceReplacements;
   if (s.image2imageReplacements !== undefined) image2imageReplacements = s.image2imageReplacements;
+  if (s.image2imageOverridePrompt !== undefined) image2imageOverridePrompt = s.image2imageOverridePrompt;
   if (s.lastFaceDetailPrompt    !== undefined) lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastInpaintingPrompt    !== undefined) lastInpaintingPrompt    = s.lastInpaintingPrompt;
   if (s.currentDenoise          !== undefined) currentDenoise          = { ...DEFAULT_DENOISE, ...s.currentDenoise };
