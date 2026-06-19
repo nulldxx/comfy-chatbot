@@ -2452,7 +2452,19 @@ function openMaskEditor(imageUrl, imgWrap) {
   // continuous stroke rather than leaving gaps between isolated dabs (fast
   // movement otherwise produces a string of disconnected blobs along the path).
   let lastX = null, lastY = null;
-  const BRUSH_RADIUS = 30;
+  let brushRadius = 30;
+
+  const cursorEl = document.createElement('div');
+  cursorEl.style.cssText = 'position:fixed;border-radius:50%;border:2px solid rgba(255,255,255,0.85);box-shadow:0 0 0 1px rgba(0,0,0,0.5);pointer-events:none;transform:translate(-50%,-50%);display:none;z-index:10001';
+  overlay.appendChild(cursorEl);
+
+  function updateCursorSize() {
+    const cssR = brushRadius / dpr;
+    cursorEl.style.width  = cssR * 2 + 'px';
+    cursorEl.style.height = cssR * 2 + 'px';
+  }
+  updateCursorSize();
+  canvas.style.cursor = 'none';
 
   const onResize = () => { cachedRect = null; };
   window.addEventListener('resize', onResize);
@@ -2466,7 +2478,7 @@ function openMaskEditor(imageUrl, imgWrap) {
     // solid, gap-free region. Also dab a circle so a single click still paints.
     if (lastX !== null) {
       ctx.strokeStyle = 'rgba(255, 220, 0, 1.0)';
-      ctx.lineWidth = BRUSH_RADIUS * 2;
+      ctx.lineWidth = brushRadius * 2;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();
@@ -2475,7 +2487,7 @@ function openMaskEditor(imageUrl, imgWrap) {
       ctx.stroke();
     }
     ctx.beginPath();
-    ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
+    ctx.arc(x, y, brushRadius, 0, Math.PI * 2);
     ctx.fill();
     lastX = x; lastY = y;
   }
@@ -2489,7 +2501,14 @@ function openMaskEditor(imageUrl, imgWrap) {
     canvas.setPointerCapture(e.pointerId);
     paint(e);
   });
-  canvas.addEventListener('pointermove', paint);
+  canvas.addEventListener('pointermove', e => {
+    cursorEl.style.left = e.clientX + 'px';
+    cursorEl.style.top  = e.clientY + 'px';
+    cursorEl.style.display = 'block';
+    paint(e);
+  });
+  canvas.addEventListener('pointerenter', () => { cursorEl.style.display = 'block'; });
+  canvas.addEventListener('pointerleave', () => { cursorEl.style.display = 'none'; });
   canvas.addEventListener('pointerup',     endStroke);
   canvas.addEventListener('pointercancel', endStroke);
 
@@ -2499,6 +2518,7 @@ function openMaskEditor(imageUrl, imgWrap) {
     aborted = true;
     window.removeEventListener('resize', onResize);
     document.removeEventListener('keydown', onKey);
+    cursorEl.remove();
     overlay.remove();
   }
 
@@ -2559,7 +2579,12 @@ function openMaskEditor(imageUrl, imgWrap) {
   });
 
   function onKey(e) {
-    if (e.key === 'Escape') closeEditor();
+    if (e.key === 'Escape') { closeEditor(); return; }
+    if (e.ctrlKey && (e.key === '[' || e.key === ']')) {
+      e.preventDefault();
+      brushRadius = Math.max(5, Math.min(150, brushRadius + (e.key === ']' ? 5 : -5)));
+      updateCursorSize();
+    }
   }
   document.addEventListener('keydown', onKey);
 }
@@ -2645,7 +2670,19 @@ function openCompositeEditor(oldUrl, newUrl, onComposite) {
   let painting = false;
   let cachedRect = null;
   let lastX = null, lastY = null;
-  const BRUSH_RADIUS = 30;
+  let brushRadius = 30;
+
+  const cursorEl = document.createElement('div');
+  cursorEl.style.cssText = 'position:fixed;border-radius:50%;border:2px solid rgba(255,255,255,0.85);box-shadow:0 0 0 1px rgba(0,0,0,0.5);pointer-events:none;transform:translate(-50%,-50%);display:none;z-index:10001';
+  overlay.appendChild(cursorEl);
+
+  function updateCursorSize() {
+    const cssR = brushRadius / dpr;
+    cursorEl.style.width  = cssR * 2 + 'px';
+    cursorEl.style.height = cssR * 2 + 'px';
+  }
+  updateCursorSize();
+  canvas.style.cursor = 'none';
 
   const onResize = () => { cachedRect = null; };
   window.addEventListener('resize', onResize);
@@ -2657,7 +2694,7 @@ function openCompositeEditor(oldUrl, newUrl, onComposite) {
     ctx.fillStyle = 'rgba(255, 220, 0, 1.0)';
     if (lastX !== null) {
       ctx.strokeStyle = 'rgba(255, 220, 0, 1.0)';
-      ctx.lineWidth = BRUSH_RADIUS * 2;
+      ctx.lineWidth = brushRadius * 2;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();
@@ -2666,7 +2703,7 @@ function openCompositeEditor(oldUrl, newUrl, onComposite) {
       ctx.stroke();
     }
     ctx.beginPath();
-    ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
+    ctx.arc(x, y, brushRadius, 0, Math.PI * 2);
     ctx.fill();
     lastX = x; lastY = y;
   }
@@ -2680,7 +2717,14 @@ function openCompositeEditor(oldUrl, newUrl, onComposite) {
     canvas.setPointerCapture(e.pointerId);
     paint(e);
   });
-  canvas.addEventListener('pointermove', paint);
+  canvas.addEventListener('pointermove', e => {
+    cursorEl.style.left = e.clientX + 'px';
+    cursorEl.style.top  = e.clientY + 'px';
+    cursorEl.style.display = 'block';
+    paint(e);
+  });
+  canvas.addEventListener('pointerenter', () => { cursorEl.style.display = 'block'; });
+  canvas.addEventListener('pointerleave', () => { cursorEl.style.display = 'none'; });
   canvas.addEventListener('pointerup',     endStroke);
   canvas.addEventListener('pointercancel', endStroke);
 
@@ -2690,6 +2734,7 @@ function openCompositeEditor(oldUrl, newUrl, onComposite) {
     aborted = true;
     window.removeEventListener('resize', onResize);
     document.removeEventListener('keydown', onKey);
+    cursorEl.remove();
     overlay.remove();
   }
 
@@ -2785,7 +2830,12 @@ function openCompositeEditor(oldUrl, newUrl, onComposite) {
   });
 
   function onKey(e) {
-    if (e.key === 'Escape') closeEditor();
+    if (e.key === 'Escape') { closeEditor(); return; }
+    if (e.ctrlKey && (e.key === '[' || e.key === ']')) {
+      e.preventDefault();
+      brushRadius = Math.max(5, Math.min(150, brushRadius + (e.key === ']' ? 5 : -5)));
+      updateCursorSize();
+    }
   }
   document.addEventListener('keydown', onKey);
 }
