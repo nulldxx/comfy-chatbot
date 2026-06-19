@@ -141,6 +141,10 @@ const SLASH_COMMANDS = [
   { cmd: '/face-detail-session', desc: 'face-detail every image from this session', args: '' },
   { cmd: '/face-detail-workflow', desc: 'choose a face-detailer workflow',       args: ''  },
   { cmd: '/help',       desc: 'show available commands',            args: ''  },
+  { cmd: '/image2image', desc: 'image2image the last N images (default 1); optional prompt', args: ' ' },
+  { cmd: '/image2image-replacement', desc: 'add a find→replace for prompt-less /image2image', args: ' ' },
+  { cmd: '/image2image-replacement-reset', desc: 'clear all image2image replacements', args: '' },
+  { cmd: '/image2image-workflow', desc: 'choose an image2image workflow',     args: ''  },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
@@ -315,11 +319,13 @@ let currentServer     = null;  // {address, os, name}
 let currentWorkflow   = null;  // string
 let currentFaceWorkflow = null;  // string — face-detailer workflow the face icons use
 let currentUpscaleWorkflow = null; // string — upscaler workflow for /upscale
+let currentImage2ImageWorkflow = null; // string — image2image workflow for /image2image
 let lastFaceDetailPrompt = null; // global override set by /face-detail-prompt; takes priority over per-image derivation
 let currentResolution = { width: 1365, height: 768 };  // {width, height} or null (null = workflow default); defaults to 16:9
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
+let image2imageReplacements = []; // [from, to] pairs applied to the original generation prompt for prompt-less /image2image
 
 // Auto-purge of idle GPU memory is handled server-side (see app.py),
 // so it fires even after the browser is closed.
@@ -595,6 +601,89 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/image2image-replacement') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!parts[1]) {
+      if (!image2imageReplacements.length) {
+        addMessage('bot', `No image2image replacements set.<br>Usage: <code>/image2image-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to the original generation prompt when <code>/image2image</code> is run with no prompt.<br><code>/image2image-replacement-reset</code> removes them all.`);
+      } else {
+        const list = image2imageReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
+        addMessage('bot', `<strong>Image2image replacements:</strong><br>${list}<br><br><code>/image2image-replacement-reset</code> removes them all.`);
+      }
+      return;
+    }
+    const from = parts[1];
+    const to   = parts.slice(2).join(' ');
+    if (!to) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/image2image-replacement Dog Cat</code></span>');
+      return;
+    }
+    image2imageReplacements.push([from, to]);
+    addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/image2image</code> runs with no prompt.`);
+    return;
+  }
+
+  if (cmd === '/image2image-replacement-reset') {
+    addMessage('user', escapeHtml(raw), raw);
+    image2imageReplacements = [];
+    addMessage('bot', 'Image2image replacements cleared.');
+    return;
+  }
+
+  if (cmd === '/image2image-workflow') {
+    renderWorkflowPicker({
+      url: '/api/image2image-workflows',
+      title: 'Select an image2image workflow:',
+      loadingText: 'Loading image2image workflows…',
+      failLabel: 'image2image workflows',
+      emptyMsg: 'No image2image workflows available — add one to the <code>image2image/</code> folder.',
+      current: currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW,
+      setMsg: 'Image2image workflow set to',
+      onSelect: wf => { currentImage2ImageWorkflow = wf; },
+    });
+    return;
+  }
+
+  if (cmd === '/image2image') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!sessionImages.length) {
+      addMessage('bot', 'No image from this session for image2image — generate one first.');
+      return;
+    }
+    const i2iArg = raw.slice('/image2image'.length).trim();
+    // A bare number runs over the last N images using each image's own original
+    // generation prompt (with replacements); anything else is a literal prompt
+    // for the single last image; empty means N=1 from the original prompt.
+    const i2iIsCount = i2iArg !== '' && /^\d+$/.test(i2iArg);
+    const explicitPrompt = (i2iArg !== '' && !i2iIsCount) ? i2iArg : null;
+    const i2iN = i2iIsCount ? parseInt(i2iArg, 10) : 1;
+    if (i2iIsCount && i2iN < 1) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/image2image</code>, <code>/image2image &lt;N&gt;</code>, or <code>/image2image &lt;prompt&gt;</code></span>');
+      return;
+    }
+    const i2iTargets = sessionImages.slice(-i2iN);
+    let i2iChain = Promise.resolve();
+    let i2iAborted = false;
+    i2iTargets.forEach(img => {
+      i2iChain = i2iChain.then(() => {
+        if (i2iAborted) return;
+        let prompt = explicitPrompt;
+        if (prompt === null) {
+          const orig = imagePrompts[img];
+          if (!orig) {
+            i2iAborted = true;
+            addMessage('bot', '<span style="color:#f87171">No original prompt for this image — provide one with <code>/image2image &lt;prompt&gt;</code></span>');
+            return;
+          }
+          prompt = applyImage2ImageReplacements(orig);
+        }
+        addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
+        return runImage2Image(prompt, img);
+      });
+    });
+    return;
+  }
+
   if (cmd === '/workflow-iterate') {
     const master = raw.slice('/workflow-iterate'.length).trim();
     addMessage('user', escapeHtml(raw), raw);
@@ -783,6 +872,10 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-session</code> — face-detail every image from this session, one after another</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale [N]</code> — run an upscaler workflow over the last N generated images (default 1, no prompt needed)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image [prompt | N]</code> — re-run an image2image workflow over the last image; with no prompt it reuses that image's original prompt (a bare number runs over the last N images, each from its own prompt)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to the original prompt when <code>/image2image</code> runs with no prompt (no args lists them)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement-reset</code> — clear all image2image replacements</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-workflow</code> — choose which image2image workflow <code>/image2image</code> uses</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
@@ -1634,6 +1727,27 @@ function runUpscale(image, imgWrap) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+// Applies the active /image2image-replacement pairs to a prompt. Plain
+// substring replacement, matching the backend /sequence replacement semantics.
+function applyImage2ImageReplacements(prompt) {
+  for (const [from, to] of image2imageReplacements) prompt = prompt.split(from).join(to);
+  return prompt;
+}
+
+// Runs an image2image workflow over `image` using `prompt`. Mirrors
+// runFaceDetail. When `imgWrap` (the source image's .img-wrap) is given, the
+// result is offered in place as a before/after slider. Returns the generation
+// promise so callers can re-enable their own controls when it settles.
+function runImage2Image(prompt, image, imgWrap) {
+  iterationsFromSequence = false; // an image2image run is a single image, not a sequence
+  sendBtn.disabled = true;
+  return runGeneration(prompt, '', null, {
+    image2image: { image, workflow: currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW },
+    sliderReplace: imgWrap || null,
+  })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
 function runDoOver(url, imgWrap) {
   const prompt = imagePrompts[url] || '';
   return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url });
@@ -1973,6 +2087,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   return new Promise(resolve => {
   const face = opts.face || null;
   const upscale = opts.upscale || null;
+  const image2image = opts.image2image || null;
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
@@ -1980,8 +2095,11 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   // image rather than appending a new one, so the progress bubble belongs
   // beside that image, not at the bottom of the chat.
   const inPlaceWrap = sliderReplace || replaceWrap;
-  const job = face || upscale; // an image-input job (face-detail or upscale) vs a plain generation
-  const endpoint = face ? '/api/face-detail' : upscale ? '/api/upscale' : '/api/generate';
+  const job = face || upscale || image2image; // an image-input job (face-detail, upscale or image2image) vs a plain generation
+  const endpoint = face ? '/api/face-detail'
+                 : upscale ? '/api/upscale'
+                 : image2image ? '/api/image2image'
+                 : '/api/generate';
   const botBubble = addMessage('bot', `
     <div class="status-text" id="status-line">Connecting…${label}</div>
     <div class="dots"><span></span><span></span><span></span></div>
@@ -2061,11 +2179,12 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         statusLine.textContent = `Done — ${msg.images.length} image(s) in ${elapsed}s${label}`;
         // The prompt to remember for this image. For an image-input job
-        // (face-detail or upscale) we inherit the *source image's* original
-        // generation prompt — not `raw`, which for face-detail is the derived
-        // face-detail prompt. This keeps the result's do-over regenerating from
-        // the original prompt (not the face prompt) and lets a face icon on the
-        // result re-derive cleanly. A plain generation just uses its own prompt.
+        // (face-detail, upscale or image2image) we inherit the *source image's*
+        // original generation prompt — not `raw`, which for face-detail is the
+        // derived face-detail prompt. This keeps the result's do-over
+        // regenerating from the original prompt (not the face/i2i prompt) and
+        // lets a face icon on the result re-derive cleanly. A plain generation
+        // just uses its own prompt.
         const originPrompt = job ? (imagePrompts[job.image] || '') : (raw || '');
 
         // In-place before/after slider for a single-image face-detail / upscale

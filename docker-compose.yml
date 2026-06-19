@@ -28,6 +28,11 @@ services:
       # subdir of COMFY_WORKFLOW_DIR, used by /face-detail. Leave blank to fall
       # back to the first workflow found there.
       - COMFY_FACEDETAILER_WORKFLOW=
+      # Default image2image workflow inside the image2image/ subdir of
+      # COMFY_WORKFLOW_DIR, used by /image2image. Like the face-detailer one it
+      # takes the last image as <INPUT_IMAGE> plus <PROMPT>/<lora:...> tags.
+      # Leave blank to fall back to the first workflow found there.
+      - COMFY_IMAGE2IMAGE_WORKFLOW=zit-i2i.json
 
       # Path inside the container where workflow templates live
       - COMFY_WORKFLOW_DIR=/app/workflows

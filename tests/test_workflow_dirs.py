@@ -57,6 +57,28 @@ class TestRunGenerationTraversalGuard(unittest.TestCase):
         # The traversal guard makes resolution fail before any network call.
         self.assertEqual(status, "error")
 
+    def test_image2image_escape_name_is_rejected(self):
+        # The image2image dir is confined the same way as the other families.
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d) / "image2image"
+            base.mkdir()
+            (Path(d) / "secret.json").write_text("{}")
+            status = self._run("../secret", base)
+        self.assertEqual(status, "error")
+
+
+class TestImage2ImageWiring(unittest.TestCase):
+    def test_listing_resolves_under_workflow_dir(self):
+        # list_image2image_workflows() reads the image2image/ subdir using the
+        # same recursive name listing as the other families.
+        self.assertEqual(app.COMFY_IMAGE2IMAGE_DIR, app.COMFY_WORKFLOW_DIR / "image2image")
+
+    def test_listing_finds_nested_names(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "zit-i2i.json").write_text("{}")
+            self.assertEqual(app.list_workflow_names(base), ["zit-i2i"])
+
 
 if __name__ == "__main__":
     unittest.main()

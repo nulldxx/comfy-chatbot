@@ -72,6 +72,16 @@ COMFY_UPSCALER_DIR = COMFY_WORKFLOW_DIR / 'upscaler'
 # by list_upscaler_workflows().
 COMFY_UPSCALER_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_UPSCALER_WORKFLOW'))
 
+# Image2image workflows live in a subdir of the main workflow folder. Like the
+# face-detailer ones they take the last generated image as input (via an
+# <INPUT_IMAGE> LoadImage placeholder) and support the usual <PROMPT> and
+# <lora:...> tags — re-running a generation-style workflow over a prior image.
+COMFY_IMAGE2IMAGE_DIR = COMFY_WORKFLOW_DIR / 'image2image'
+# Default image2image workflow. Accepts a bare name ("zit-i2i") or a nested one
+# like "flux/zit-i2i(.json)"; normalised to match the names returned by
+# list_image2image_workflows().
+COMFY_IMAGE2IMAGE_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_IMAGE2IMAGE_WORKFLOW'))
+
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -402,6 +412,7 @@ def index():
         default_workflow=COMFY_WORKFLOW,
         default_face_workflow=COMFY_FACEDETAILER_WORKFLOW,
         default_upscale_workflow=COMFY_UPSCALER_WORKFLOW,
+        default_image2image_workflow=COMFY_IMAGE2IMAGE_WORKFLOW,
     )
 
 
@@ -493,6 +504,16 @@ def list_upscaler_workflows():
 @login_required
 def api_upscaler_workflows():
     return jsonify(list_upscaler_workflows())
+
+
+def list_image2image_workflows():
+    return list_workflow_names(COMFY_IMAGE2IMAGE_DIR)
+
+
+@app.route("/api/image2image-workflows")
+@login_required
+def api_image2image_workflows():
+    return jsonify(list_image2image_workflows())
 
 
 @app.route("/api/purge", methods=["POST"])
@@ -618,6 +639,33 @@ def api_generate():
     return jsonify({"job_id": job_id})
 
 
+def _resolve_input_image(image_url):
+    """Return (safe_name, path, None) on success or (None, None, error_response) on failure."""
+    filename = image_url.rsplit("/", 1)[-1]
+    safe = secure_filename(filename)
+    if not safe or safe != filename:
+        return None, None, (jsonify({"error": "Invalid image filename"}), 400)
+    if Path(safe).suffix.lower() not in IMAGE_EXTS:
+        return None, None, (jsonify({"error": "Source image must be a supported image type"}), 400)
+    image_path = IMAGES_DIR / safe
+    if not image_path.is_file():
+        return None, None, (jsonify({"error": "Source image not found"}), 404)
+    return safe, image_path, None
+
+
+def _resolve_workflow(workflow_name, available, kind):
+    """Return (resolved_name, None) or (None, error_response) after validating against an allowlist."""
+    if workflow_name:
+        name = workflow_name[:-5] if workflow_name.endswith(".json") else workflow_name
+        if name not in available:
+            return None, (jsonify({"error": f"Unknown {kind} workflow: {workflow_name}"}), 400)
+        return name, None
+    elif available:
+        return available[0], None
+    else:
+        return None, (jsonify({"error": f"No {kind} workflows available"}), 400)
+
+
 @app.route("/api/face-detail", methods=["POST"])
 @login_required
 def api_face_detail():
@@ -636,28 +684,19 @@ def api_face_detail():
     if not prompt:
         return jsonify({"error": "Prompt is empty after removing LoRA tags"}), 400
 
-    # Resolve the source image (a /images/<name> URL) to a local file.
     image_url = (data.get("image") or "").strip()
     if not image_url:
         return jsonify({"error": "image is required"}), 400
-    safe = secure_filename(image_url.rsplit("/", 1)[-1])
-    image_path = IMAGES_DIR / safe
-    if not safe or not image_path.is_file():
-        return jsonify({"error": "Source image not found"}), 404
+    safe, image_path, err = _resolve_input_image(image_url)
+    if err:
+        return err
 
-    # Resolve and validate the workflow against the known facedetailer/ files so
-    # a client-supplied name can't escape the directory (e.g. via "../").
     available = list_facedetailer_workflows()
-    workflow_name = data.get("workflow") or COMFY_FACEDETAILER_WORKFLOW
-    if workflow_name:
-        name = workflow_name[:-5] if workflow_name.endswith(".json") else workflow_name
-        if name not in available:
-            return jsonify({"error": f"Unknown face-detailer workflow: {workflow_name}"}), 400
-        workflow_name = name
-    elif available:
-        workflow_name = available[0]
-    else:
-        return jsonify({"error": "No face-detailer workflows available"}), 400
+    workflow_name, err = _resolve_workflow(
+        data.get("workflow") or COMFY_FACEDETAILER_WORKFLOW, available, "face-detailer"
+    )
+    if err:
+        return err
 
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
@@ -685,28 +724,19 @@ def api_upscale():
     """
     data = request.get_json(force=True)
 
-    # Resolve the source image (a /images/<name> URL) to a local file.
     image_url = (data.get("image") or "").strip()
     if not image_url:
         return jsonify({"error": "image is required"}), 400
-    safe = secure_filename(image_url.rsplit("/", 1)[-1])
-    image_path = IMAGES_DIR / safe
-    if not safe or not image_path.is_file():
-        return jsonify({"error": "Source image not found"}), 404
+    safe, image_path, err = _resolve_input_image(image_url)
+    if err:
+        return err
 
-    # Resolve and validate the workflow against the known upscaler/ files so a
-    # client-supplied name can't escape the directory (e.g. via "../").
     available = list_upscaler_workflows()
-    workflow_name = data.get("workflow") or COMFY_UPSCALER_WORKFLOW
-    if workflow_name:
-        name = workflow_name[:-5] if workflow_name.endswith(".json") else workflow_name
-        if name not in available:
-            return jsonify({"error": f"Unknown upscaler workflow: {workflow_name}"}), 400
-        workflow_name = name
-    elif available:
-        workflow_name = available[0]
-    else:
-        return jsonify({"error": "No upscaler workflows available"}), 400
+    workflow_name, err = _resolve_workflow(
+        data.get("workflow") or COMFY_UPSCALER_WORKFLOW, available, "upscaler"
+    )
+    if err:
+        return err
 
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
@@ -718,6 +748,50 @@ def api_upscale():
     job_id = start_generation_job(
         "", [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_UPSCALER_DIR, input_image=image_path,
+        preserve_mtime_from=safe,
+    )
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/image2image", methods=["POST"])
+@login_required
+def api_image2image():
+    """Run an image2image workflow over a previously generated image.
+
+    Like /api/face-detail this loads a workflow from the image2image/ subdir and
+    fills its <INPUT_IMAGE> placeholder with the uploaded source image, plus the
+    usual <PROMPT> and <lora:...> tags. Unlike face-detail the prompt is
+    optional — the caller may re-run the workflow over the image with an empty
+    prompt (e.g. when the original generation prompt isn't available).
+    """
+    data = request.get_json(force=True)
+    raw_prompt = (data.get("prompt") or "").strip()
+    prompt, loras = parse_loras_from_prompt(raw_prompt)
+
+    image_url = (data.get("image") or "").strip()
+    if not image_url:
+        return jsonify({"error": "image is required"}), 400
+    safe, image_path, err = _resolve_input_image(image_url)
+    if err:
+        return err
+
+    available = list_image2image_workflows()
+    workflow_name, err = _resolve_workflow(
+        data.get("workflow") or COMFY_IMAGE2IMAGE_WORKFLOW, available, "image2image"
+    )
+    if err:
+        return err
+
+    server_address = data.get("server") or COMFY_SERVER
+    server_os      = data.get("server_os") or COMFY_SERVER_OS
+
+    err = output_storage_error()
+    if err:
+        return err
+
+    job_id = start_generation_job(
+        prompt, loras, server_address, server_os, workflow_name,
+        workflow_dir=COMFY_IMAGE2IMAGE_DIR, input_image=image_path,
         preserve_mtime_from=safe,
     )
     return jsonify({"job_id": job_id})
