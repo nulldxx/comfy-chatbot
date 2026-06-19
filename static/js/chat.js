@@ -2352,6 +2352,10 @@ function openMaskEditor(imageUrl, imgWrap) {
   // Cache the bounding rect at pointerdown to avoid forced layout on every move.
   let painting = false;
   let cachedRect = null;
+  // Last painted point, so consecutive pointermove events can be joined by a
+  // continuous stroke rather than leaving gaps between isolated dabs (fast
+  // movement otherwise produces a string of disconnected blobs along the path).
+  let lastX = null, lastY = null;
   const BRUSH_RADIUS = 30;
 
   const onResize = () => { cachedRect = null; };
@@ -2362,20 +2366,36 @@ function openMaskEditor(imageUrl, imgWrap) {
     const x = e.clientX - cachedRect.left;
     const y = e.clientY - cachedRect.top;
     ctx.fillStyle = 'rgba(255, 220, 0, 1.0)';
+    // Sweep a thick round-capped line from the previous point so the stroke is a
+    // solid, gap-free region. Also dab a circle so a single click still paints.
+    if (lastX !== null) {
+      ctx.strokeStyle = 'rgba(255, 220, 0, 1.0)';
+      ctx.lineWidth = BRUSH_RADIUS * 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
     ctx.beginPath();
     ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
     ctx.fill();
+    lastX = x; lastY = y;
   }
+
+  function endStroke() { painting = false; lastX = lastY = null; }
 
   canvas.addEventListener('pointerdown', e => {
     cachedRect = canvas.getBoundingClientRect();
     painting = true;
+    lastX = lastY = null; // start a fresh stroke (no line from the previous one)
     canvas.setPointerCapture(e.pointerId);
     paint(e);
   });
   canvas.addEventListener('pointermove', paint);
-  canvas.addEventListener('pointerup',     () => { painting = false; });
-  canvas.addEventListener('pointercancel', () => { painting = false; });
+  canvas.addEventListener('pointerup',     endStroke);
+  canvas.addEventListener('pointercancel', endStroke);
 
   clearBtn.addEventListener('click', () => ctx.clearRect(0, 0, cssW, cssH));
 
@@ -2411,7 +2431,12 @@ function openMaskEditor(imageUrl, imgWrap) {
     const offscreen = document.createElement('canvas');
     offscreen.width  = img.naturalWidth;
     offscreen.height = img.naturalHeight;
-    offscreen.getContext('2d').drawImage(binaryCanvas, 0, 0, offscreen.width, offscreen.height);
+    const offCtx = offscreen.getContext('2d');
+    // Nearest-neighbour scaling keeps the mask strictly black/white. Bilinear
+    // smoothing (the default) would interpolate edges into gray, partial-mask
+    // values that ComfyUI renders as swirly artifacts along the painted region.
+    offCtx.imageSmoothingEnabled = false;
+    offCtx.drawImage(binaryCanvas, 0, 0, offscreen.width, offscreen.height);
 
     const b64 = offscreen.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
 

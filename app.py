@@ -286,6 +286,10 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if loras:
             names = ", ".join(f"{n} ({s})" for n, s in loras)
             send("progress", message=f"LoRAs: {names}")
+        # Fill the <DENOISE> placeholder for templates that use it. apply_denoise()
+        # below additionally covers templates with a literal denoise value.
+        if denoise is not None:
+            mapping["DENOISE"] = denoise
 
         if input_image is not None:
             send("progress", message="Uploading source image to ComfyUI...")
