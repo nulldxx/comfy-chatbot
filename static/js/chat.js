@@ -128,7 +128,6 @@ function exitFauxFs(el) {
 const SLASH_COMMANDS = [
   { cmd: '/addserver',  desc: 'add a server  (name host:port:os)',  args: ' ' },
   { cmd: '/alias-create', desc: 'create or update a prompt text alias  (<from> <to>)', args: ' ' },
-  { cmd: '/alias-delete', desc: 'delete a prompt text alias',                          args: ' ' },
   { cmd: '/alias-list',   desc: 'list all defined prompt text aliases',                args: ''  },
   { cmd: '/archive-all',     desc: 'archive every image to the encrypted volume (optional folder name)',     args: ' ' },
   { cmd: '/archive-session', desc: 'archive all images from this session (optional folder name)',            args: ' ' },
@@ -554,6 +553,88 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
   }).catch(() => { bubble.innerHTML = `<span style="color:#f87171">Failed to load ${failLabel}.</span>`; });
 }
 
+function showSessionSummary() {
+  const rows = [];
+
+  const srvName  = currentServer ? currentServer.name    : DEFAULT_SERVER;
+  const srvAddr  = currentServer ? currentServer.address : DEFAULT_SERVER;
+  const srvOs    = currentServer ? currentServer.os      : DEFAULT_SERVER_OS;
+  const srvLabel = currentServer
+    ? `<span style="color:#a78bfa">${escapeHtml(srvName)}</span> <span style="color:#475569">(${escapeHtml(srvAddr)}, ${escapeHtml(srvOs)})</span>`
+    : `<span style="color:#a78bfa">${escapeHtml(srvName)}</span> <span style="color:#475569">(default)</span>`;
+  rows.push({ label: 'Server', value: srvLabel });
+
+  const wfActive = currentWorkflow || DEFAULT_WORKFLOW;
+  const wfLabel  = currentWorkflow
+    ? `<span style="color:#a78bfa">${escapeHtml(wfActive)}</span>`
+    : `<span style="color:#a78bfa">${escapeHtml(wfActive)}</span> <span style="color:#475569">(default)</span>`;
+  rows.push({ label: 'Workflow', value: wfLabel });
+
+  const faceWfActive = currentFaceWorkflow || DEFAULT_FACE_WORKFLOW;
+  const faceWfLabel  = faceWfActive
+    ? (currentFaceWorkflow
+        ? `<span style="color:#a78bfa">${escapeHtml(faceWfActive)}</span>`
+        : `<span style="color:#a78bfa">${escapeHtml(faceWfActive)}</span> <span style="color:#475569">(default)</span>`)
+    : `<span style="color:#475569">not set</span>`;
+  rows.push({ label: 'Face-detail workflow', value: faceWfLabel });
+
+  const upWfActive = currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW;
+  const upWfLabel  = upWfActive
+    ? (currentUpscaleWorkflow
+        ? `<span style="color:#a78bfa">${escapeHtml(upWfActive)}</span>`
+        : `<span style="color:#a78bfa">${escapeHtml(upWfActive)}</span> <span style="color:#475569">(default)</span>`)
+    : `<span style="color:#475569">not set</span>`;
+  rows.push({ label: 'Upscale workflow', value: upWfLabel });
+
+  const i2iWfActive = currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW;
+  const i2iWfLabel  = i2iWfActive
+    ? (currentImage2ImageWorkflow
+        ? `<span style="color:#a78bfa">${escapeHtml(i2iWfActive)}</span>`
+        : `<span style="color:#a78bfa">${escapeHtml(i2iWfActive)}</span> <span style="color:#475569">(default)</span>`)
+    : `<span style="color:#475569">not set</span>`;
+  rows.push({ label: 'Image2image workflow', value: i2iWfLabel });
+
+  const resLabel = currentResolution
+    ? `<span style="color:#a78bfa">${currentResolution.width}×${currentResolution.height}</span>`
+    : `<span style="color:#475569">workflow default</span>`;
+  rows.push({ label: 'Resolution', value: resLabel });
+
+  rows.push({ label: 'Iterations', value: `<span style="color:#a78bfa">${iterations}</span>${iterations > 1 ? ' per prompt' : ''}` });
+
+  if (lastFaceDetailPrompt) {
+    rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(lastFaceDetailPrompt)}</code>` });
+  }
+
+  if (sequenceReplacements.length) {
+    const list = sequenceReplacements
+      .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
+      .join(', ');
+    rows.push({ label: `Sequence replacements (${sequenceReplacements.length})`, value: list });
+  }
+
+  if (image2imageReplacements.length) {
+    const list = image2imageReplacements
+      .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
+      .join(', ');
+    rows.push({ label: `Image2image replacements (${image2imageReplacements.length})`, value: list });
+  }
+
+  const aliasKeys = Object.keys(ALIASES).sort();
+  if (aliasKeys.length) {
+    const preview = aliasKeys.slice(0, 3).map(k => `<code>${escapeHtml(k)}</code>`).join(', ');
+    const more = aliasKeys.length > 3 ? ` <span style="color:#475569">+${aliasKeys.length - 3} more</span>` : '';
+    rows.push({ label: `Aliases (${aliasKeys.length})`, value: `${preview}${more} — <code>/alias-list</code> to see all` });
+  }
+
+  rows.push({ label: 'Session images', value: `<span style="color:#a78bfa">${sessionImages.length}</span>` });
+
+  const rowsHtml = rows
+    .map(r => `<div style="font-size:0.85rem;color:#94a3b8"><strong style="color:#cbd5e1">${r.label}:</strong> ${r.value}</div>`)
+    .join('');
+  addMessage('bot', `<strong>Session summary</strong><div class="sel-list" style="margin-top:10px;gap:4px">${rowsHtml}</div>`);
+  scrollBottom();
+}
+
 function handleSlashCommand(raw) {
   const parts = raw.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
@@ -899,7 +980,6 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/alias-create &lt;word&gt; &lt;expansion&gt;</code> — create or update a text alias; typing the word in a prompt and pressing space expands it immediately
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code> &nbsp;·&nbsp; quotes are optional</div>
         </div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/alias-delete &lt;word&gt;</code> — delete a text alias</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/alias-list</code> — list all defined aliases</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/server</code> — choose a ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/addserver &lt;name&gt; &lt;host:port:os&gt;</code> — add a server
@@ -1519,6 +1599,7 @@ function handleSlashCommand(raw) {
               restoreSession(data);
               bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
               scrollBottom();
+              showSessionSummary();
             })
             .catch(err => {
               bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
@@ -1573,84 +1654,7 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/session-summary') {
-    const rows = [];
-
-    const srvName  = currentServer ? currentServer.name    : DEFAULT_SERVER;
-    const srvAddr  = currentServer ? currentServer.address : DEFAULT_SERVER;
-    const srvOs    = currentServer ? currentServer.os      : DEFAULT_SERVER_OS;
-    const srvLabel = currentServer
-      ? `<span style="color:#a78bfa">${escapeHtml(srvName)}</span> <span style="color:#475569">(${escapeHtml(srvAddr)}, ${escapeHtml(srvOs)})</span>`
-      : `<span style="color:#a78bfa">${escapeHtml(srvName)}</span> <span style="color:#475569">(default)</span>`;
-    rows.push({ label: 'Server', value: srvLabel });
-
-    const wfActive = currentWorkflow || DEFAULT_WORKFLOW;
-    const wfLabel  = currentWorkflow
-      ? `<span style="color:#a78bfa">${escapeHtml(wfActive)}</span>`
-      : `<span style="color:#a78bfa">${escapeHtml(wfActive)}</span> <span style="color:#475569">(default)</span>`;
-    rows.push({ label: 'Workflow', value: wfLabel });
-
-    const faceWfActive = currentFaceWorkflow || DEFAULT_FACE_WORKFLOW;
-    const faceWfLabel  = faceWfActive
-      ? (currentFaceWorkflow
-          ? `<span style="color:#a78bfa">${escapeHtml(faceWfActive)}</span>`
-          : `<span style="color:#a78bfa">${escapeHtml(faceWfActive)}</span> <span style="color:#475569">(default)</span>`)
-      : `<span style="color:#475569">not set</span>`;
-    rows.push({ label: 'Face-detail workflow', value: faceWfLabel });
-
-    const upWfActive = currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW;
-    const upWfLabel  = upWfActive
-      ? (currentUpscaleWorkflow
-          ? `<span style="color:#a78bfa">${escapeHtml(upWfActive)}</span>`
-          : `<span style="color:#a78bfa">${escapeHtml(upWfActive)}</span> <span style="color:#475569">(default)</span>`)
-      : `<span style="color:#475569">not set</span>`;
-    rows.push({ label: 'Upscale workflow', value: upWfLabel });
-
-    const i2iWfActive = currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW;
-    const i2iWfLabel  = i2iWfActive
-      ? (currentImage2ImageWorkflow
-          ? `<span style="color:#a78bfa">${escapeHtml(i2iWfActive)}</span>`
-          : `<span style="color:#a78bfa">${escapeHtml(i2iWfActive)}</span> <span style="color:#475569">(default)</span>`)
-      : `<span style="color:#475569">not set</span>`;
-    rows.push({ label: 'Image2image workflow', value: i2iWfLabel });
-
-    const resLabel = currentResolution
-      ? `<span style="color:#a78bfa">${currentResolution.width}×${currentResolution.height}</span>`
-      : `<span style="color:#475569">workflow default</span>`;
-    rows.push({ label: 'Resolution', value: resLabel });
-
-    rows.push({ label: 'Iterations', value: `<span style="color:#a78bfa">${iterations}</span>${iterations > 1 ? ' per prompt' : ''}` });
-
-    if (lastFaceDetailPrompt) {
-      rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(lastFaceDetailPrompt)}</code>` });
-    }
-
-    if (sequenceReplacements.length) {
-      const list = sequenceReplacements
-        .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
-        .join(', ');
-      rows.push({ label: `Sequence replacements (${sequenceReplacements.length})`, value: list });
-    }
-
-    if (image2imageReplacements.length) {
-      const list = image2imageReplacements
-        .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
-        .join(', ');
-      rows.push({ label: `Image2image replacements (${image2imageReplacements.length})`, value: list });
-    }
-
-    const aliasKeys = Object.keys(ALIASES).sort();
-    if (aliasKeys.length) {
-      const preview = aliasKeys.slice(0, 3).map(k => `<code>${escapeHtml(k)}</code>`).join(', ');
-      const more = aliasKeys.length > 3 ? ` <span style="color:#475569">+${aliasKeys.length - 3} more</span>` : '';
-      rows.push({ label: `Aliases (${aliasKeys.length})`, value: `${preview}${more} — <code>/alias-list</code> to see all` });
-    }
-
-    rows.push({ label: 'Session images', value: `<span style="color:#a78bfa">${sessionImages.length}</span>` });
-
-    const rowsHtml = rows
-      .map(r => `<div style="font-size:0.85rem;color:#94a3b8"><strong style="color:#cbd5e1">${r.label}:</strong> ${r.value}</div>`)
-      .join('');
-    addMessage('bot', `<strong>Session summary</strong><div class="sel-list" style="margin-top:10px;gap:4px">${rowsHtml}</div>`);
+    showSessionSummary();
     return;
   }
 
@@ -1812,33 +1816,6 @@ function handleSlashCommand(raw) {
       ALIASES[aliasFrom] = aliasTo;
       const verb = data.updated ? 'Updated' : 'Created';
       bubble.innerHTML = `${verb} alias: <code>${escapeHtml(aliasFrom)}</code> → <code>${escapeHtml(aliasTo)}</code>`;
-      scrollBottom();
-    })
-    .catch(err => {
-      bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
-      scrollBottom();
-    });
-    return;
-  }
-
-  if (cmd === '/alias-delete') {
-    const aliasFrom = parts[1];
-    addMessage('user', escapeHtml(raw), raw);
-    if (!aliasFrom) {
-      addMessage('bot', 'Usage: <code>/alias-delete &lt;word&gt;</code>');
-      return;
-    }
-    if (!Object.prototype.hasOwnProperty.call(ALIASES, aliasFrom)) {
-      addMessage('bot', `<span style="color:#f87171">⚠ No alias named <code>${escapeHtml(aliasFrom)}</code> — use <code>/alias-list</code> to see what's defined.</span>`);
-      return;
-    }
-    const bubble = addMessage('bot', '<div class="status-text">Deleting alias…</div>').parentElement.querySelector('.bubble');
-    fetch('/api/aliases/' + encodeURIComponent(aliasFrom), { method: 'DELETE' })
-    .then(parseJsonResponse)
-    .then(data => {
-      if (data.error) throw new Error(data.error);
-      delete ALIASES[aliasFrom];
-      bubble.innerHTML = `Alias <code>${escapeHtml(aliasFrom)}</code> deleted.`;
       scrollBottom();
     })
     .catch(err => {
