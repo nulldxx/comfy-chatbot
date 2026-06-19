@@ -272,8 +272,16 @@ header a:hover { color: #a78bfa; }
   touch-action: none;
 }
 #mask-editor-actions {
-  display: flex; gap: 10px;
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center;
 }
+.mask-editor-denoise {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(15,23,42,0.85); border: 1px solid #475569;
+  border-radius: 8px; padding: 8px 14px;
+}
+.mask-editor-denoise-label { color: #94a3b8; font-size: 0.85rem; white-space: nowrap; }
+.mask-editor-denoise-slider { width: 100px; accent-color: #f472b6; cursor: pointer; }
+.mask-editor-denoise-value { color: #f1f5f9; font-size: 0.85rem; min-width: 2.5ch; text-align: right; }
 .mask-editor-btn {
   background: rgba(15,23,42,0.85); border: 1px solid #475569;
   color: #cbd5e1; border-radius: 8px;

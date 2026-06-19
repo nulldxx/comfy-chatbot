@@ -22,7 +22,7 @@ from workflow import (
     LORA_TAG_RE, LORA_PLACEHOLDER_RE,
     apply_placeholders, find_placeholders, fill_lora_sentinels,
     strip_lora_nodes, randomize_seeds, lora_path_for_os,
-    apply_resolution, apply_steps, fill_placeholders_for_validation,
+    apply_resolution, apply_steps, apply_denoise, fill_placeholders_for_validation,
 )
 
 app = Flask(__name__)
@@ -249,8 +249,8 @@ def cancel_auto_purge(server_address):
 # ---------------------------------------------------------------------------
 
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
-                   width=None, height=None, steps=None, workflow_dir=None, input_image=None,
-                   input_mask=None, preserve_mtime_from=None):
+                   width=None, height=None, steps=None, denoise=None, workflow_dir=None,
+                   input_image=None, input_mask=None, preserve_mtime_from=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
         cancel_event = jobs[job_id]["cancel"]
@@ -283,6 +283,9 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         for i, (name, strength) in enumerate(loras, start=1):
             mapping[f"LORA_{i}_NAME"] = lora_path_for_os(name, server_os)
             mapping[f"LORA_{i}_STRENGTH"] = strength
+        if loras:
+            names = ", ".join(f"{n} ({s})" for n, s in loras)
+            send("progress", message=f"LoRAs: {names}")
 
         if input_image is not None:
             send("progress", message="Uploading source image to ComfyUI...")
@@ -331,6 +334,10 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if steps is not None:
             apply_steps(workflow, steps)
             send("progress", message=f"Steps set to {steps}")
+
+        if denoise is not None:
+            apply_denoise(workflow, denoise)
+            send("progress", message=f"Denoise set to {denoise}")
 
         if randomize_seeds(workflow):
             send("progress", message="Randomized seed values")
@@ -651,6 +658,14 @@ def api_inpaint():
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
 
+    raw_denoise = data.get("denoise")
+    try:
+        denoise = float(raw_denoise) if raw_denoise is not None else None
+        if denoise is not None and not (0.0 <= denoise <= 1.0):
+            return jsonify({"error": "denoise must be between 0.0 and 1.0"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "denoise must be a number"}), 400
+
     err = output_storage_error()
     if err:
         return err
@@ -660,6 +675,7 @@ def api_inpaint():
         workflow_dir=COMFY_INPAINTING_DIR,
         input_image=image_path, input_mask=mask_path,
         preserve_mtime_from=safe,
+        denoise=denoise,
     )
     return jsonify({"job_id": job_id})
 

@@ -2289,11 +2289,35 @@ function openMaskEditor(imageUrl, imgWrap) {
   cancelBtn.textContent = 'Cancel';
   cancelBtn.className = 'mask-editor-btn';
 
+  const denoiseControl = document.createElement('div');
+  denoiseControl.className = 'mask-editor-denoise';
+  const denoiseLabel = document.createElement('label');
+  denoiseLabel.textContent = 'Denoise: ';
+  denoiseLabel.className = 'mask-editor-denoise-label';
+  const denoiseSlider = document.createElement('input');
+  denoiseSlider.type = 'range';
+  denoiseSlider.min = '0';
+  denoiseSlider.max = '1';
+  denoiseSlider.step = '0.05';
+  denoiseSlider.value = '0.85';
+  denoiseSlider.className = 'mask-editor-denoise-slider';
+  const denoiseValue = document.createElement('span');
+  denoiseValue.className = 'mask-editor-denoise-value';
+  denoiseValue.textContent = '0.85';
+  denoiseSlider.addEventListener('input', () => {
+    denoiseValue.textContent = parseFloat(denoiseSlider.value).toFixed(2);
+    canvas.style.opacity = denoiseSlider.value;
+  });
+  denoiseControl.appendChild(denoiseLabel);
+  denoiseControl.appendChild(denoiseSlider);
+  denoiseControl.appendChild(denoiseValue);
+
   const applyBtn = document.createElement('button');
   applyBtn.textContent = 'Apply Inpaint';
   applyBtn.className = 'mask-editor-btn mask-editor-btn-primary';
   applyBtn.disabled = true; // enabled once the image has loaded and been sized
 
+  actions.appendChild(denoiseControl);
   actions.appendChild(clearBtn);
   actions.appendChild(cancelBtn);
   actions.appendChild(applyBtn);
@@ -2314,6 +2338,7 @@ function openMaskEditor(imageUrl, imgWrap) {
     canvas.height = Math.round(rect.height * dpr);
     canvas.style.width  = rect.width  + 'px';
     canvas.style.height = rect.height + 'px';
+    canvas.style.opacity = denoiseSlider.value;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // absolute — safe to call again on resize
     applyBtn.disabled = false;
   }
@@ -2327,7 +2352,7 @@ function openMaskEditor(imageUrl, imgWrap) {
   // Cache the bounding rect at pointerdown to avoid forced layout on every move.
   let painting = false;
   let cachedRect = null;
-  const BRUSH_RADIUS = 10;
+  const BRUSH_RADIUS = 30;
 
   const onResize = () => { cachedRect = null; };
   window.addEventListener('resize', onResize);
@@ -2336,7 +2361,7 @@ function openMaskEditor(imageUrl, imgWrap) {
     if (!painting || !cachedRect) return;
     const x = e.clientX - cachedRect.left;
     const y = e.clientY - cachedRect.top;
-    ctx.fillStyle = 'rgba(255, 220, 0, 0.45)';
+    ctx.fillStyle = 'rgba(255, 220, 0, 1.0)';
     ctx.beginPath();
     ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
     ctx.fill();
@@ -2399,9 +2424,10 @@ function openMaskEditor(imageUrl, imgWrap) {
     .then(data => {
       if (data.error) throw new Error(data.error);
       if (aborted) return; // user cancelled while upload was in-flight
+      const capturedDenoise = parseFloat(denoiseSlider.value);
       closeEditor();
       addMessage('user', `Inpaint: ${escapeHtml(capturedPrompt || '')}`);
-      runInpaint(imageUrl, data.token, imgWrap, capturedPrompt);
+      runInpaint(imageUrl, data.token, imgWrap, capturedPrompt, capturedDenoise);
     })
     .catch(err => {
       if (aborted) return;
@@ -2420,11 +2446,11 @@ function openMaskEditor(imageUrl, imgWrap) {
 // Runs an inpainting workflow over `image` using `mask` (a server token) and
 // `prompt`. When `imgWrap` (the source .img-wrap) is given the result is offered
 // in place as a before/after slider. Returns the generation promise.
-function runInpaint(image, mask, imgWrap, prompt) {
+function runInpaint(image, mask, imgWrap, prompt, denoise) {
   iterationsFromSequence = false;
   sendBtn.disabled = true;
   return runGeneration(prompt || '', '', null, {
-    inpaint: { image, mask, workflow: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW },
+    inpaint: { image, mask, workflow: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW, denoise },
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
@@ -3079,6 +3105,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(!job && currentGenerationSteps !== null ? { steps: currentGenerationSteps } : {}),
       ...(job ? { image: job.image } : {}),
       ...(inpaint ? { mask: inpaint.mask } : {}),
+      ...(inpaint && inpaint.denoise != null ? { denoise: inpaint.denoise } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),
   })
