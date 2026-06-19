@@ -246,6 +246,26 @@ header a:hover { color: #a78bfa; }
   .img-inpaint { opacity: 0.6; }
 }
 
+/* Re-run inpaint: sits ~5px directly below the inpaint button. The inpaint
+   button is vertically centred (top:50%, translateY(-50%)) and ~26px tall, so
+   its bottom edge is at 50%+13px; placing this button's top edge at 50%+18px
+   leaves a ~5px gap. */
+.img-reinpaint {
+  position: absolute; right: 8px; top: calc(50% + 18px);
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 5px 8px; font-size: 0.85rem;
+  cursor: pointer; line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.img-wrap:hover .img-reinpaint { opacity: 1; }
+.img-reinpaint:hover { border-color: #f472b6; color: #f472b6; }
+.img-reinpaint:disabled { cursor: default; opacity: 0.4; }
+@media (hover: none) {
+  .img-reinpaint { opacity: 0.6; }
+}
+
 /* Mask editor overlay */
 #mask-editor-overlay {
   position: fixed; inset: 0;

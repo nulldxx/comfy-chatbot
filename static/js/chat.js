@@ -2152,6 +2152,13 @@ const sessionImages = [];
 // generation prompt when no explicit /face-detail-prompt has been set.
 const imagePrompts = {};
 
+// url -> { maskB64, prompt, denoise } for images that are an inpaint result (or
+// the rejected original of one). Drives the per-image "re-run inpaint" button,
+// which re-uploads the stored mask for a fresh single-use token and re-runs the
+// same inpaint. The mask is captured client-side so it survives the server's
+// single-use token consumption.
+const imageMasks = {};
+
 // Deletes an image file from the server's output folder. Resolves on
 // success; a 404 also resolves since the file is already gone (e.g.
 // deleted from a slideshow).
@@ -2171,6 +2178,7 @@ function removeImageFromChat(url) {
   const i = sessionImages.indexOf(url);
   if (i !== -1) sessionImages.splice(i, 1);
   delete imagePrompts[url];
+  delete imageMasks[url];
 }
 
 // Build a default face-detail prompt from a generation prompt by keeping its
@@ -2299,11 +2307,11 @@ function openMaskEditor(imageUrl, imgWrap) {
   denoiseSlider.min = '0';
   denoiseSlider.max = '1';
   denoiseSlider.step = '0.05';
-  denoiseSlider.value = '0.85';
+  denoiseSlider.value = '0.4';
   denoiseSlider.className = 'mask-editor-denoise-slider';
   const denoiseValue = document.createElement('span');
   denoiseValue.className = 'mask-editor-denoise-value';
-  denoiseValue.textContent = '0.85';
+  denoiseValue.textContent = '0.4';
   denoiseSlider.addEventListener('input', () => {
     denoiseValue.textContent = parseFloat(denoiseSlider.value).toFixed(2);
     canvas.style.opacity = denoiseSlider.value;
@@ -2452,7 +2460,7 @@ function openMaskEditor(imageUrl, imgWrap) {
       const capturedDenoise = parseFloat(denoiseSlider.value);
       closeEditor();
       addMessage('user', `Inpaint: ${escapeHtml(capturedPrompt || '')}`);
-      runInpaint(imageUrl, data.token, imgWrap, capturedPrompt, capturedDenoise);
+      runInpaint(imageUrl, data.token, imgWrap, capturedPrompt, capturedDenoise, b64);
     })
     .catch(err => {
       if (aborted) return;
@@ -2471,11 +2479,13 @@ function openMaskEditor(imageUrl, imgWrap) {
 // Runs an inpainting workflow over `image` using `mask` (a server token) and
 // `prompt`. When `imgWrap` (the source .img-wrap) is given the result is offered
 // in place as a before/after slider. Returns the generation promise.
-function runInpaint(image, mask, imgWrap, prompt, denoise) {
+// `maskB64` (the raw mask PNG) is retained so the result's "re-run inpaint"
+// button can re-upload the same mask for a fresh single-use token.
+function runInpaint(image, mask, imgWrap, prompt, denoise, maskB64) {
   iterationsFromSequence = false;
   sendBtn.disabled = true;
   return runGeneration(prompt || '', '', null, {
-    inpaint: { image, mask, workflow: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW, denoise },
+    inpaint: { image, mask, workflow: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW, denoise, maskB64, prompt },
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
@@ -2805,6 +2815,40 @@ function appendChatImage(container, url) {
   wrap.appendChild(redo);
   wrap.appendChild(i2i);
   wrap.appendChild(inpaintBtn);
+
+  // Re-run inpaint: only present once this image has an associated mask (i.e.
+  // it is itself an inpaint result, or the rejected original of one). Sits just
+  // below the inpaint button. Re-uploads the stored mask for a fresh single-use
+  // token, then re-runs the same inpaint, yielding another 1/2 comparison.
+  const maskCtx = imageMasks[url];
+  if (maskCtx) {
+    const reinpaint = document.createElement('button');
+    reinpaint.className = 'img-reinpaint';
+    reinpaint.title = 'Re-run inpaint with the same mask';
+    reinpaint.innerHTML = '&#x21BB;&#xFE0E;';
+    reinpaint.addEventListener('click', e => {
+      e.stopPropagation();
+      if (reinpaint.disabled || sendBtn.disabled) return;
+      reinpaint.disabled = true;
+      fetch('/api/upload-mask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: maskCtx.maskB64 }),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        addMessage('user', `Inpaint: ${escapeHtml(maskCtx.prompt || '')}`);
+        runInpaint(url, data.token, wrap, maskCtx.prompt, maskCtx.denoise, maskCtx.maskB64);
+      })
+      .catch(err => {
+        reinpaint.disabled = false;
+        addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
+      });
+    });
+    wrap.appendChild(reinpaint);
+  }
+
   container.appendChild(wrap);
 }
 
@@ -3186,12 +3230,26 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             else sessionImages.push(newUrl);
             delete imagePrompts[oldUrl];
             if (originPrompt) imagePrompts[newUrl] = originPrompt;
+            // Carry the mask onto the kept inpaint result so it can be re-run;
+            // the old image is gone, so drop its (stale) mask. Non-inpaint ops
+            // (face/upscale/i2i) clear it too — their result has new pixels the
+            // old mask no longer matches.
+            delete imageMasks[oldUrl];
+            if (inpaint && inpaint.maskB64) {
+              imageMasks[newUrl] = { maskB64: inpaint.maskB64, prompt: inpaint.prompt, denoise: inpaint.denoise };
+            }
             const tmp = document.createElement('div');
             appendChatImage(tmp, newUrl);
             sliderEl.replaceWith(tmp.firstChild);
           };
           const onReject = sliderEl => {
             deleteImageFile(newUrl).catch(() => {});
+            // Keep the rejected inpaint's mask on the restored original so it
+            // can be re-run for another attempt. (Non-inpaint ops leave any
+            // existing mask on oldUrl untouched.)
+            if (inpaint && inpaint.maskB64) {
+              imageMasks[oldUrl] = { maskB64: inpaint.maskB64, prompt: inpaint.prompt, denoise: inpaint.denoise };
+            }
             const tmp = document.createElement('div');
             appendChatImage(tmp, oldUrl);
             sliderEl.replaceWith(tmp.firstChild);
@@ -3204,6 +3262,12 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
 
         msg.images.forEach((url, i) => {
           if (originPrompt) imagePrompts[url] = originPrompt;
+          // Inpaint result added directly (no in-place slider, e.g. launched
+          // from the lightbox/review grid): record its mask so it too gets a
+          // "re-run inpaint" button.
+          if (inpaint && inpaint.maskB64) {
+            imageMasks[url] = { maskB64: inpaint.maskB64, prompt: inpaint.prompt, denoise: inpaint.denoise };
+          }
           if (i === 0 && replaceWrap && replaceWrap.parentNode) {
             const oldImg = replaceWrap.querySelector('img');
             const oldSrc = oldImg ? oldImg.getAttribute('src') : null;
