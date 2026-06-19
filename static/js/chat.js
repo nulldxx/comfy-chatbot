@@ -2420,6 +2420,25 @@ function openMaskEditor(imageUrl, imgWrap) {
   wrap.appendChild(canvas);
   overlay.appendChild(wrap);
 
+  // Editable inpaint prompt, prefilled with the captured /inpainting-prompt so it can
+  // be tweaked per-edit without leaving the editor. Changes here persist as the new
+  // global inpainting prompt on Apply.
+  const promptRow = document.createElement('div');
+  promptRow.id = 'mask-editor-prompt-row';
+  const promptLabel = document.createElement('label');
+  promptLabel.textContent = 'Prompt:';
+  promptLabel.className = 'mask-editor-prompt-label';
+  const promptInput = document.createElement('input');
+  promptInput.type = 'text';
+  promptInput.id = 'mask-editor-prompt';
+  promptInput.value = capturedPrompt || '';
+  promptInput.placeholder = 'Describe what to inpaint…';
+  promptLabel.htmlFor = 'mask-editor-prompt';
+  promptInput.addEventListener('input', () => promptInput.classList.remove('mask-editor-prompt-invalid'));
+  promptRow.appendChild(promptLabel);
+  promptRow.appendChild(promptInput);
+  overlay.appendChild(promptRow);
+
   const actions = document.createElement('div');
   actions.id = 'mask-editor-actions';
 
@@ -2635,6 +2654,11 @@ function openMaskEditor(imageUrl, imgWrap) {
 
   applyBtn.addEventListener('click', () => {
     if (!img.naturalWidth || !img.naturalHeight) return;
+    if (!promptInput.value.trim()) {
+      promptInput.focus();
+      promptInput.classList.add('mask-editor-prompt-invalid');
+      return;
+    }
     applyBtn.disabled = true;
     applyBtn.textContent = 'Uploading…';
 
@@ -2706,9 +2730,12 @@ function openMaskEditor(imageUrl, imgWrap) {
     .then(([maskToken, drawToken]) => {
       if (aborted) return; // user cancelled while upload was in-flight
       const capturedDenoise = parseFloat(denoiseSlider.value);
+      // Use the (possibly edited) prompt and persist it as the new global default.
+      const finalPrompt = promptInput.value.trim();
+      lastInpaintingPrompt = finalPrompt || null;
       closeEditor();
-      addMessage('user', `Inpaint: ${escapeHtml(capturedPrompt || '')}`);
-      runInpaint(imageUrl, maskToken, imgWrap, capturedPrompt, capturedDenoise, b64, drawToken);
+      addMessage('user', `Inpaint: ${escapeHtml(finalPrompt)}`);
+      runInpaint(imageUrl, maskToken, imgWrap, finalPrompt, capturedDenoise, b64, drawToken);
     })
     .catch(err => {
       if (aborted) return;
@@ -2719,6 +2746,11 @@ function openMaskEditor(imageUrl, imgWrap) {
   });
 
   function onKey(e) {
+    // Don't hijack typing in the prompt field (e.g. the [ / ] brush-resize keys).
+    if (e.target === promptInput) {
+      if (e.key === 'Escape') promptInput.blur();
+      return;
+    }
     if (e.key === 'Escape') { closeEditor(); return; }
     if (e.key === '[' || e.key === ']') {
       e.preventDefault();
