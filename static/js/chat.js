@@ -1928,11 +1928,30 @@ function appendChatImage(container, url) {
     runDoOver(url, wrap).finally(() => { redo.disabled = false; });
   });
 
+  const i2i = document.createElement('button');
+  i2i.className = 'img-i2i';
+  i2i.title = 'Image to image';
+  i2i.innerHTML = '&#127912;&#xFE0E;';
+  i2i.addEventListener('click', e => {
+    e.stopPropagation();
+    if (i2i.disabled || sendBtn.disabled) return;
+    const orig = imagePrompts[url];
+    if (!orig) {
+      addMessage('bot', '<span style="color:#f87171">No original prompt for this image — provide one with <code>/image2image &lt;prompt&gt;</code></span>');
+      return;
+    }
+    const prompt = applyImage2ImageReplacements(orig);
+    i2i.disabled = true;
+    addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
+    runImage2Image(prompt, url, wrap).finally(() => { i2i.disabled = false; });
+  });
+
   wrap.appendChild(img);
   wrap.appendChild(del);
   wrap.appendChild(face);
   wrap.appendChild(up);
   wrap.appendChild(redo);
+  wrap.appendChild(i2i);
   container.appendChild(wrap);
 }
 
@@ -2009,10 +2028,29 @@ function renderReviewGrid(bubble, urls) {
       runUpscale(url).finally(() => { up.disabled = false; });
     });
 
+    const ri2i = document.createElement('button');
+    ri2i.className = 'img-i2i review-i2i';
+    ri2i.title = 'Image to image';
+    ri2i.innerHTML = '&#127912;&#xFE0E;';
+    ri2i.addEventListener('click', e => {
+      e.stopPropagation();
+      if (ri2i.disabled || sendBtn.disabled) return;
+      const orig = imagePrompts[url];
+      if (!orig) {
+        addMessage('bot', '<span style="color:#f87171">No original prompt for this image — provide one with <code>/image2image &lt;prompt&gt;</code></span>');
+        return;
+      }
+      const prompt = applyImage2ImageReplacements(orig);
+      ri2i.disabled = true;
+      addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
+      runImage2Image(prompt, url).finally(() => { ri2i.disabled = false; });
+    });
+
     cell.appendChild(img);
     cell.appendChild(del);
     cell.appendChild(face);
     cell.appendChild(up);
+    cell.appendChild(ri2i);
     grid.appendChild(cell);
   });
 
