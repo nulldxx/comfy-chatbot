@@ -151,6 +151,8 @@ const SLASH_COMMANDS = [
   { cmd: '/image2image-replacement', desc: 'add a find→replace for prompt-less /image2image', args: ' ' },
   { cmd: '/image2image-replacement-reset', desc: 'clear all image2image replacements', args: '' },
   { cmd: '/image2image-workflow', desc: 'choose an image2image workflow',     args: ''  },
+  { cmd: '/inpaint-workflow',  desc: 'choose an inpainting workflow',        args: ''  },
+  { cmd: '/inpainting-prompt', desc: 'set the prompt used by the inpaint button', args: ' ' },
   { cmd: '/generation-steps', desc: 'override steps for generation workflows (e.g. 20)', args: ' ' },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
@@ -368,7 +370,9 @@ let currentWorkflow   = null;  // string
 let currentFaceWorkflow = null;  // string — face-detailer workflow the face icons use
 let currentUpscaleWorkflow = null; // string — upscaler workflow for /upscale
 let currentImage2ImageWorkflow = null; // string — image2image workflow for /image2image
+let currentInpaintingWorkflow = null; // string — inpainting workflow for the 🩹 button
 let lastFaceDetailPrompt = null; // global override set by /face-detail-prompt; takes priority over per-image derivation
+let lastInpaintingPrompt = null; // set via /inpainting-prompt; required before the 🩹 button works
 let currentResolution = { width: 1365, height: 768 };  // {width, height} or null (null = workflow default); defaults to 16:9
 let currentGenerationSteps = null; // integer or null (null = workflow default)
 let iterations        = 1;     // images generated per prompt (set via /iterations)
@@ -596,6 +600,14 @@ function showSessionSummary() {
     : `<span style="color:#475569">not set</span>`;
   rows.push({ label: 'Image2image workflow', value: i2iWfLabel });
 
+  const inpaintWfActive = currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW;
+  const inpaintWfLabel  = inpaintWfActive
+    ? (currentInpaintingWorkflow
+        ? `<span style="color:#a78bfa">${escapeHtml(inpaintWfActive)}</span>`
+        : `<span style="color:#a78bfa">${escapeHtml(inpaintWfActive)}</span> <span style="color:#475569">(default)</span>`)
+    : `<span style="color:#475569">not set</span>`;
+  rows.push({ label: 'Inpainting workflow', value: inpaintWfLabel });
+
   const resLabel = currentResolution
     ? `<span style="color:#a78bfa">${currentResolution.width}×${currentResolution.height}</span>`
     : `<span style="color:#475569">workflow default</span>`;
@@ -609,6 +621,10 @@ function showSessionSummary() {
 
   if (lastFaceDetailPrompt) {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(lastFaceDetailPrompt)}</code>` });
+  }
+
+  if (lastInpaintingPrompt) {
+    rows.push({ label: 'Inpainting prompt', value: `<code>${escapeHtml(lastInpaintingPrompt)}</code>` });
   }
 
   if (sequenceReplacements.length) {
@@ -778,6 +794,33 @@ function handleSlashCommand(raw) {
       setMsg: 'Image2image workflow set to',
       onSelect: wf => { currentImage2ImageWorkflow = wf; },
     });
+    return;
+  }
+
+  if (cmd === '/inpaint-workflow') {
+    renderWorkflowPicker({
+      url: '/api/inpainting-workflows',
+      title: 'Select an inpainting workflow:',
+      loadingText: 'Loading inpainting workflows…',
+      failLabel: 'inpainting workflows',
+      emptyMsg: 'No inpainting workflows available — add one to the <code>inpainting/</code> folder.',
+      current: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW,
+      setMsg: 'Inpainting workflow set to',
+      onSelect: wf => { currentInpaintingWorkflow = wf; },
+    });
+    return;
+  }
+
+  if (cmd === '/inpainting-prompt') {
+    const prompt = raw.slice('/inpainting-prompt'.length).trim();
+    addMessage('user', escapeHtml(raw), raw);
+    if (!prompt) {
+      lastInpaintingPrompt = null;
+      addMessage('bot', 'Inpainting prompt cleared — the 🩹 button will show an error until a new one is set.');
+      return;
+    }
+    lastInpaintingPrompt = prompt;
+    addMessage('bot', `Inpainting prompt set — the 🩹 button will use <code>${escapeHtml(prompt)}</code>.`);
     return;
   }
 
@@ -1513,7 +1556,9 @@ function handleSlashCommand(raw) {
     currentFaceWorkflow = null;
     currentUpscaleWorkflow = null;
     currentImage2ImageWorkflow = null;
+    currentInpaintingWorkflow = null;
     lastFaceDetailPrompt = null;
+    lastInpaintingPrompt = null;
     currentResolution = { width: 1365, height: 768 };
     currentGenerationSteps = null;
     iterations = 1;
@@ -1541,12 +1586,14 @@ function handleSlashCommand(raw) {
         faceWorkflow: currentFaceWorkflow,
         upscaleWorkflow: currentUpscaleWorkflow,
         image2imageWorkflow: currentImage2ImageWorkflow,
+        inpaintingWorkflow: currentInpaintingWorkflow,
         resolution: currentResolution,
         generationSteps: currentGenerationSteps,
         iterations,
         sequenceReplacements: sequenceReplacements.slice(),
         image2imageReplacements: image2imageReplacements.slice(),
         lastFaceDetailPrompt,
+        lastInpaintingPrompt,
       },
       sessionImages: sessionImages.slice(),
       imagePrompts: Object.assign({}, imagePrompts),
@@ -2196,6 +2243,176 @@ function runImage2Image(prompt, image, imgWrap) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+// Opens a full-screen mask editor over `imageUrl`. The user paints a translucent
+// yellow mask; on "Apply Inpaint" the mask is exported as a PNG, uploaded to the
+// server, and runInpaint() is called. `imgWrap` is passed through to runInpaint
+// for the in-place comparison slider (null in the review-grid case).
+function openMaskEditor(imageUrl, imgWrap) {
+  // Overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'mask-editor-overlay';
+
+  // Image + canvas wrapper
+  const wrap = document.createElement('div');
+  wrap.id = 'mask-editor-wrap';
+
+  const img = document.createElement('img');
+  img.src = imageUrl;
+  img.draggable = false;
+
+  // Visual canvas (yellow translucent paint shown to the user)
+  const canvas = document.createElement('canvas');
+  canvas.id = 'mask-editor-canvas';
+
+  // Hidden mask canvas (white strokes on black — exported as the actual mask)
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.style.display = 'none';
+
+  wrap.appendChild(img);
+  wrap.appendChild(canvas);
+  overlay.appendChild(wrap);
+
+  // Action bar
+  const actions = document.createElement('div');
+  actions.id = 'mask-editor-actions';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear';
+  clearBtn.className = 'mask-editor-btn';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.className = 'mask-editor-btn';
+
+  const applyBtn = document.createElement('button');
+  applyBtn.textContent = 'Apply Inpaint';
+  applyBtn.className = 'mask-editor-btn mask-editor-btn-primary';
+
+  actions.appendChild(clearBtn);
+  actions.appendChild(cancelBtn);
+  actions.appendChild(applyBtn);
+  overlay.appendChild(actions);
+  document.body.appendChild(overlay);
+
+  // Size the canvases to match the displayed image once it loads
+  function syncCanvasSize() {
+    const rect = img.getBoundingClientRect();
+    canvas.width  = rect.width;
+    canvas.height = rect.height;
+    maskCanvas.width  = rect.width;
+    maskCanvas.height = rect.height;
+    // Black background on the mask canvas
+    const mctx = maskCanvas.getContext('2d');
+    mctx.fillStyle = '#000';
+    mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+  }
+
+  if (img.complete) {
+    syncCanvasSize();
+  } else {
+    img.addEventListener('load', syncCanvasSize, { once: true });
+  }
+
+  // Paint logic
+  const ctx = canvas.getContext('2d');
+  const mctx = maskCanvas.getContext('2d');
+  let painting = false;
+  const BRUSH_RADIUS = 10;
+
+  function paint(e) {
+    if (!painting) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? e.touches[0].clientX) - rect.left;
+    const y = (e.clientY ?? e.touches[0].clientY) - rect.top;
+
+    // Visual: yellow translucent
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(255, 220, 0, 0.45)';
+    ctx.beginPath();
+    ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Mask: white opaque
+    mctx.fillStyle = '#fff';
+    mctx.beginPath();
+    mctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
+    mctx.fill();
+  }
+
+  canvas.addEventListener('pointerdown', e => { painting = true; canvas.setPointerCapture(e.pointerId); paint(e); });
+  canvas.addEventListener('pointermove', paint);
+  canvas.addEventListener('pointerup',   () => { painting = false; });
+  canvas.addEventListener('pointercancel', () => { painting = false; });
+
+  // Clear button: wipe both canvases
+  clearBtn.addEventListener('click', () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    mctx.fillStyle = '#000';
+    mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+  });
+
+  function closeEditor() {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+
+  // Cancel
+  cancelBtn.addEventListener('click', closeEditor);
+
+  // Apply: scale mask to natural image dimensions, upload, then run inpaint
+  applyBtn.addEventListener('click', () => {
+    applyBtn.disabled = true;
+    applyBtn.textContent = 'Uploading…';
+
+    // Scale mask canvas strokes to the source image's natural pixel dimensions
+    const offscreen = document.createElement('canvas');
+    offscreen.width  = img.naturalWidth;
+    offscreen.height = img.naturalHeight;
+    const octx = offscreen.getContext('2d');
+    octx.drawImage(maskCanvas, 0, 0, offscreen.width, offscreen.height);
+
+    const b64 = offscreen.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+
+    fetch('/api/upload-mask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: b64 }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      closeEditor();
+      addMessage('user', `Inpaint: ${escapeHtml(lastInpaintingPrompt || '')}`);
+      runInpaint(imageUrl, data.url, imgWrap);
+    })
+    .catch(err => {
+      applyBtn.disabled = false;
+      applyBtn.textContent = 'Apply Inpaint';
+      addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
+    });
+  });
+
+  // Close on Escape
+  function onKey(e) {
+    if (e.key === 'Escape') closeEditor();
+  }
+  document.addEventListener('keydown', onKey);
+}
+
+// Runs an inpainting workflow over `image` using `mask` and `prompt`. Driven by
+// the per-image 🩹 button after the user paints a mask. When `imgWrap` (the source
+// image's .img-wrap) is given, the result is offered in place as a before/after
+// slider. Returns the generation promise so callers can re-enable their controls.
+function runInpaint(image, mask, imgWrap) {
+  iterationsFromSequence = false;
+  sendBtn.disabled = true;
+  return runGeneration(lastInpaintingPrompt || '', '', null, {
+    inpaint: { image, mask, workflow: currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW },
+    sliderReplace: imgWrap || null,
+  })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
 function runDoOver(url, imgWrap) {
   const prompt = imagePrompts[url] || '';
   return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url });
@@ -2499,12 +2716,27 @@ function appendChatImage(container, url) {
     runImage2Image(prompt, url, wrap).finally(() => { i2i.disabled = false; });
   });
 
+  const inpaintBtn = document.createElement('button');
+  inpaintBtn.className = 'img-inpaint';
+  inpaintBtn.title = 'Inpaint';
+  inpaintBtn.textContent = '🩹';
+  inpaintBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (inpaintBtn.disabled || sendBtn.disabled) return;
+    if (!lastInpaintingPrompt) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Set an inpainting prompt first with <code>/inpainting-prompt &lt;text&gt;</code></span>');
+      return;
+    }
+    openMaskEditor(url, wrap);
+  });
+
   wrap.appendChild(img);
   wrap.appendChild(del);
   wrap.appendChild(face);
   wrap.appendChild(up);
   wrap.appendChild(redo);
   wrap.appendChild(i2i);
+  wrap.appendChild(inpaintBtn);
   container.appendChild(wrap);
 }
 
@@ -2599,11 +2831,26 @@ function renderReviewGrid(bubble, urls) {
       runImage2Image(prompt, url).finally(() => { ri2i.disabled = false; });
     });
 
+    const rinpaint = document.createElement('button');
+    rinpaint.className = 'img-inpaint review-inpaint';
+    rinpaint.title = 'Inpaint';
+    rinpaint.textContent = '🩹';
+    rinpaint.addEventListener('click', e => {
+      e.stopPropagation();
+      if (rinpaint.disabled || sendBtn.disabled) return;
+      if (!lastInpaintingPrompt) {
+        addMessage('bot', '<span style="color:#f87171">⚠ Set an inpainting prompt first with <code>/inpainting-prompt &lt;text&gt;</code></span>');
+        return;
+      }
+      openMaskEditor(url, null);
+    });
+
     cell.appendChild(img);
     cell.appendChild(del);
     cell.appendChild(face);
     cell.appendChild(up);
     cell.appendChild(ri2i);
+    cell.appendChild(rinpaint);
     grid.appendChild(cell);
   });
 
@@ -2652,12 +2899,14 @@ function restoreSession(data) {
   if (s.faceWorkflow        !== undefined) currentFaceWorkflow       = s.faceWorkflow;
   if (s.upscaleWorkflow     !== undefined) currentUpscaleWorkflow    = s.upscaleWorkflow;
   if (s.image2imageWorkflow !== undefined) currentImage2ImageWorkflow = s.image2imageWorkflow;
+  if (s.inpaintingWorkflow  !== undefined) currentInpaintingWorkflow  = s.inpaintingWorkflow;
   if (s.resolution          !== undefined) currentResolution         = s.resolution;
   if (s.generationSteps     !== undefined) currentGenerationSteps    = s.generationSteps;
   if (s.iterations          !== undefined) iterations                = s.iterations;
   if (s.sequenceReplacements    !== undefined) sequenceReplacements    = s.sequenceReplacements;
   if (s.image2imageReplacements !== undefined) image2imageReplacements = s.image2imageReplacements;
   if (s.lastFaceDetailPrompt    !== undefined) lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
+  if (s.lastInpaintingPrompt    !== undefined) lastInpaintingPrompt    = s.lastInpaintingPrompt;
   iterationsFromSequence = false;
   updateHeaderStatus();
 
@@ -2750,6 +2999,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const face = opts.face || null;
   const upscale = opts.upscale || null;
   const image2image = opts.image2image || null;
+  const inpaint = opts.inpaint || null;
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
@@ -2757,10 +3007,11 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   // image rather than appending a new one, so the progress bubble belongs
   // beside that image, not at the bottom of the chat.
   const inPlaceWrap = sliderReplace || replaceWrap;
-  const job = face || upscale || image2image; // an image-input job (face-detail, upscale or image2image) vs a plain generation
+  const job = face || upscale || image2image || inpaint; // an image-input job vs a plain generation
   const endpoint = face ? '/api/face-detail'
                  : upscale ? '/api/upscale'
                  : image2image ? '/api/image2image'
+                 : inpaint ? '/api/inpaint'
                  : '/api/generate';
   const botBubble = addMessage('bot', `
     <div class="status-text" id="status-line">Connecting…${label}</div>
@@ -2810,6 +3061,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(!job && currentResolution ? { width: currentResolution.width, height: currentResolution.height } : {}),
       ...(!job && currentGenerationSteps !== null ? { steps: currentGenerationSteps } : {}),
       ...(job ? { image: job.image } : {}),
+      ...(inpaint ? { mask: inpaint.mask } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),
   })

@@ -33,6 +33,10 @@ services:
       # takes the last image as <INPUT_IMAGE> plus <PROMPT>/<lora:...> tags.
       # Leave blank to fall back to the first workflow found there.
       - COMFY_IMAGE2IMAGE_WORKFLOW=zit-i2i.json
+      # Default inpainting workflow inside the inpainting/ subdir of
+      # COMFY_WORKFLOW_DIR, used by the 🩹 button. Takes <INPUT_IMAGE>, <INPUT_MASK>
+      # and <PROMPT>/<lora:...> tags. Leave blank to fall back to first found.
+      - COMFY_INPAINTING_WORKFLOW=zit-inpainting.json
 
       # Path inside the container where workflow templates live
       - COMFY_WORKFLOW_DIR=/app/workflows

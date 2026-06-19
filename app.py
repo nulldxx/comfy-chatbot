@@ -4,6 +4,7 @@ import json
 import uuid
 import queue
 import shutil
+import base64
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -81,6 +82,13 @@ COMFY_IMAGE2IMAGE_DIR = COMFY_WORKFLOW_DIR / 'image2image'
 # like "flux/zit-i2i(.json)"; normalised to match the names returned by
 # list_image2image_workflows().
 COMFY_IMAGE2IMAGE_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_IMAGE2IMAGE_WORKFLOW'))
+
+# Inpainting workflows live in a subdir of the main workflow folder. They take
+# an image and a mask (via <INPUT_IMAGE> and <INPUT_MASK> placeholders) and
+# the usual <PROMPT> / <lora:...> tags to inpaint the masked area.
+COMFY_INPAINTING_DIR = COMFY_WORKFLOW_DIR / 'inpainting'
+# Default inpainting workflow, normalised to match list_inpainting_workflows().
+COMFY_INPAINTING_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_INPAINTING_WORKFLOW'))
 
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -233,7 +241,7 @@ def cancel_auto_purge(server_address):
 
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
                    width=None, height=None, steps=None, workflow_dir=None, input_image=None,
-                   preserve_mtime_from=None):
+                   input_mask=None, preserve_mtime_from=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
         cancel_event = jobs[job_id]["cancel"]
@@ -270,6 +278,10 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if input_image is not None:
             send("progress", message="Uploading source image to ComfyUI...")
             mapping["INPUT_IMAGE"] = server.upload_image(input_image)
+
+        if input_mask is not None:
+            send("progress", message="Uploading mask to ComfyUI...")
+            mapping["INPUT_MASK"] = server.upload_image(input_mask)
 
         filled = apply_placeholders(template, mapping)
 
@@ -417,6 +429,7 @@ def index():
         default_face_workflow=COMFY_FACEDETAILER_WORKFLOW,
         default_upscale_workflow=COMFY_UPSCALER_WORKFLOW,
         default_image2image_workflow=COMFY_IMAGE2IMAGE_WORKFLOW,
+        default_inpainting_workflow=COMFY_INPAINTING_WORKFLOW,
     )
 
 
@@ -518,6 +531,89 @@ def list_image2image_workflows():
 @login_required
 def api_image2image_workflows():
     return jsonify(list_image2image_workflows())
+
+
+def list_inpainting_workflows():
+    return list_workflow_names(COMFY_INPAINTING_DIR)
+
+
+@app.route("/api/inpainting-workflows")
+@login_required
+def api_inpainting_workflows():
+    return jsonify(list_inpainting_workflows())
+
+
+@app.route("/api/upload-mask", methods=["POST"])
+@login_required
+def api_upload_mask():
+    """Accept a base64-encoded PNG mask from the browser and save it to IMAGES_DIR.
+
+    Returns the URL path the mask can be referenced by in a subsequent /api/inpaint call.
+    """
+    data = request.get_json(force=True)
+    b64 = (data.get("data") or "").strip()
+    if not b64:
+        return jsonify({"error": "data is required"}), 400
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        return jsonify({"error": "invalid base64"}), 400
+    fname = f"mask_{uuid.uuid4().hex[:8]}.png"
+    path = IMAGES_DIR / fname
+    path.write_bytes(raw)
+    return jsonify({"url": f"/images/{fname}"})
+
+
+@app.route("/api/inpaint", methods=["POST"])
+@login_required
+def api_inpaint():
+    """Run an inpainting workflow over a previously generated image using a painted mask.
+
+    Requires both an <INPUT_IMAGE> (the source image) and an <INPUT_MASK> (a B&W PNG
+    where white = inpaint area) placeholder in the workflow template, plus the usual
+    <PROMPT> / <lora:...> tags. The mask should be uploaded first via /api/upload-mask.
+    """
+    data = request.get_json(force=True)
+    raw_prompt = (data.get("prompt") or "").strip()
+    if not raw_prompt:
+        return jsonify({"error": "inpainting prompt is required"}), 400
+    prompt, loras = parse_loras_from_prompt(raw_prompt)
+
+    image_url = (data.get("image") or "").strip()
+    if not image_url:
+        return jsonify({"error": "image is required"}), 400
+    safe, image_path, err = _resolve_input_image(image_url)
+    if err:
+        return err
+
+    mask_url = (data.get("mask") or "").strip()
+    if not mask_url:
+        return jsonify({"error": "mask is required"}), 400
+    _, mask_path, err = _resolve_input_image(mask_url)
+    if err:
+        return err
+
+    available = list_inpainting_workflows()
+    workflow_name, err = _resolve_workflow(
+        data.get("workflow") or COMFY_INPAINTING_WORKFLOW, available, "inpainting"
+    )
+    if err:
+        return err
+
+    server_address = data.get("server") or COMFY_SERVER
+    server_os      = data.get("server_os") or COMFY_SERVER_OS
+
+    err = output_storage_error()
+    if err:
+        return err
+
+    job_id = start_generation_job(
+        prompt, loras, server_address, server_os, workflow_name,
+        workflow_dir=COMFY_INPAINTING_DIR,
+        input_image=image_path, input_mask=mask_path,
+        preserve_mtime_from=safe,
+    )
+    return jsonify({"job_id": job_id})
 
 
 @app.route("/api/purge", methods=["POST"])
