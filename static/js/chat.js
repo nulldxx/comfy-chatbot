@@ -151,6 +151,7 @@ const SLASH_COMMANDS = [
   { cmd: '/image2image-replacement', desc: 'add a find→replace for prompt-less /image2image', args: ' ' },
   { cmd: '/image2image-replacement-reset', desc: 'clear all image2image replacements', args: '' },
   { cmd: '/image2image-workflow', desc: 'choose an image2image workflow',     args: ''  },
+  { cmd: '/generation-steps', desc: 'override steps for generation workflows (e.g. 20)', args: ' ' },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
@@ -369,6 +370,7 @@ let currentUpscaleWorkflow = null; // string — upscaler workflow for /upscale
 let currentImage2ImageWorkflow = null; // string — image2image workflow for /image2image
 let lastFaceDetailPrompt = null; // global override set by /face-detail-prompt; takes priority over per-image derivation
 let currentResolution = { width: 1365, height: 768 };  // {width, height} or null (null = workflow default); defaults to 16:9
+let currentGenerationSteps = null; // integer or null (null = workflow default)
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
@@ -600,6 +602,10 @@ function showSessionSummary() {
   rows.push({ label: 'Resolution', value: resLabel });
 
   rows.push({ label: 'Iterations', value: `<span style="color:#a78bfa">${iterations}</span>${iterations > 1 ? ' per prompt' : ''}` });
+
+  if (currentGenerationSteps !== null) {
+    rows.push({ label: 'Generation steps', value: `<span style="color:#a78bfa">${currentGenerationSteps}</span>` });
+  }
 
   if (lastFaceDetailPrompt) {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(lastFaceDetailPrompt)}</code>` });
@@ -990,6 +996,7 @@ function handleSlashCommand(raw) {
           </div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/iterations &lt;n&gt;</code> — generate n images per prompt (default 1)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/generation-steps &lt;n&gt;</code> — override the steps field in generation workflows (e.g. <code>/generation-steps 20</code>); does not affect face-detail, upscale or image2image workflows; <code>/generation-steps reset</code> restores the workflow default</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/resolution &lt;WxH&gt;</code> — set output resolution, e.g. <code>/resolution 640x480</code> or <code>/resolution phone</code>
           <div style="margin-top:2px;color:#475569;font-size:0.78rem"><code>phone</code> (or <code>iphone</code>) measures this device's viewport &nbsp;·&nbsp; presets: ipad, hd, fhd, square &nbsp;·&nbsp; <code>/resolution flip</code> swaps W/H &nbsp;·&nbsp; <code>/resolution reset</code> restores workflow default</div>
         </div>
@@ -1508,6 +1515,7 @@ function handleSlashCommand(raw) {
     currentImage2ImageWorkflow = null;
     lastFaceDetailPrompt = null;
     currentResolution = { width: 1365, height: 768 };
+    currentGenerationSteps = null;
     iterations = 1;
     iterationsFromSequence = false;
     sequenceReplacements = [];
@@ -1534,6 +1542,7 @@ function handleSlashCommand(raw) {
         upscaleWorkflow: currentUpscaleWorkflow,
         image2imageWorkflow: currentImage2ImageWorkflow,
         resolution: currentResolution,
+        generationSteps: currentGenerationSteps,
         iterations,
         sequenceReplacements: sequenceReplacements.slice(),
         image2imageReplacements: image2imageReplacements.slice(),
@@ -1774,6 +1783,29 @@ function handleSlashCommand(raw) {
     iterations = n;
     iterationsFromSequence = false; // explicit user choice — don't auto-reset it later
     addMessage('bot', `Each prompt will now generate <strong style="color:#a78bfa">${iterations}</strong> image(s)${n > 1 ? ', one after another' : ''}.`);
+    return;
+  }
+
+  if (cmd === '/generation-steps') {
+    if (!parts[1] || parts[1].toLowerCase() === 'reset') {
+      if (parts[1] && parts[1].toLowerCase() === 'reset') {
+        currentGenerationSteps = null;
+        addMessage('bot', 'Generation steps reset to workflow default.');
+      } else {
+        const cur = currentGenerationSteps !== null
+          ? `<strong style="color:#a78bfa">${currentGenerationSteps}</strong>`
+          : 'workflow default';
+        addMessage('bot', `Current generation steps: ${cur}<br>Usage: <code>/generation-steps &lt;n&gt;</code> — e.g. <code>/generation-steps 20</code><br><code>/generation-steps reset</code> — restore workflow default`);
+      }
+      return;
+    }
+    const n = parseInt(parts[1], 10);
+    if (isNaN(n) || n < 1 || n > 200) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Steps must be a number between 1 and 200.</span>');
+      return;
+    }
+    currentGenerationSteps = n;
+    addMessage('bot', `Generation steps set to <strong style="color:#a78bfa">${n}</strong>. Applies to generation workflows only, not face-detail or upscaling.`);
     return;
   }
 
@@ -2621,6 +2653,7 @@ function restoreSession(data) {
   if (s.upscaleWorkflow     !== undefined) currentUpscaleWorkflow    = s.upscaleWorkflow;
   if (s.image2imageWorkflow !== undefined) currentImage2ImageWorkflow = s.image2imageWorkflow;
   if (s.resolution          !== undefined) currentResolution         = s.resolution;
+  if (s.generationSteps     !== undefined) currentGenerationSteps    = s.generationSteps;
   if (s.iterations          !== undefined) iterations                = s.iterations;
   if (s.sequenceReplacements    !== undefined) sequenceReplacements    = s.sequenceReplacements;
   if (s.image2imageReplacements !== undefined) image2imageReplacements = s.image2imageReplacements;
@@ -2775,6 +2808,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(currentServer     ? { server: currentServer.address, server_os: currentServer.os } : {}),
       ...(wf ? { workflow: wf } : {}),
       ...(!job && currentResolution ? { width: currentResolution.width, height: currentResolution.height } : {}),
+      ...(!job && currentGenerationSteps !== null ? { steps: currentGenerationSteps } : {}),
       ...(job ? { image: job.image } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),

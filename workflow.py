@@ -77,6 +77,14 @@ def apply_resolution(workflow, width, height):
             inputs["height"] = height
 
 
+def apply_steps(workflow, steps):
+    """Set steps on every workflow node that exposes it as an input."""
+    for node in workflow.values():
+        inputs = node.get("inputs", {})
+        if "steps" in inputs:
+            inputs["steps"] = steps
+
+
 def fill_placeholders_for_validation(text):
     """Replace template tokens with dummy values so the file parses as JSON."""
     text = re.sub(r"<LORA_\d+_STRENGTH>", "1.0", text)   # unquoted numeric slots

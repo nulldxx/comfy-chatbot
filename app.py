@@ -20,7 +20,7 @@ from workflow import (
     LORA_TAG_RE, LORA_PLACEHOLDER_RE,
     apply_placeholders, find_placeholders, fill_lora_sentinels,
     strip_lora_nodes, randomize_seeds, lora_path_for_os,
-    apply_resolution, fill_placeholders_for_validation,
+    apply_resolution, apply_steps, fill_placeholders_for_validation,
 )
 
 app = Flask(__name__)
@@ -232,7 +232,7 @@ def cancel_auto_purge(server_address):
 # ---------------------------------------------------------------------------
 
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
-                   width=None, height=None, workflow_dir=None, input_image=None,
+                   width=None, height=None, steps=None, workflow_dir=None, input_image=None,
                    preserve_mtime_from=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
@@ -300,6 +300,10 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if width and height:
             apply_resolution(workflow, width, height)
             send("progress", message=f"Resolution set to {width}×{height}")
+
+        if steps is not None:
+            apply_steps(workflow, steps)
+            send("progress", message=f"Steps set to {steps}")
 
         if randomize_seeds(workflow):
             send("progress", message="Randomized seed values")
@@ -623,6 +627,15 @@ def api_generate():
         except (ValueError, TypeError):
             return jsonify({"error": "height must be an integer"}), 400
 
+    steps = data.get("steps")
+    if steps is not None:
+        try:
+            steps = int(steps)
+            if steps < 1:
+                raise ValueError
+        except (ValueError, TypeError):
+            return jsonify({"error": "steps must be a positive integer"}), 400
+
     err = output_storage_error()
     if err:
         return err
@@ -634,7 +647,7 @@ def api_generate():
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_GENERATION_DIR,
-        width=width, height=height, preserve_mtime_from=preserve_mtime_from,
+        width=width, height=height, steps=steps, preserve_mtime_from=preserve_mtime_from,
     )
     return jsonify({"job_id": job_id})
 
