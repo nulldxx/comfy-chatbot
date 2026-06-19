@@ -130,7 +130,10 @@ const SLASH_COMMANDS = [
   { cmd: '/archive-all',     desc: 'archive every image to the encrypted volume (optional folder name)',     args: ' ' },
   { cmd: '/archive-session', desc: 'archive all images from this session (optional folder name)',            args: ' ' },
   { cmd: '/archive-today',   desc: 'archive images generated today (optional folder name)',                  args: ' ' },
-  { cmd: '/clear',      desc: 'clear the chat history',             args: ''  },
+  { cmd: '/clear',       desc: 'clear chat history (keeps settings)',  args: ''  },
+  { cmd: '/session-load', desc: 'load a previously saved session',    args: ''  },
+  { cmd: '/session-new',  desc: 'start a new session (resets all settings)', args: '' },
+  { cmd: '/session-save', desc: 'save the current session with a name', args: ' ' },
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
   { cmd: '/delete-session', desc: 'delete all images from this session',           args: '' },
@@ -887,7 +890,10 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all [name]</code> — archive every image in the output folder into the encrypted volume (asks y/n first; optional folder name)
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
         </div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the chat history</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear chat history while keeping all settings (workflow, replacements, etc.)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/session-new</code> — start a completely new session, resetting all settings to defaults</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/session-save &lt;name&gt;</code> — save the current session (chat history, images, settings) to disk</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/session-load</code> — pick and restore a previously saved session</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review &lt;n&gt;</code> — grid of the last N images, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-all</code> — grid of every image, oldest first (tap to view, trash to delete)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-today</code> — grid of today's images, oldest first</div>
@@ -1345,10 +1351,128 @@ function handleSlashCommand(raw) {
     history.length = 0;
     historyIdx = -1;
     savedDraft = '';
+    sessionImages.length = 0;
+    for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
     fauxFullscreenEls.clear();
     document.body.style.overflow = '';
     messagesEl.innerHTML = '';
-    addMessage('bot', 'Chat cleared. Describe the image you\'d like to generate.');
+    addMessage('bot', 'Chat cleared. Settings preserved — describe the image you\'d like to generate.');
+    return;
+  }
+
+  if (cmd === '/session-new') {
+    history.length = 0;
+    historyIdx = -1;
+    savedDraft = '';
+    sessionImages.length = 0;
+    for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
+    fauxFullscreenEls.clear();
+    document.body.style.overflow = '';
+    currentServer = null;
+    currentWorkflow = null;
+    currentFaceWorkflow = null;
+    currentUpscaleWorkflow = null;
+    currentImage2ImageWorkflow = null;
+    lastFaceDetailPrompt = null;
+    currentResolution = { width: 1365, height: 768 };
+    iterations = 1;
+    iterationsFromSequence = false;
+    sequenceReplacements = [];
+    image2imageReplacements = [];
+    messagesEl.innerHTML = '';
+    updateHeaderStatus();
+    addMessage('bot', 'New session started. Describe the image you\'d like to generate.');
+    return;
+  }
+
+  if (cmd === '/session-save') {
+    const rawName = raw.slice('/session-save'.length).trim();
+    addMessage('user', escapeHtml(raw), raw);
+    if (!rawName) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide a session name, e.g. <code>/session-save beach portraits</code></span>');
+      return;
+    }
+    const payload = {
+      name: rawName,
+      settings: {
+        server: currentServer,
+        workflow: currentWorkflow,
+        faceWorkflow: currentFaceWorkflow,
+        upscaleWorkflow: currentUpscaleWorkflow,
+        image2imageWorkflow: currentImage2ImageWorkflow,
+        resolution: currentResolution,
+        iterations,
+        sequenceReplacements: sequenceReplacements.slice(),
+        image2imageReplacements: image2imageReplacements.slice(),
+        lastFaceDetailPrompt,
+      },
+      sessionImages: sessionImages.slice(),
+      imagePrompts: Object.assign({}, imagePrompts),
+      messages: captureSessionMessages(),
+    };
+    const bubble = addMessage('bot', '<div class="status-text">Saving session…</div>').parentElement.querySelector('.bubble');
+    fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    .then(parseJsonResponse)
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      bubble.innerHTML = `Session saved as <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong>. Use <code>/session-load</code> to restore it.`;
+      scrollBottom();
+    })
+    .catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ Save failed: ${escapeHtml(err.message)}</span>`;
+      scrollBottom();
+    });
+    return;
+  }
+
+  if (cmd === '/session-load') {
+    const bubble = addMessage('bot', '<div class="status-text">Loading saved sessions…</div>').parentElement.querySelector('.bubble');
+    fetch('/api/sessions')
+    .then(parseJsonResponse)
+    .then(sessions => {
+      if (!sessions.length) {
+        bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
+        scrollBottom();
+        return;
+      }
+      let html = '<strong>Select a session to restore:</strong><div class="sel-list">';
+      sessions.forEach(s => {
+        const date = s.saved_at ? new Date(s.saved_at).toLocaleDateString() : '';
+        html += `<button class="sel-btn" data-name="${escapeHtml(s.name)}">
+          <span>${escapeHtml(s.name)}</span>
+          <span style="color:#475569;font-size:0.8em">${s.image_count} image(s)${date ? ' · ' + date : ''}</span>
+        </button>`;
+      });
+      html += '</div>';
+      bubble.innerHTML = html;
+      bubble.querySelectorAll('.sel-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const name = btn.dataset.name;
+          bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
+          fetch('/api/sessions/' + encodeURIComponent(name))
+          .then(parseJsonResponse)
+          .then(data => {
+            if (data.error) throw new Error(data.error);
+            restoreSession(data);
+            bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
+            scrollBottom();
+          })
+          .catch(err => {
+            bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
+            scrollBottom();
+          });
+        });
+      });
+      scrollBottom();
+    })
+    .catch(() => {
+      bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load sessions.</span>';
+      scrollBottom();
+    });
     return;
   }
 
@@ -2161,6 +2285,72 @@ function renderReviewGrid(bubble, urls) {
 
   bubble.appendChild(grid);
   scrollBottom();
+}
+
+// ---------------------------------------------------------------------------
+// Session save / restore helpers
+// ---------------------------------------------------------------------------
+
+function captureSessionMessages() {
+  const messages = [];
+  messagesEl.querySelectorAll('.message').forEach(msg => {
+    const role = msg.classList.contains('user') ? 'user' : 'bot';
+    const bubble = msg.querySelector('.bubble');
+    if (!bubble) return;
+    if (role === 'user') {
+      const prompt = bubble.dataset.prompt;
+      if (prompt) messages.push({ role: 'user', prompt });
+    } else {
+      const images = [...bubble.querySelectorAll('.img-wrap img')].map(img => img.getAttribute('src'));
+      if (images.length) {
+        const statusEl = bubble.querySelector('.status-text');
+        const text = statusEl ? statusEl.textContent.trim() : '';
+        messages.push({ role: 'bot', images, text });
+      }
+    }
+  });
+  return messages;
+}
+
+function restoreSession(data) {
+  history.length = 0;
+  historyIdx = -1;
+  savedDraft = '';
+  sessionImages.length = 0;
+  for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
+  fauxFullscreenEls.clear();
+  document.body.style.overflow = '';
+  messagesEl.innerHTML = '';
+
+  const s = data.settings || {};
+  if (s.server              !== undefined) currentServer             = s.server;
+  if (s.workflow            !== undefined) currentWorkflow           = s.workflow;
+  if (s.faceWorkflow        !== undefined) currentFaceWorkflow       = s.faceWorkflow;
+  if (s.upscaleWorkflow     !== undefined) currentUpscaleWorkflow    = s.upscaleWorkflow;
+  if (s.image2imageWorkflow !== undefined) currentImage2ImageWorkflow = s.image2imageWorkflow;
+  if (s.resolution          !== undefined) currentResolution         = s.resolution;
+  if (s.iterations          !== undefined) iterations                = s.iterations;
+  if (s.sequenceReplacements    !== undefined) sequenceReplacements    = s.sequenceReplacements;
+  if (s.image2imageReplacements !== undefined) image2imageReplacements = s.image2imageReplacements;
+  if (s.lastFaceDetailPrompt    !== undefined) lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
+  iterationsFromSequence = false;
+  updateHeaderStatus();
+
+  for (const url of (data.sessionImages || [])) sessionImages.push(url);
+  Object.assign(imagePrompts, data.imagePrompts || {});
+
+  const validImages = new Set(data.sessionImages || []);
+  for (const msg of (data.messages || [])) {
+    if (msg.role === 'user') {
+      addMessage('user', escapeHtml(msg.prompt), msg.prompt);
+    } else if (msg.role === 'bot' && msg.images && msg.images.length) {
+      const bubble = addMessage('bot', msg.text ? `<div class="status-text">${escapeHtml(msg.text)}</div>` : '');
+      msg.images.forEach(url => { if (validImages.has(url)) appendChatImage(bubble, url); });
+      if (!bubble.querySelector('.img-wrap') && !bubble.textContent.trim()) {
+        bubble.parentElement.remove();
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1052,6 +1052,112 @@ def api_archive():
     return jsonify({"archived": len(files), "folder": folder})
 
 
+# ---------------------------------------------------------------------------
+# Session persistence
+# ---------------------------------------------------------------------------
+
+def _sessions_dir():
+    d = IMAGES_DIR / "sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@app.route("/api/sessions")
+@login_required
+def api_sessions_list():
+    d = IMAGES_DIR / "sessions"
+    if not d.is_dir():
+        return jsonify([])
+    sessions = []
+    for f in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(f.read_text())
+            sessions.append({
+                "name": f.stem,
+                "saved_at": data.get("saved_at", ""),
+                "image_count": len(data.get("sessionImages", [])),
+            })
+        except Exception:
+            sessions.append({"name": f.stem, "saved_at": "", "image_count": 0})
+    return jsonify(sessions)
+
+
+@app.route("/api/sessions", methods=["POST"])
+@login_required
+def api_session_save():
+    body = request.get_json(force=True) or {}
+    raw_name = (body.get("name") or "").strip()
+    name = _slugify_archive_name(raw_name)
+    if not name:
+        return jsonify({"error": "A valid session name is required"}), 400
+
+    path = _sessions_dir() / f"{name}.json"
+    payload = {k: v for k, v in body.items() if k != "name"}
+    payload["saved_at"] = datetime.now().isoformat()
+
+    try:
+        path.write_text(json.dumps(payload, indent=2))
+    except OSError as e:
+        return jsonify({"error": f"Could not save session: {e}"}), 500
+
+    return jsonify({"ok": True, "name": name})
+
+
+@app.route("/api/sessions/<name>", methods=["GET"])
+@login_required
+def api_session_load(name):
+    safe = secure_filename(name)
+    if not safe or safe != name:
+        return jsonify({"error": "Invalid session name"}), 400
+
+    path = IMAGES_DIR / "sessions" / f"{safe}.json"
+    if not path.is_file():
+        return jsonify({"error": "Session not found"}), 404
+
+    try:
+        data = json.loads(path.read_text())
+    except Exception as e:
+        return jsonify({"error": f"Could not read session: {e}"}), 500
+
+    # Filter sessionImages and imagePrompts to files that still exist on disk.
+    valid = set()
+    for url in data.get("sessionImages", []):
+        filename = url.rsplit("/", 1)[-1]
+        safe_name = secure_filename(filename)
+        if safe_name and Path(safe_name).suffix.lower() in IMAGE_EXTS and (IMAGES_DIR / safe_name).is_file():
+            valid.add(url)
+
+    data["sessionImages"] = [u for u in data.get("sessionImages", []) if u in valid]
+    data["imagePrompts"]  = {k: v for k, v in data.get("imagePrompts", {}).items() if k in valid}
+
+    filtered = []
+    for msg in data.get("messages", []):
+        if msg.get("role") == "bot" and "images" in msg:
+            msg["images"] = [u for u in msg["images"] if u in valid]
+            if msg["images"] or msg.get("text"):
+                filtered.append(msg)
+        else:
+            filtered.append(msg)
+    data["messages"] = filtered
+
+    return jsonify(data)
+
+
+@app.route("/api/sessions/<name>", methods=["DELETE"])
+@login_required
+def api_session_delete(name):
+    safe = secure_filename(name)
+    if not safe or safe != name:
+        return jsonify({"error": "Invalid session name"}), 400
+
+    path = IMAGES_DIR / "sessions" / f"{safe}.json"
+    if not path.is_file():
+        return jsonify({"error": "Session not found"}), 404
+
+    path.unlink()
+    return jsonify({"ok": True})
+
+
 @app.route("/health")
 def health():
     return jsonify({"status": "healthy"})
