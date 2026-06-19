@@ -2619,7 +2619,7 @@ function openMaskEditor(imageUrl, imgWrap) {
 
   function onKey(e) {
     if (e.key === 'Escape') { closeEditor(); return; }
-    if (e.ctrlKey && (e.key === '[' || e.key === ']')) {
+    if (e.key === '[' || e.key === ']') {
       e.preventDefault();
       brushRadius = Math.max(5, Math.min(150, brushRadius + (e.key === ']' ? 5 : -5)));
       updateCursorSize();
@@ -2870,7 +2870,7 @@ function openCompositeEditor(oldUrl, newUrl, onComposite) {
 
   function onKey(e) {
     if (e.key === 'Escape') { closeEditor(); return; }
-    if (e.ctrlKey && (e.key === '[' || e.key === ']')) {
+    if (e.key === '[' || e.key === ']') {
       e.preventDefault();
       brushRadius = Math.max(5, Math.min(150, brushRadius + (e.key === ']' ? 5 : -5)));
       updateCursorSize();
@@ -3182,7 +3182,7 @@ function appendChatImage(container, url) {
   const up = document.createElement('button');
   up.className = 'img-up';
   up.title = 'Upscale image';
-  up.textContent = 'up';
+  up.textContent = '↑';
   up.addEventListener('click', e => {
     e.stopPropagation();
     if (up.disabled || sendBtn.disabled) return;
@@ -3367,7 +3367,7 @@ function renderReviewGrid(bubble, urls) {
     const up = document.createElement('button');
     up.className = 'img-up review-up';   // reuse existing img-up styling
     up.title = 'Upscale image';
-    up.textContent = 'up';
+    up.textContent = '↑';
     up.addEventListener('click', e => {
       e.stopPropagation();
       if (up.disabled || sendBtn.disabled) return;
