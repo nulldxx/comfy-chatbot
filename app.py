@@ -3,6 +3,7 @@ import os
 import json
 import uuid
 import queue
+import secrets
 import shutil
 import base64
 import threading
@@ -131,6 +132,10 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 # In-memory job tracking
 jobs: dict = {}
 jobs_lock = threading.Lock()
+
+# Mask token registry: opaque token → (session_user, Path). Single-use; consumed atomically on /api/inpaint.
+mask_tokens: dict = {}
+mask_tokens_lock = threading.Lock()
 
 # Auto-purge: free GPU memory on a ComfyUI server after a period of idleness.
 # Runs server-side so it fires even if the user closes their browser.
@@ -285,11 +290,13 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
 
         if input_mask is not None:
             send("progress", message="Uploading mask to ComfyUI...")
-            mapping["INPUT_MASK"] = server.upload_image(input_mask)
             try:
-                input_mask.unlink()
-            except OSError:
-                pass
+                mapping["INPUT_MASK"] = server.upload_image(input_mask)
+            finally:
+                try:
+                    input_mask.unlink()
+                except OSError:
+                    pass
 
         filled = apply_placeholders(template, mapping)
 
@@ -554,17 +561,20 @@ def api_inpainting_workflows():
 _MAX_MASK_BYTES = 10 * 1024 * 1024  # 10 MB decoded
 
 
-def _resolve_mask(token):
-    """Return (path, None) on success or (None, error_response) on failure.
+def _resolve_mask(token, user):
+    """Atomically consume a mask token. Return (path, None) or (None, error_response).
 
-    Masks live in MASKS_DIR, not IMAGES_DIR, so they never appear in reviews.
+    Pops the token from the registry under lock so concurrent calls with the
+    same token cannot both succeed (single-use enforcement). Also validates that
+    the token belongs to the requesting session user.
     """
-    safe = secure_filename(token)
-    if not safe or safe != token:
-        return None, (jsonify({"error": "Invalid mask token"}), 400)
-    if Path(safe).suffix.lower() not in IMAGE_EXTS:
-        return None, (jsonify({"error": "Invalid mask file type"}), 400)
-    mask_path = MASKS_DIR / safe
+    with mask_tokens_lock:
+        entry = mask_tokens.pop(token, None)
+    if entry is None:
+        return None, (jsonify({"error": "Mask not found"}), 404)
+    owner, mask_path = entry
+    if owner != user:
+        return None, (jsonify({"error": "Mask not found"}), 404)
     if not mask_path.is_file():
         return None, (jsonify({"error": "Mask not found"}), 404)
     return mask_path, None
@@ -575,9 +585,10 @@ def _resolve_mask(token):
 def api_upload_mask():
     """Accept a base64-encoded PNG mask from the browser and save it to MASKS_DIR.
 
-    Returns a short-lived token the client passes back in the /api/inpaint call.
-    Masks are stored outside IMAGES_DIR so they never appear in review grids or
-    slideshow views. They are deleted from disk once uploaded to ComfyUI.
+    Returns a short-lived opaque token the client passes back in the /api/inpaint
+    call. The token is bound to the uploading session user and consumed atomically
+    on use, so it cannot be replayed or claimed by another session. Masks are stored
+    outside IMAGES_DIR so they never appear in review grids or slideshow views.
     """
     data = request.get_json(force=True)
     b64 = (data.get("data") or "").strip()
@@ -591,9 +602,12 @@ def api_upload_mask():
         return jsonify({"error": "invalid base64"}), 400
     if len(raw) > _MAX_MASK_BYTES:
         return jsonify({"error": "Mask too large (10 MB limit)"}), 413
-    fname = f"mask_{uuid.uuid4().hex[:8]}.png"
-    (MASKS_DIR / fname).write_bytes(raw)
-    return jsonify({"token": fname})
+    mask_path = MASKS_DIR / f"mask_{uuid.uuid4().hex}.png"
+    mask_path.write_bytes(raw)
+    token = secrets.token_urlsafe(32)
+    with mask_tokens_lock:
+        mask_tokens[token] = (session.get("user"), mask_path)
+    return jsonify({"token": token})
 
 
 @app.route("/api/inpaint", methods=["POST"])
@@ -623,7 +637,7 @@ def api_inpaint():
     mask_token = (data.get("mask") or "").strip()
     if not mask_token:
         return jsonify({"error": "mask is required"}), 400
-    mask_path, err = _resolve_mask(mask_token)
+    mask_path, err = _resolve_mask(mask_token, session.get("user"))
     if err:
         return err
 
