@@ -166,7 +166,7 @@ Master prompt: {master_prompt}
 For EACH shot, produce three pieces of text:
 1. "prompt" — a detailed still-image generation prompt describing a single frame of the shot.
 2. "action" — a short description of what happens/moves in the shot if that still frame were animated into a few seconds of video.
-3. "audio" — a short description of what is being said (dialogue) and/or what ambient sounds are heard in the shot.
+3. "audio" — the spoken dialogue and/or the ambient sounds heard in the shot. For dialogue, give the EXACT words spoken verbatim (e.g. Woman: "The ledge is about two metres up on your left"), never a paraphrase or description of what is being said. For sound effects and ambient noise, a short description is fine (e.g. wind gusting, rope scraping against rock).
 
 CRITICAL: Each "prompt" is sent to the image model completely on its own, with no knowledge of the other shots. There is NO shared context between shots. Treat every shot as if it were the only one. This means each "prompt" MUST:
 - Fully restate the subject, scene, and style from scratch — never rely on, refer to, or continue from another shot
@@ -180,7 +180,7 @@ Each "prompt" should also:
 - Describe a single moment — never multiple poses or sequential actions in one prompt
 - Be optimised for a photorealistic text-to-image model
 
-The "action" and "audio" fields should each be a single concise sentence or two.
+The "action" field should be a single concise sentence or two. The "audio" field should be concise too, but whenever it includes dialogue that dialogue must be the exact words spoken, quoted verbatim, not a summary of them.
 
 Return ONLY valid JSON in exactly this structure:
 {{"prompts": [{{"prompt": "...", "action": "...", "audio": "..."}}]}}"""
