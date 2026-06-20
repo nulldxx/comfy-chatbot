@@ -1,3 +1,5 @@
+import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt } from './utils.js';
+
 const messagesEl = document.getElementById('messages');
 const inputEl    = document.getElementById('prompt-input');
 const sendBtn    = document.getElementById('send-btn');
@@ -204,11 +206,6 @@ fetch('/api/aliases')
 // Expand a word-for-word alias in `text`.  Called at send time so any alias
 // that slipped past the real-time expansion (e.g. no trailing space) is still
 // caught.  Split on runs of whitespace so separators are preserved.
-function expandAliases(text) {
-  if (!Object.keys(ALIASES).length) return text;
-  return text.split(/(\s+)/).map(tok => (/\S/.test(tok) && ALIASES[tok] !== undefined) ? ALIASES[tok] : tok).join('');
-}
-
 // Try to expand the word that the user just finished typing (detected by a
 // trailing space or newline at the cursor position).  Replaces the word
 // in-place in the textarea so the expansion is visible immediately.
@@ -232,41 +229,6 @@ function tryExpandAlias() {
   inputEl.setSelectionRange(newCursor, newCursor);
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
-}
-
-// Parse a fetch Response as JSON, but degrade gracefully when the body isn't
-// JSON at all (e.g. a gunicorn/proxy timeout page or an empty body). Without
-// this, r.json() throws the cryptic "unexpected character at line 1 column 1".
-async function parseJsonResponse(r) {
-  const text = await r.text();
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    const snippet = text.trim().slice(0, 120);
-    throw new Error(
-      r.ok
-        ? `Server returned a non-JSON response${snippet ? ': ' + snippet : ''}`
-        : `Request failed (HTTP ${r.status})${snippet ? ': ' + snippet : ''}`
-    );
-  }
-}
-
-// Subsequence fuzzy match: every query char must appear in order.
-// Returns a score (higher = better) or -1 for no match.
-function fuzzyScore(query, text) {
-  query = query.toLowerCase();
-  text  = text.toLowerCase();
-  if (!query) return 0;
-  let score = 0, from = 0, last = -2;
-  for (const ch of query) {
-    const idx = text.indexOf(ch, from);
-    if (idx === -1) return -1;
-    score += (idx === last + 1) ? 3 : 1;  // reward consecutive runs
-    if (idx === 0) score += 2;            // reward matching the start
-    last = idx;
-    from = idx + 1;
-  }
-  return score;
 }
 
 // Matches a "/lora" token (optionally followed by a space and a query)
@@ -749,7 +711,7 @@ function handleSlashCommand(raw) {
     sendBtn.disabled = true;
     (async () => {
       for (const prompt of lines) {
-        const expanded = expandAliases(prompt);
+        const expanded = expandAliases(prompt, ALIASES);
         addMessage('user', escapeHtml(expanded), expanded);
         const ok = await runGeneration(expanded, '');
         if (!ok) break;
@@ -760,7 +722,7 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/sequence') {
-    const master = expandAliases(raw.slice('/sequence'.length).trim());
+    const master = expandAliases(raw.slice('/sequence'.length).trim(), ALIASES);
     addMessage('user', escapeHtml(raw), raw);
     if (!master) {
       addMessage('bot', '<span style="color:#f87171">⚠ Provide a master prompt, e.g. <code>/sequence a woman practising yoga at sunrise</code></span>');
@@ -960,7 +922,7 @@ function handleSlashCommand(raw) {
             addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
             return;
           }
-          prompt = applyImage2ImageReplacements(orig);
+          prompt = applyReplacements(orig, image2imageReplacements);
         }
         addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
         return runImage2Image(prompt, img);
@@ -2371,19 +2333,6 @@ function removeImageFromChat(url) {
 // found in the prompt so the re-detailed face keeps the original mood. Returns
 // null if no LoRA. Expressions are appended as comma-separated tags (how
 // diffusion prompts read), so noun/adjective grammar mixing doesn't matter.
-const SUBJECT_RE = /\b(woman|man|girl|boy|lady)\b/i;   // \b stops 'man' matching inside 'woman'
-// Multi-word / hyphenated forms first so e.g. "open mouth" wins over a bare word.
-const EXPRESSION_RE = /\b(open[- ]mouthed|open mouth|wide[- ]eyed|teary[- ]eyed|gritted teeth|clenched teeth|furrowed brow|raised eyebrows?|tongue out|biting lip|lip bite|pursed lips|puppy eyes|side[- ]eye|rolling eyes|eyes closed|closed eyes|head tilt|smiling|smile|grinning|grin|laughing|laugh|chuckling|giggling|beaming|smirking|smirk|winking|wink|frowning|frown|scowling|scowl|pouting|pout|crying|sobbing|weeping|tearful|sniffling|screaming|scream|shouting|yelling|yawning|sneering|snarling|grimacing|gasping|blushing|flushed|surprised|shocked|astonished|amazed|stunned|angry|furious|enraged|rage|annoyed|irritated|sad|sorrowful|melancholy|depressed|gloomy|happy|joyful|joy|cheerful|delighted|gleeful|ecstatic|ecstasy|euphoric|blissful|content|terrified|scared|fearful|afraid|frightened|horrified|panicked|worried|anxious|nervous|confused|puzzled|perplexed|disgusted|disgust|contempt|bored|tired|sleepy|exhausted|serious|stern|solemn|calm|serene|peaceful|relaxed|seductive|flirtatious|sultry|coy|smug|mischievous|playful|determined|focused|concentrating|pained|anguished|agony|suffering|embarrassed|ashamed|shy|bashful|hopeful|longing|yearning|dreamy|thoughtful|pensive|suspicious|skeptical|disappointed|frustrated|desperate|hysterical|manic|deadpan|expressionless|neutral|intense|fierce|menacing)\b/gi;
-function deriveFaceDetailPrompt(genPrompt) {
-  if (!genPrompt) return null;
-  const loraTags = genPrompt.match(/<lora:[^>]+>/gi);   // preserves name + strength verbatim
-  if (!loraTags || !loraTags.length) return null;
-  const m = genPrompt.match(SUBJECT_RE);
-  const subject = m ? `a ${m[1].toLowerCase()}'s face` : 'a face';
-  const expressions = [...new Set((genPrompt.match(EXPRESSION_RE) || []).map(s => s.toLowerCase()))];
-  const desc = [subject, ...expressions].join(', ');
-  return `${desc} ${loraTags.join(' ')}`;
-}
 
 // Runs a face-detailer workflow over `image` using `prompt`. Driven by the
 // per-image face icons. When `imgWrap` (the source image's .img-wrap) is given,
@@ -2415,12 +2364,6 @@ function runUpscale(image, imgWrap) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
-// Applies the active /image2image-replacement pairs to a prompt. Plain
-// substring replacement, matching the backend /sequence replacement semantics.
-function applyImage2ImageReplacements(prompt) {
-  for (const [from, to] of image2imageReplacements) prompt = prompt.split(from).join(to);
-  return prompt;
-}
 
 // Runs an image2image workflow over `image` using `prompt`. Mirrors
 // runFaceDetail. When `imgWrap` (the source image's .img-wrap) is given, the
@@ -3429,7 +3372,7 @@ function appendChatImage(container, url) {
         addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
         return;
       }
-      prompt = applyImage2ImageReplacements(orig);
+      prompt = applyReplacements(orig, image2imageReplacements);
     }
     i2i.disabled = true;
     addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
@@ -3579,7 +3522,7 @@ function renderReviewGrid(bubble, urls) {
           addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
           return;
         }
-        prompt = applyImage2ImageReplacements(orig);
+        prompt = applyReplacements(orig, image2imageReplacements);
       }
       ri2i.disabled = true;
       addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
@@ -3740,7 +3683,7 @@ function sendMessage() {
 
   // Expand any aliases that weren't caught by the real-time trigger (e.g. no
   // trailing space before Enter was pressed).
-  raw = expandAliases(raw);
+  raw = expandAliases(raw, ALIASES);
 
   addMessage('user', escapeHtml(raw), raw);
   inputEl.value = '';
@@ -4011,9 +3954,3 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   });
 }
 
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}

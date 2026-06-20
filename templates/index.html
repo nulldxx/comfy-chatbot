@@ -45,14 +45,14 @@
 <div id="drop-overlay"><div id="drop-overlay-msg">Drop image to add to session</div></div>
 
 <script>
-const DEFAULT_SERVER    = {{ default_server | tojson }};
-const DEFAULT_SERVER_OS = {{ default_server_os | tojson }};
-const DEFAULT_WORKFLOW  = {{ default_workflow | tojson }};
-const DEFAULT_FACE_WORKFLOW = {{ default_face_workflow | tojson }};
-const DEFAULT_UPSCALE_WORKFLOW = {{ default_upscale_workflow | tojson }};
-const DEFAULT_IMAGE2IMAGE_WORKFLOW = {{ default_image2image_workflow | tojson }};
-const DEFAULT_INPAINTING_WORKFLOW = {{ default_inpainting_workflow | tojson }};
+var DEFAULT_SERVER    = {{ default_server | tojson }};
+var DEFAULT_SERVER_OS = {{ default_server_os | tojson }};
+var DEFAULT_WORKFLOW  = {{ default_workflow | tojson }};
+var DEFAULT_FACE_WORKFLOW = {{ default_face_workflow | tojson }};
+var DEFAULT_UPSCALE_WORKFLOW = {{ default_upscale_workflow | tojson }};
+var DEFAULT_IMAGE2IMAGE_WORKFLOW = {{ default_image2image_workflow | tojson }};
+var DEFAULT_INPAINTING_WORKFLOW = {{ default_inpainting_workflow | tojson }};
 </script>
-<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat.js') }}"></script>
 </body>
 </html>

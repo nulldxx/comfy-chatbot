@@ -1,0 +1,15 @@
+{
+  "name": "comfy-chatbot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:js": "node --experimental-vm-modules node_modules/.bin/jest"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/js/**/*.test.js"]
+  }
+}
