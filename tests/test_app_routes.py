@@ -455,6 +455,31 @@ class TestCompositeVideos(_AppFixture):
         )
         return path
 
+    def _make_video_with_audio(self, name, seconds=1):
+        """Render a tiny real test clip that carries an audio (sine) track."""
+        path = self.images_dir / name
+        subprocess.run(
+            [
+                "ffmpeg", "-nostdin", "-y",
+                "-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=64x64:rate=10",
+                "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path),
+            ],
+            capture_output=True, check=True,
+        )
+        return path
+
+    @staticmethod
+    def _has_audio_stream(path):
+        proc = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "a",
+                "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path),
+            ],
+            capture_output=True,
+        )
+        return b"audio" in proc.stdout
+
     def test_fewer_than_two_returns_400(self):
         resp = self.client.post(
             "/api/composite-videos", json={"urls": ["/images/clip.mp4"]}
@@ -498,6 +523,33 @@ class TestCompositeVideos(_AppFixture):
         out_path = self.images_dir / out_url.rsplit("/", 1)[-1]
         self.assertTrue(out_path.is_file())
         self.assertGreater(out_path.stat().st_size, 0)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
+    def test_composite_preserves_audio(self):
+        self._make_video_with_audio("a.mp4")
+        self._make_video_with_audio("b.mp4")
+        resp = self.client.post(
+            "/api/composite-videos",
+            json={"urls": ["/images/a.mp4", "/images/b.mp4"]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        out_path = self.images_dir / resp.get_json()["url"].rsplit("/", 1)[-1]
+        self.assertTrue(out_path.is_file())
+        self.assertTrue(self._has_audio_stream(out_path))
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
+    def test_composite_mixed_audio_and_silent(self):
+        # One clip with audio, one without: the silent clip is backed by
+        # generated silence so the joined output still carries an audio track.
+        self._make_video_with_audio("a.mp4")
+        self._make_video("b.mp4")
+        resp = self.client.post(
+            "/api/composite-videos",
+            json={"urls": ["/images/a.mp4", "/images/b.mp4"]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        out_path = self.images_dir / resp.get_json()["url"].rsplit("/", 1)[-1]
+        self.assertTrue(self._has_audio_stream(out_path))
 
 
 # ---------------------------------------------------------------------------

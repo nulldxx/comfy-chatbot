@@ -411,30 +411,44 @@ def api_extract_last_frame():
     return jsonify({"url": f"/images/{out_name}"})
 
 
-def _probe_video_dimensions(path):
-    """Return (width, height) of a video via ffprobe, or None if unavailable.
+def _probe_video_info(path):
+    """Return {width, height, has_audio, duration} for a video via ffprobe.
 
-    Used to normalise clips to a common resolution before concatenation; if
-    ffprobe is missing or fails the caller falls back to joining clips as-is.
+    Any field that cannot be determined is None. Used to normalise clips to a
+    common resolution and to drive audio handling (fades + silent fill) before
+    concatenation; if ffprobe is missing or fails the caller falls back to
+    joining clips as a silent montage.
     """
+    info = {"width": None, "height": None, "has_audio": False, "duration": None}
     cmd = [
-        "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", str(path),
+        "ffprobe", "-v", "error", "-show_streams", "-show_format",
+        "-of", "json", str(path),
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=30)
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
+        return info
     if proc.returncode != 0:
-        return None
-    out = proc.stdout.decode("utf-8", "replace").strip().splitlines()
-    if not out:
-        return None
+        return info
     try:
-        w, h = out[0].split("x")
-        return int(w), int(h)
+        data = json.loads(proc.stdout.decode("utf-8", "replace") or "{}")
     except ValueError:
-        return None
+        return info
+    for stream in data.get("streams", []):
+        codec_type = stream.get("codec_type")
+        if codec_type == "video" and info["width"] is None:
+            try:
+                info["width"] = int(stream["width"])
+                info["height"] = int(stream["height"])
+            except (KeyError, ValueError, TypeError):
+                pass
+        elif codec_type == "audio":
+            info["has_audio"] = True
+    try:
+        info["duration"] = float(data.get("format", {}).get("duration"))
+    except (TypeError, ValueError):
+        pass
+    return info
 
 
 @app.route("/api/composite-videos", methods=["POST"])
@@ -446,7 +460,11 @@ def api_composite_videos():
     /images/ video URLs; ffmpeg concatenates them (re-encoding to the first
     clip's resolution so clips of differing sizes still join cleanly) and the
     result is written to IMAGES_DIR and dropped at the bottom of the chat.
-    Audio is dropped — the output is a silent montage.
+
+    Audio is preserved: each clip's audio is faded in at its start and out at
+    its end so the joins are gentle, and clips that have no audio are backed
+    by matching silence so the streams line up. If no clip carries audio (or
+    durations are unknown) the output is a silent montage.
     """
     err = output_storage_error()
     if err:
@@ -469,10 +487,23 @@ def api_composite_videos():
             return jsonify({"error": f"Video not found: {filename}"}), 404
         srcs.append(src)
 
+    n = len(srcs)
+    infos = [_probe_video_info(s) for s in srcs]
+
     # Normalise every clip to the first video's resolution; the concat filter
     # requires matching dimensions, so clips of differing sizes are scaled.
-    dims = _probe_video_dimensions(srcs[0])
-    scale = f"scale={dims[0]}:{dims[1]}," if dims else ""
+    first = infos[0]
+    scale = (
+        f"scale={first['width']}:{first['height']},"
+        if first["width"] and first["height"]
+        else ""
+    )
+
+    # Include audio only when at least one clip carries it and every clip's
+    # duration is known — silent fill and fade-out timing both need durations.
+    keep_audio = any(i["has_audio"] for i in infos) and all(
+        i["duration"] for i in infos
+    )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_name = f"{timestamp}_composite_{uuid.uuid4().hex[:8]}.mp4"
@@ -481,16 +512,49 @@ def api_composite_videos():
     cmd = ["ffmpeg", "-nostdin", "-y"]
     for src in srcs:
         cmd += ["-i", str(src)]
-    labels = [f"[{i}:v]{scale}setsar=1,format=yuv420p[v{i}]" for i in range(len(srcs))]
-    concat_inputs = "".join(f"[v{i}]" for i in range(len(srcs)))
-    filter_complex = (
-        ";".join(labels)
-        + f";{concat_inputs}concat=n={len(srcs)}:v=1:a=0[outv]"
-    )
-    cmd += [
-        "-filter_complex", filter_complex, "-map", "[outv]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path),
-    ]
+
+    parts = [f"[{i}:v]{scale}setsar=1,format=yuv420p[v{i}]" for i in range(n)]
+
+    if keep_audio:
+        # Clips without their own audio get a silent track of matching length,
+        # added as extra lavfi inputs after the real clips (indices n, n+1, …).
+        fade = 0.5
+        audio_label = {}
+        extra_idx = n
+        for i, info in enumerate(infos):
+            dur = info["duration"]
+            fd = min(fade, dur / 2)
+            if info["has_audio"]:
+                chain = (
+                    f"[{i}:a]aformat=sample_rates=44100:channel_layouts=stereo,"
+                    f"afade=t=in:st=0:d={fd:.3f},"
+                    f"afade=t=out:st={dur - fd:.3f}:d={fd:.3f}[a{i}]"
+                )
+                parts.append(chain)
+                audio_label[i] = f"[a{i}]"
+            else:
+                cmd += [
+                    "-f", "lavfi", "-t", f"{dur:.3f}",
+                    "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                ]
+                parts.append(f"[{extra_idx}:a]aformat=sample_rates=44100:"
+                             f"channel_layouts=stereo[a{i}]")
+                audio_label[i] = f"[a{i}]"
+                extra_idx += 1
+        concat_inputs = "".join(f"[v{i}]{audio_label[i]}" for i in range(n))
+        parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[outv][outa]")
+        tail = [
+            "-map", "[outv]", "-map", "[outa]",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+            str(out_path),
+        ]
+    else:
+        concat_inputs = "".join(f"[v{i}]" for i in range(n))
+        parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[outv]")
+        tail = ["-map", "[outv]", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                str(out_path)]
+
+    cmd += ["-filter_complex", ";".join(parts)] + tail
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=600)
     except FileNotFoundError:
