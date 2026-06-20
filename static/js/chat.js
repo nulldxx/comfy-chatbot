@@ -197,6 +197,7 @@ const SLASH_COMMANDS = [
   { cmd: '/review-today',   desc: 'grid of today\'s images (tap to view, trash to delete)', args: '' },
   { cmd: '/sequence',   desc: 'generate a prompt sequence from a master prompt (Grok)', args: ' ' },
   { cmd: '/video-sequence', desc: 'like /sequence, plus per-shot action & audio for video (Grok)', args: ' ' },
+  { cmd: '/sequence-review', desc: 'show the last sequence\'s prompts in a grid; ▶ to generate one', args: '' },
   { cmd: '/sequence-replacement', desc: 'add a find→replace applied to Grok prompts', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
   { cmd: '/slideshow',         desc: 'browse the last N images, oldest first',  args: ' ' },
@@ -380,6 +381,10 @@ let videoLock = 'fps';  // 'duration' | 'frames' | 'fps'
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
+// The most recent /sequence or /video-sequence result, for /sequence-review.
+// null until one runs; { video: bool, items: [{ prompt, action, audio }] }
+// (action/audio are empty strings for a plain /sequence).
+let lastSequence = null;
 let image2imageReplacements = []; // [from, to] pairs applied to the original generation prompt for prompt-less /image2image
 let image2imageOverridePrompt = null; // set via /image2image-set-prompt; overrides the per-image original prompt for prompt-less /image2image and the 🎨 button
 let image2videoReplacements = []; // [from, to] pairs applied to the original generation prompt for prompt-less /image2video
@@ -814,6 +819,8 @@ function handleSlashCommand(raw) {
     .then(async data => {
       if (data.error) throw new Error(data.error);
       const prompts = data.prompts || [];
+      // Remember this run for /sequence-review (plain sequence — no action/audio).
+      lastSequence = { video: false, items: prompts.map(p => ({ prompt: p, action: '', audio: '' })) };
       statusBubble.innerHTML = `<div class="status-text">Grok returned <strong style="color:#a78bfa">${prompts.length}</strong> prompt(s) — generating one after another…</div>`;
       scrollBottom();
       // Generate each prompt sequentially, exactly like /multi.
@@ -855,6 +862,11 @@ function handleSlashCommand(raw) {
     .then(async data => {
       if (data.error) throw new Error(data.error);
       const shots = data.prompts || [];
+      // Remember this run for /sequence-review (carries action/audio per shot).
+      lastSequence = {
+        video: true,
+        items: shots.map(s => ({ prompt: s.prompt || '', action: s.action || '', audio: s.audio || '' })),
+      };
       statusBubble.innerHTML = `<div class="status-text">Grok returned <strong style="color:#a78bfa">${shots.length}</strong> shot(s) — generating one after another…</div>`;
       scrollBottom();
       // Generate each still from its prompt only; remember action/audio so the
@@ -874,6 +886,17 @@ function handleSlashCommand(raw) {
       statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
       sendBtn.disabled = false;
     });
+    return;
+  }
+
+  if (cmd === '/sequence-review') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!lastSequence || !lastSequence.items.length) {
+      addMessage('bot', '<span style="color:#f87171">⚠ No sequence has been run yet — use <code>/sequence</code> or <code>/video-sequence</code> first.</span>');
+      return;
+    }
+    const bubble = addMessage('bot', '');
+    renderSequenceReview(bubble, lastSequence);
     return;
   }
 
@@ -1334,6 +1357,7 @@ function handleSlashCommand(raw) {
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">count comes from <code>/iterations</code> (or 15 if iterations is 1) &nbsp;·&nbsp; needs <code>XAI_API_KEY</code> set on the server</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/video-sequence &lt;master prompt&gt;</code> — like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-review</code> — show the last sequence's prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to each Grok prompt (no args lists them; <code>clear</code> removes them)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several workflows, then run the prompt against each one</div>
@@ -1834,6 +1858,7 @@ function handleSlashCommand(raw) {
     sessionImages.length = 0;
     for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
     for (const k of Object.keys(imageVideoMeta)) delete imageVideoMeta[k];
+    lastSequence = null;
     fauxFullscreenEls.clear();
     document.body.style.overflow = '';
     messagesEl.innerHTML = '';
@@ -1848,6 +1873,7 @@ function handleSlashCommand(raw) {
     sessionImages.length = 0;
     for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
     for (const k of Object.keys(imageVideoMeta)) delete imageVideoMeta[k];
+    lastSequence = null;
     fauxFullscreenEls.clear();
     document.body.style.overflow = '';
     currentServer = null;
@@ -1911,6 +1937,7 @@ function handleSlashCommand(raw) {
       sessionImages: sessionImages.slice(),
       imagePrompts: Object.assign({}, imagePrompts),
       imageVideoMeta: Object.assign({}, imageVideoMeta),
+      lastSequence,
       messages: captureSessionMessages(),
     };
     const bubble = addMessage('bot', '<div class="status-text">Saving session…</div>').parentElement.querySelector('.bubble');
@@ -3860,6 +3887,73 @@ function appendChatImage(container, url) {
   container.appendChild(wrap);
 }
 
+// Renders the last /sequence (or /video-sequence) run into `bubble` as a grid of
+// prompt rows, each with a ▶ button that generates an image from that prompt.
+// For a /video-sequence run, the action and audio lines are shown too, and the
+// generated image carries them as videoMeta so its 🎬 video button folds them in.
+function renderSequenceReview(bubble, seq) {
+  bubble.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'seq-review-header';
+  header.textContent = `Last ${seq.video ? 'video ' : ''}sequence — ${seq.items.length} prompt(s). Press ▶ to generate an image from a prompt.`;
+  bubble.appendChild(header);
+
+  const list = document.createElement('div');
+  list.className = 'seq-review';
+
+  seq.items.forEach((item, idx) => {
+    const row = document.createElement('div');
+    row.className = 'seq-review-row';
+
+    const play = document.createElement('button');
+    play.className = 'seq-review-play';
+    play.title = 'Generate an image from this prompt';
+    play.textContent = '▶';
+    play.addEventListener('click', () => {
+      if (play.disabled || sendBtn.disabled) return;
+      play.disabled = true;
+      // Carry action/audio only for a video sequence, so the resulting image's
+      // 🎬 button can fold them into the video prompt later.
+      const opts = seq.video
+        ? { videoMeta: { action: item.action || '', audio: item.audio || '' } }
+        : {};
+      addMessage('user', escapeHtml(item.prompt), item.prompt);
+      runGeneration(item.prompt, '', null, opts).finally(() => { play.disabled = false; });
+    });
+
+    const body = document.createElement('div');
+    body.className = 'seq-review-body';
+
+    const promptEl = document.createElement('div');
+    promptEl.className = 'seq-review-prompt';
+    promptEl.textContent = `${idx + 1}. ${item.prompt}`;
+    body.appendChild(promptEl);
+
+    // Show action/audio for a video sequence (only the lines that are present).
+    if (seq.video && item.action) {
+      const a = document.createElement('div');
+      a.className = 'seq-review-meta';
+      a.innerHTML = `<span class="seq-review-label">Action:</span> `;
+      a.appendChild(document.createTextNode(item.action));
+      body.appendChild(a);
+    }
+    if (seq.video && item.audio) {
+      const a = document.createElement('div');
+      a.className = 'seq-review-meta';
+      a.innerHTML = `<span class="seq-review-label">Audio:</span> `;
+      a.appendChild(document.createTextNode(item.audio));
+      body.appendChild(a);
+    }
+
+    row.appendChild(play);
+    row.appendChild(body);
+    list.appendChild(row);
+  });
+
+  bubble.appendChild(list);
+}
+
 // Renders a responsive grid of the given image URLs into `bubble`. Tapping a
 // thumb opens the lightbox; the trash button deletes from the output folder
 // (and removes every chat copy via removeImageFromChat).
@@ -4055,6 +4149,7 @@ function restoreSession(data) {
   sessionImages.length = 0;
   for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
   for (const k of Object.keys(imageVideoMeta)) delete imageVideoMeta[k];
+  lastSequence = null;
   fauxFullscreenEls.clear();
   document.body.style.overflow = '';
   messagesEl.innerHTML = '';
@@ -4086,6 +4181,7 @@ function restoreSession(data) {
   for (const url of (data.sessionImages || [])) sessionImages.push(url);
   Object.assign(imagePrompts, data.imagePrompts || {});
   Object.assign(imageVideoMeta, data.imageVideoMeta || {});
+  lastSequence = data.lastSequence || null;
 
   const validImages = new Set(data.sessionImages || []);
   for (const msg of (data.messages || [])) {
