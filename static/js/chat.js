@@ -569,6 +569,9 @@ function extractLastFrame(url) {
       // Inherit the source video's metadata so the extracted frame carries the
       // same action/audio when fed back into image2video (last-frame continuity).
       if (imageVideoMeta[url]) imageVideoMeta[data.url] = { ...imageVideoMeta[url] };
+      // Also inherit the source video's generation prompt so the "Edit metadata"
+      // editor pre-populates Prompt with whatever produced the original video.
+      if (imagePrompts[url]) imagePrompts[data.url] = imagePrompts[url];
       sessionImages.push(data.url);
       appendChatImage(bubble, data.url);
       scrollBottom();
