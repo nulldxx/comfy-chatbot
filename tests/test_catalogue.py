@@ -155,6 +155,43 @@ class TestListWorkflowNames(unittest.TestCase):
         self.assertEqual(catalogue.list_workflow_names(Path("/no/such")), [])
 
 
+class TestListWorkflowWrappers(unittest.TestCase):
+    """The four thin wrappers each delegate to list_workflow_names — just confirm
+    they call through to the right directory and return a list."""
+
+    def _make_workflow(self, directory):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "wf.json").write_text("{}")
+
+    def test_list_facedetailer_workflows(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._make_workflow(Path(d) / "facedetailer")
+            with patch.object(catalogue, "COMFY_FACEDETAILER_DIR", Path(d) / "facedetailer"):
+                result = catalogue.list_facedetailer_workflows()
+        self.assertEqual(result, ["wf"])
+
+    def test_list_upscaler_workflows(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._make_workflow(Path(d) / "upscaler")
+            with patch.object(catalogue, "COMFY_UPSCALER_DIR", Path(d) / "upscaler"):
+                result = catalogue.list_upscaler_workflows()
+        self.assertEqual(result, ["wf"])
+
+    def test_list_image2image_workflows(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._make_workflow(Path(d) / "i2i")
+            with patch.object(catalogue, "COMFY_IMAGE2IMAGE_DIR", Path(d) / "i2i"):
+                result = catalogue.list_image2image_workflows()
+        self.assertEqual(result, ["wf"])
+
+    def test_list_inpainting_workflows(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._make_workflow(Path(d) / "inpaint")
+            with patch.object(catalogue, "COMFY_INPAINTING_DIR", Path(d) / "inpaint"):
+                result = catalogue.list_inpainting_workflows()
+        self.assertEqual(result, ["wf"])
+
+
 class TestResolveWorkflow(unittest.TestCase):
     def test_valid_name_returned(self):
         from app import app

@@ -85,6 +85,18 @@ class TestMaskTokens(unittest.TestCase):
             resp, status = err
             self.assertEqual(status, 404)
 
+    def test_deleted_file_returns_404(self):
+        with _PatchedImageStore(self.tmp) as (images_dir, masks_dir, _):
+            from app import app
+            token = image_store.register_mask_token("alice", b"\x89PNG")
+            # Simulate the file being deleted between registration and resolution
+            for path in masks_dir.iterdir():
+                path.unlink()
+            with app.app_context():
+                _, err = image_store.resolve_mask(token, "alice")
+            resp, status = err
+            self.assertEqual(status, 404)
+
 
 class TestDrawTokens(unittest.TestCase):
     def setUp(self):
@@ -123,6 +135,17 @@ class TestDrawTokens(unittest.TestCase):
             resp, status = err
             self.assertEqual(status, 404)
 
+    def test_deleted_file_returns_404(self):
+        with _PatchedImageStore(self.tmp) as (images_dir, _, inpaint_inputs_dir):
+            from app import app
+            token = image_store.register_draw_token("alice", b"\x89PNG")
+            for path in inpaint_inputs_dir.iterdir():
+                path.unlink()
+            with app.app_context():
+                _, err = image_store.resolve_draw_image(token, "alice")
+            resp, status = err
+            self.assertEqual(status, 404)
+
 
 class TestResolveInputImage(unittest.TestCase):
     def setUp(self):
@@ -158,11 +181,12 @@ class TestResolveInputImage(unittest.TestCase):
             resp, status = err
             self.assertEqual(status, 400)
 
-    def test_path_traversal_rejected(self):
+    def test_filename_altered_by_secure_filename_rejected(self):
+        # rsplit("/",1) extracts "my photo.png"; secure_filename adds underscore → 400
         with _PatchedImageStore(self.tmp):
             from app import app
             with app.app_context():
-                _, _, err = image_store.resolve_input_image("/images/../etc/passwd")
+                _, _, err = image_store.resolve_input_image("/images/my photo.png")
             resp, status = err
             self.assertEqual(status, 400)
 
@@ -206,9 +230,16 @@ class TestSelectImages(unittest.TestCase):
         self.assertEqual(len(result), 1)
 
     def test_session_scope_rejects_traversal(self):
+        # "../etc/passwd" → secure_filename → "passwd" ≠ original → ValueError
         with _PatchedImageStore(self.tmp):
             with self.assertRaises(ValueError):
                 image_store.select_images("session", filenames=["../etc/passwd"])
+
+    def test_session_scope_rejects_filename_with_spaces(self):
+        # "my file.png" → secure_filename → "my_file.png" ≠ original → ValueError
+        with _PatchedImageStore(self.tmp):
+            with self.assertRaises(ValueError):
+                image_store.select_images("session", filenames=["my file.png"])
 
     def test_session_scope_rejects_bad_extension(self):
         with _PatchedImageStore(self.tmp):

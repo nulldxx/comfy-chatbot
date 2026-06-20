@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -200,6 +201,199 @@ class TestAgentClient(unittest.TestCase):
         self.assertEqual(req["action"], "unmount")
         self.assertEqual(req["target"], "output")
         self.assertEqual(req["volume"], "/host/output.luks")
+
+
+class TestAgentClientSend(unittest.TestCase):
+    """Tests for the low-level send() helper and error paths in mount/unmount."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_send_raises_on_bad_socket(self):
+        with self.assertRaises(RuntimeError):
+            agent_client.send({"action": "ping"}, "/no/such/socket.sock", timeout=1.0)
+
+    def _start_server(self, response_bytes):
+        """Start a trivial Unix-socket server that sends `response_bytes` then closes."""
+        sock_path = os.path.join(self.tmp, "srv.sock")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(sock_path)
+        srv.listen(1)
+        srv.settimeout(2.0)
+
+        def _serve():
+            try:
+                conn, _ = srv.accept()
+                conn.recv(4096)
+                if response_bytes:
+                    conn.sendall(response_bytes)
+                conn.close()
+            except Exception:
+                pass
+            finally:
+                srv.close()
+
+        threading.Thread(target=_serve, daemon=True).start()
+        return sock_path
+
+    def test_send_raises_on_empty_response(self):
+        sock_path = self._start_server(b"")
+        import time; time.sleep(0.05)
+        with self.assertRaises(RuntimeError):
+            agent_client.send({"action": "ping"}, sock_path, timeout=2.0)
+
+    def test_send_raises_on_malformed_json(self):
+        sock_path = self._start_server(b"not json\n")
+        import time; time.sleep(0.05)
+        with self.assertRaises(RuntimeError):
+            agent_client.send({"action": "ping"}, sock_path, timeout=2.0)
+
+
+class TestMountOutputErrorPaths(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.images_dir = os.path.join(self.tmp, "output")
+        os.makedirs(self.images_dir)
+        self._saved = {}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _setenv(self, **kwargs):
+        for k, v in kwargs.items():
+            self._saved.setdefault(k, os.environ.get(k))
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_no_password_returns_error(self):
+        self._setenv(OUTPUT_VOLUME="/host/out.luks", OUTPUT_PASSWORD=None, SECRET_KEY=None)
+        self.assertEqual(agent_client._mount_output(), 1)
+
+    def test_send_failure_returns_error(self):
+        self._setenv(
+            OUTPUT_VOLUME="/host/out.luks",
+            OUTPUT_PASSWORD="pw",
+            ARCHIVE_AGENT_SOCKET="/no/such/socket.sock",
+            COMFY_OUTPUT_DIR=self.images_dir,
+        )
+        self.assertEqual(agent_client._mount_output(), 1)
+
+    def test_agent_not_ok_returns_error(self):
+        # Set up a fake agent that returns {"ok": false}
+        sock_path = os.path.join(self.tmp, "agent.sock")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(sock_path)
+        srv.listen(1)
+        srv.settimeout(2.0)
+
+        def _serve():
+            try:
+                conn, _ = srv.accept()
+                conn.recv(4096)
+                conn.sendall((json.dumps({"ok": False, "error": "no space"}) + "\n").encode())
+                conn.close()
+            except Exception:
+                pass
+            finally:
+                srv.close()
+
+        threading.Thread(target=_serve, daemon=True).start()
+        import time; time.sleep(0.05)
+
+        self._setenv(
+            OUTPUT_VOLUME="/host/out.luks",
+            OUTPUT_PASSWORD="pw",
+            ARCHIVE_AGENT_SOCKET=sock_path,
+            COMFY_OUTPUT_DIR=self.images_dir,
+        )
+        self.assertEqual(agent_client._mount_output(), 1)
+
+
+class TestUnmountOutputErrorPaths(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._saved = {}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _setenv(self, **kwargs):
+        for k, v in kwargs.items():
+            self._saved.setdefault(k, os.environ.get(k))
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_disabled_returns_zero(self):
+        self._setenv(OUTPUT_VOLUME=None)
+        self.assertEqual(agent_client._unmount_output(), 0)
+
+    def test_send_failure_returns_error(self):
+        self._setenv(OUTPUT_VOLUME="/host/out.luks", ARCHIVE_AGENT_SOCKET="/no/such/socket.sock")
+        self.assertEqual(agent_client._unmount_output(), 1)
+
+    def test_agent_not_ok_returns_error(self):
+        sock_path = os.path.join(self.tmp, "agent.sock")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(sock_path)
+        srv.listen(1)
+        srv.settimeout(2.0)
+
+        def _serve():
+            try:
+                conn, _ = srv.accept()
+                conn.recv(4096)
+                conn.sendall((json.dumps({"ok": False, "error": "busy"}) + "\n").encode())
+                conn.close()
+            except Exception:
+                pass
+            finally:
+                srv.close()
+
+        threading.Thread(target=_serve, daemon=True).start()
+        import time; time.sleep(0.05)
+
+        self._setenv(OUTPUT_VOLUME="/host/out.luks", ARCHIVE_AGENT_SOCKET=sock_path)
+        self.assertEqual(agent_client._unmount_output(), 1)
+
+
+class TestAgentClientMain(unittest.TestCase):
+    def test_mount_output_command(self):
+        # Just verify main() dispatches to _mount_output; patch the function.
+        with patch.object(agent_client, "_mount_output", return_value=0) as m:
+            rc = agent_client.main(["agent_client", "mount-output"])
+        self.assertEqual(rc, 0)
+        m.assert_called_once()
+
+    def test_unmount_output_command(self):
+        with patch.object(agent_client, "_unmount_output", return_value=0) as m:
+            rc = agent_client.main(["agent_client", "unmount-output"])
+        self.assertEqual(rc, 0)
+        m.assert_called_once()
+
+    def test_unknown_command_returns_2(self):
+        rc = agent_client.main(["agent_client", "bad-command"])
+        self.assertEqual(rc, 2)
+
+    def test_no_command_returns_2(self):
+        rc = agent_client.main(["agent_client"])
+        self.assertEqual(rc, 2)
 
 
 if __name__ == "__main__":
