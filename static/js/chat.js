@@ -1,5 +1,5 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
-         DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS, fmtDuration, clampVideo, recomputeVideo, buildVideoPrompt, i2vTooltip } from './utils.js';
+         DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS, fmtDuration, clampVideo, recomputeVideo, buildVideoPrompt, i2vTooltip, reorderList } from './utils.js';
 
 // Builds the DOM element for a generated result: a <video> for video outputs,
 // otherwise an <img>. Both carry alt text and the same class so existing CSS
@@ -187,6 +187,7 @@ const SLASH_COMMANDS = [
   { cmd: '/denoise', desc: 'set denoise defaults for face-detail, image2image, inpainting, upscale', args: '' },
   { cmd: '/generation-steps', desc: 'override steps for generation workflows (e.g. 20)', args: ' ' },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
+  { cmd: '/composite-videos-session', desc: 'drag to reorder this session\'s videos, then ✓ to join them into one', args: '' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },
   { cmd: '/purge',      desc: 'free GPU memory on active server',   args: ''  },
@@ -1492,6 +1493,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-all</code> — grid of every image, oldest first (tap to view, trash to delete)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-today</code> — grid of today's images, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review-session</code> — grid of this session's images</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/composite-videos-session</code> — drag this session's videos into order, then press ✓ to join them into one clip</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow &lt;n&gt;</code> — browse the last N images, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-all</code> — browse every image, oldest first</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-reverse</code> — browse every image, newest first</div>
@@ -1688,6 +1690,19 @@ function handleSlashCommand(raw) {
     }
     const bubble = addMessage('bot', '');
     renderReviewGrid(bubble, sessionImages.slice());
+    return;
+  }
+
+  if (cmd === '/composite-videos-session') {
+    const videos = sessionImages.filter(isVideoUrl);
+    if (videos.length < 2) {
+      addMessage('bot', videos.length
+        ? 'Only one video in this session — generate at least two to composite.'
+        : 'No videos from this session yet — generate some with image2video first!');
+      return;
+    }
+    const bubble = addMessage('bot', '');
+    renderCompositeGrid(bubble, videos);
     return;
   }
 
@@ -4229,6 +4244,148 @@ function renderReviewGrid(bubble, urls) {
 
   bubble.appendChild(grid);
   scrollBottom();
+}
+
+// Renders a draggable grid of this session's videos for /composite-videos-session.
+// Each thumbnail is a playable <video>; the ⠿ handle reorders cells (pointer-based,
+// so it works with both mouse and touch); the ✓ button joins them, in the shown
+// order, into a single clip that lands at the bottom of the chat.
+function renderCompositeGrid(bubble, urls) {
+  bubble.innerHTML = '';
+
+  const hint = document.createElement('div');
+  hint.className = 'composite-hint';
+  hint.textContent = 'Drag the ⠿ handle to reorder, play each to preview, then press ✓ to join them into one clip.';
+  bubble.appendChild(hint);
+
+  let order = urls.slice();
+  const cells = new Map();   // url -> cell element
+
+  const grid = document.createElement('div');
+  grid.className = 'composite-grid';
+
+  function renderBadges() {
+    order.forEach((url, i) => {
+      const cell = cells.get(url);
+      if (cell) cell.querySelector('.composite-order').textContent = String(i + 1);
+    });
+  }
+
+  // Re-append cells in `order` (moving a DOM node re-orders it) and renumber.
+  function relayout() {
+    order.forEach(url => grid.appendChild(cells.get(url)));
+    renderBadges();
+  }
+
+  function cellFromPoint(x, y) {
+    for (const cell of cells.values()) {
+      const r = cell.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return cell;
+    }
+    return null;
+  }
+
+  let dragging = null;      // the cell currently being dragged
+  let draggingUrl = null;
+
+  function attachDragHandle(handle, cell) {
+    handle.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      dragging = cell;
+      draggingUrl = cell.dataset.url;
+      cell.classList.add('composite-dragging');
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    handle.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      e.preventDefault();
+      const target = cellFromPoint(e.clientX, e.clientY);
+      if (target && target !== dragging) {
+        const from = order.indexOf(draggingUrl);
+        const to   = order.indexOf(target.dataset.url);
+        if (from !== -1 && to !== -1) {
+          order = reorderList(order, from, to);
+          relayout();
+        }
+      }
+    });
+    const end = e => {
+      if (!dragging) return;
+      dragging.classList.remove('composite-dragging');
+      dragging = null; draggingUrl = null;
+      try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }
+
+  order.forEach(url => {
+    const cell = document.createElement('div');
+    cell.className = 'composite-cell';
+    cell.dataset.url = url;
+
+    const video = createMediaElement(url);   // <video controls loop playsInline>
+    video.muted = true;
+    video.preload = 'metadata';
+
+    const badge = document.createElement('span');
+    badge.className = 'composite-order';
+
+    const handle = document.createElement('button');
+    handle.className = 'composite-handle';
+    handle.title = 'Drag to reorder';
+    handle.setAttribute('aria-label', 'Drag to reorder');
+    handle.textContent = '⠿';
+
+    cell.appendChild(video);
+    cell.appendChild(badge);
+    cell.appendChild(handle);
+    cells.set(url, cell);
+    grid.appendChild(cell);
+    attachDragHandle(handle, cell);
+  });
+
+  renderBadges();
+  bubble.appendChild(grid);
+
+  const controls = document.createElement('div');
+  controls.className = 'composite-controls';
+  const go = document.createElement('button');
+  go.className = 'composite-go';
+  go.title = 'Composite these videos into one';
+  go.textContent = '✓';
+  go.addEventListener('click', () => {
+    if (go.disabled) return;
+    go.disabled = true;
+    compositeVideos(order.slice()).finally(() => { go.disabled = false; });
+  });
+  controls.appendChild(go);
+  bubble.appendChild(controls);
+
+  scrollBottom();
+}
+
+// POSTs the ordered video URLs to the server, which ffmpeg-concatenates them into
+// a single clip; the result is dropped at the bottom of the chat like any other
+// generated video (and tracked in sessionImages so it appears in reviews).
+function compositeVideos(orderedUrls) {
+  const bubble = addMessage('bot', '<div class="status-text">Compositing videos…</div>');
+  return fetch('/api/composite-videos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls: orderedUrls }),
+  })
+    .then(parseJsonResponse)
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      bubble.innerHTML = '';
+      sessionImages.push(data.url);
+      appendChatImage(bubble, data.url);
+      scrollBottom();
+    })
+    .catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ Could not composite videos: ${escapeHtml(err.message)}</span>`;
+    });
 }
 
 // ---------------------------------------------------------------------------

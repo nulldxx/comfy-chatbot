@@ -584,6 +584,60 @@ header a:hover { color: #a78bfa; }
   .review-i2v { opacity: 0.6; }
 }
 
+/* /composite-videos-session: drag-to-reorder grid of session videos + a ✓ button. */
+.composite-hint { font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px; }
+.composite-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+.composite-cell {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid #1e293b;
+  background: #0b1220;
+}
+.composite-cell video {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.composite-cell.composite-dragging { opacity: 0.5; outline: 2px dashed #38bdf8; }
+.composite-order {
+  position: absolute;
+  top: 4px; left: 4px;
+  min-width: 18px; text-align: center;
+  padding: 2px 6px;
+  background: rgba(15,23,42,0.85); border: 1px solid #334155;
+  color: #e2e8f0; border-radius: 8px;
+  font-size: 0.75rem; line-height: 1;
+  pointer-events: none;
+}
+.composite-handle {
+  position: absolute;
+  top: 4px; right: 4px;
+  background: rgba(15,23,42,0.85); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 3px 7px; font-size: 0.95rem; line-height: 1;
+  cursor: grab; touch-action: none; user-select: none;
+}
+.composite-handle:active { cursor: grabbing; }
+.composite-handle:hover { border-color: #38bdf8; color: #38bdf8; }
+.composite-controls { margin-top: 10px; display: flex; justify-content: flex-end; }
+.composite-go {
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 6px 14px; font-size: 1rem; line-height: 1;
+  cursor: pointer;
+}
+.composite-go:hover { border-color: #4ade80; color: #4ade80; }
+.composite-go:disabled { opacity: 0.5; cursor: default; }
+@media (max-width: 600px) {
+  .composite-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+}
+
 /* /sequence-review: a list of the last sequence's prompts, each with a ▶ button. */
 .seq-review-header { font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px; }
 .seq-review { display: flex; flex-direction: column; gap: 8px; }

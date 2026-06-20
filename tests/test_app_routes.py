@@ -441,6 +441,65 @@ class TestExtractLastFrame(_AppFixture):
         self.assertEqual(out_path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
 
 
+class TestCompositeVideos(_AppFixture):
+    def _make_video(self, name, seconds=1):
+        """Render a tiny real test clip with ffmpeg into IMAGES_DIR."""
+        path = self.images_dir / name
+        subprocess.run(
+            [
+                "ffmpeg", "-nostdin", "-y", "-f", "lavfi",
+                "-i", f"testsrc=duration={seconds}:size=64x64:rate=10",
+                "-pix_fmt", "yuv420p", str(path),
+            ],
+            capture_output=True, check=True,
+        )
+        return path
+
+    def test_fewer_than_two_returns_400(self):
+        resp = self.client.post(
+            "/api/composite-videos", json={"urls": ["/images/clip.mp4"]}
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_non_video_returns_400(self):
+        self._make_image("still.png")
+        resp = self.client.post(
+            "/api/composite-videos",
+            json={"urls": ["/images/still.png", "/images/still.png"]},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unsafe_filename_returns_400(self):
+        resp = self.client.post(
+            "/api/composite-videos",
+            json={"urls": ["/images/my clip.mp4", "/images/other.mp4"]},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_video_not_found_returns_404(self):
+        resp = self.client.post(
+            "/api/composite-videos",
+            json={"urls": ["/images/missing.mp4", "/images/gone.mp4"]},
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
+    def test_composites_videos(self):
+        self._make_video("a.mp4")
+        self._make_video("b.mp4")
+        resp = self.client.post(
+            "/api/composite-videos",
+            json={"urls": ["/images/a.mp4", "/images/b.mp4"]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        out_url = resp.get_json()["url"]
+        self.assertTrue(out_url.startswith("/images/"))
+        self.assertTrue(out_url.endswith(".mp4"))
+        out_path = self.images_dir / out_url.rsplit("/", 1)[-1]
+        self.assertTrue(out_path.is_file())
+        self.assertGreater(out_path.stat().st_size, 0)
+
+
 # ---------------------------------------------------------------------------
 # Generation route validation (mocked job launcher)
 # ---------------------------------------------------------------------------

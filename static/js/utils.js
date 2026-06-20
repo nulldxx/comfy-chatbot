@@ -61,6 +61,18 @@ export function applyReplacements(prompt, replacements) {
   return prompt;
 }
 
+// Move the item at index `from` to index `to`, returning a new array (the
+// input is left untouched). Out-of-range indices and from===to yield a shallow
+// copy unchanged. Powers drag-to-reorder in the /composite-videos-session grid.
+export function reorderList(arr, from, to) {
+  const out = arr.slice();
+  if (from === to) return out;
+  if (from < 0 || from >= out.length || to < 0 || to >= out.length) return out;
+  const [moved] = out.splice(from, 1);
+  out.splice(to, 0, moved);
+  return out;
+}
+
 // Used only by deriveFaceDetailPrompt — kept here so they travel together.
 const SUBJECT_RE = /\b(woman|man|girl|boy|lady)\b/i;
 // Multi-word / hyphenated forms first so e.g. "open mouth" wins over a bare word.

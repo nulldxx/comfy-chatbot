@@ -1,5 +1,37 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
-         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip } from '../../static/js/utils.js';
+         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList } from '../../static/js/utils.js';
+
+// ---------------------------------------------------------------------------
+// reorderList
+// ---------------------------------------------------------------------------
+
+describe('reorderList', () => {
+  test('moves an item forward', () => {
+    expect(reorderList(['a', 'b', 'c', 'd'], 0, 2)).toEqual(['b', 'c', 'a', 'd']);
+  });
+
+  test('moves an item backward', () => {
+    expect(reorderList(['a', 'b', 'c', 'd'], 3, 1)).toEqual(['a', 'd', 'b', 'c']);
+  });
+
+  test('from === to is a no-op copy', () => {
+    const input = ['a', 'b', 'c'];
+    const out = reorderList(input, 1, 1);
+    expect(out).toEqual(['a', 'b', 'c']);
+    expect(out).not.toBe(input);
+  });
+
+  test('does not mutate the input array', () => {
+    const input = ['a', 'b', 'c'];
+    reorderList(input, 0, 2);
+    expect(input).toEqual(['a', 'b', 'c']);
+  });
+
+  test('out-of-range indices return an unchanged copy', () => {
+    expect(reorderList(['a', 'b'], 5, 0)).toEqual(['a', 'b']);
+    expect(reorderList(['a', 'b'], 0, -1)).toEqual(['a', 'b']);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // escapeHtml

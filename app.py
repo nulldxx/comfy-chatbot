@@ -411,6 +411,100 @@ def api_extract_last_frame():
     return jsonify({"url": f"/images/{out_name}"})
 
 
+def _probe_video_dimensions(path):
+    """Return (width, height) of a video via ffprobe, or None if unavailable.
+
+    Used to normalise clips to a common resolution before concatenation; if
+    ffprobe is missing or fails the caller falls back to joining clips as-is.
+    """
+    cmd = [
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", str(path),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = proc.stdout.decode("utf-8", "replace").strip().splitlines()
+    if not out:
+        return None
+    try:
+        w, h = out[0].split("x")
+        return int(w), int(h)
+    except ValueError:
+        return None
+
+
+@app.route("/api/composite-videos", methods=["POST"])
+@login_required
+def api_composite_videos():
+    """Concatenate several session videos into one, in the given order.
+
+    Powers /composite-videos-session: the browser sends an ordered list of
+    /images/ video URLs; ffmpeg concatenates them (re-encoding to the first
+    clip's resolution so clips of differing sizes still join cleanly) and the
+    result is written to IMAGES_DIR and dropped at the bottom of the chat.
+    Audio is dropped — the output is a silent montage.
+    """
+    err = output_storage_error()
+    if err:
+        return err
+    data = request.get_json(force=True)
+    urls = data.get("urls") or []
+    if not isinstance(urls, list) or len(urls) < 2:
+        return jsonify({"error": "Need at least two videos to composite"}), 400
+
+    srcs = []
+    for url in urls:
+        filename = str(url).rsplit("/", 1)[-1]
+        safe = secure_filename(filename)
+        if not safe or safe != filename:
+            return jsonify({"error": f"Invalid filename: {filename}"}), 400
+        src = IMAGES_DIR / safe
+        if src.suffix.lower() not in VIDEO_EXTS:
+            return jsonify({"error": f"Not a video: {filename}"}), 400
+        if not src.is_file():
+            return jsonify({"error": f"Video not found: {filename}"}), 404
+        srcs.append(src)
+
+    # Normalise every clip to the first video's resolution; the concat filter
+    # requires matching dimensions, so clips of differing sizes are scaled.
+    dims = _probe_video_dimensions(srcs[0])
+    scale = f"scale={dims[0]}:{dims[1]}," if dims else ""
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_name = f"{timestamp}_composite_{uuid.uuid4().hex[:8]}.mp4"
+    out_path = IMAGES_DIR / out_name
+
+    cmd = ["ffmpeg", "-nostdin", "-y"]
+    for src in srcs:
+        cmd += ["-i", str(src)]
+    labels = [f"[{i}:v]{scale}setsar=1,format=yuv420p[v{i}]" for i in range(len(srcs))]
+    concat_inputs = "".join(f"[v{i}]" for i in range(len(srcs)))
+    filter_complex = (
+        ";".join(labels)
+        + f";{concat_inputs}concat=n={len(srcs)}:v=1:a=0[outv]"
+    )
+    cmd += [
+        "-filter_complex", filter_complex, "-map", "[outv]",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=600)
+    except FileNotFoundError:
+        return jsonify({"error": "ffmpeg is not available"}), 500
+    except subprocess.TimeoutExpired:
+        out_path.unlink(missing_ok=True)
+        return jsonify({"error": "Compositing timed out"}), 500
+    if proc.returncode != 0 or not out_path.is_file():
+        out_path.unlink(missing_ok=True)
+        detail = proc.stderr.decode("utf-8", "replace").strip()[-300:]
+        return jsonify({"error": f"Could not composite videos: {detail}"}), 500
+    return jsonify({"url": f"/images/{out_name}"})
+
+
 # ---------------------------------------------------------------------------
 # Generation endpoints
 # ---------------------------------------------------------------------------
