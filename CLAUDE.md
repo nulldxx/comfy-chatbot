@@ -147,6 +147,36 @@ Environment variables for deployment:
 - Health checks ensure container reliability in orchestrated environments
 - Scripts provide automated setup and testing across platforms
 
+## Workflow Template Parameters
+
+Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are JSON templates with placeholder tokens that `workflow.py` replaces before submitting to ComfyUI. The replacement logic lives in `apply_placeholders()` and related functions in `workflow.py`.
+
+### String placeholders (replaced as JSON-escaped strings)
+
+| Placeholder | Description |
+|---|---|
+| `<PROMPT>` | The user's text prompt, with `<lora:...>` tags stripped out |
+| `<LORA_1_NAME>` | Filename of the first LoRA (e.g. `my_lora.safetensors`), sourced from `<lora:name:strength>` tags in the prompt |
+| `<INPUT_IMAGE>` | Base64-encoded source image for img2img, face-detailer, and inpainting workflows |
+| `<INPUT_MASK>` | Base64-encoded B&W mask PNG for inpainting (white = area to repaint), uploaded separately via `/api/upload-mask` |
+
+### Numeric placeholders (replaced as bare JSON numbers, not quoted strings)
+
+| Placeholder | Description |
+|---|---|
+| `<LORA_1_STRENGTH>` | Strength of the first LoRA (float, e.g. `0.8`), sourced from the `<lora:name:strength>` tag; defaults to `1.0` if omitted |
+| `<DENOISE>` | Denoising strength for KSampler nodes (float 0.0–1.0); used in img2img workflows |
+
+### LoRA handling detail
+
+- Multiple LoRAs are supported: `<LORA_1_NAME>` / `<LORA_1_STRENGTH>`, `<LORA_2_NAME>` / `<LORA_2_STRENGTH>`, etc.
+- LoRA slots with no corresponding `<lora:...>` tag in the prompt are filled with a sentinel value and then the entire LoRA node is removed from the workflow graph, with its model/clip outputs rewired to bypass it (`strip_lora_nodes()` in `workflow.py`).
+- The pattern for matching lora tags in user input is `<lora:name:strength>` (case-insensitive); strength is optional and defaults to `1.0`.
+
+### Validation
+
+`fill_placeholders_for_validation()` substitutes dummy values (`1.0` for numeric slots, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.
+
 ## Live Configuration (Host Machine)
 
 The `docker-compose.yml` in this repo is an **example only**. The live deployment uses:
