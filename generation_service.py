@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import uuid
 import queue
@@ -306,6 +307,26 @@ def start_generation_job(prompt, loras, server_address, server_os, workflow_name
 # watch it over SSE and cancel it with the same ✕ button. Cancellation closes
 # the job's requests.Session, which aborts the in-flight call to Grok.
 
+def case_preserving_replace(text, src, dst):
+    """Replace every occurrence of ``src`` in ``text`` case-insensitively, adapting
+    the replacement's case to the matched text: an ALL-CAPS match yields an
+    all-caps replacement, a Capitalised match yields a capitalised replacement,
+    otherwise the replacement is used exactly as written. E.g. with src "bird"
+    and dst "dog": "bird"→"dog", "Bird"→"Dog", "BIRD"→"DOG"."""
+    if not src:
+        return text
+
+    def repl(m):
+        matched = m.group(0)
+        if matched.isupper():
+            return dst.upper()
+        if matched[:1].isupper():
+            return dst[:1].upper() + dst[1:]
+        return dst
+
+    return re.sub(re.escape(src), repl, text, flags=re.IGNORECASE)
+
+
 def run_sequence(job_id, master, count, replacements, video):
     with jobs_lock:
         q = jobs[job_id]["queue"]
@@ -334,7 +355,7 @@ def run_sequence(job_id, master, count, replacements, video):
                 }
                 for src, dst in replacements:
                     for key in ("prompt", "action", "audio"):
-                        item[key] = item[key].replace(src, dst)
+                        item[key] = case_preserving_replace(item[key], src, dst)
                 out.append(item)
         else:
             prompts = generate_prompt_sequence(
@@ -343,7 +364,7 @@ def run_sequence(job_id, master, count, replacements, video):
             out = []
             for p in prompts:
                 for src, dst in replacements:
-                    p = p.replace(src, dst)
+                    p = case_preserving_replace(p, src, dst)
                 out.append(p)
 
         with jobs_lock:

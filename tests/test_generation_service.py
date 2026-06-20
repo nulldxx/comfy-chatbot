@@ -67,6 +67,14 @@ class RunSequenceTests(unittest.TestCase):
         self.assertEqual(item["action"], "the dog leaps")
         self.assertEqual(item["audio"], "dog meow")
 
+    def test_replacements_are_case_insensitive_and_preserve_case(self):
+        job_id = self._make_job()
+        prompts = ["a bird flies", "a Bird sings", "a BIRD"]
+        with patch.object(gs, "generate_prompt_sequence", return_value=prompts):
+            gs.run_sequence(job_id, "x", 3, [("bird", "dog")], video=False)
+        done = [m for m in _drain(gs.jobs[job_id]["queue"]) if m["type"] == "done"][0]
+        self.assertEqual(done["prompts"], ["a dog flies", "a Dog sings", "a DOG"])
+
     def test_grok_error_emits_error(self):
         job_id = self._make_job()
         with patch.object(gs, "generate_prompt_sequence", side_effect=GrokError("down")):

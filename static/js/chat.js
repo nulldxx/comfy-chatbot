@@ -888,7 +888,7 @@ function handleSlashCommand(raw) {
     addMessage('user', escapeHtml(raw), raw);
     if (!parts[1]) {
       if (!sequenceReplacements.length) {
-        addMessage('bot', `No sequence replacements set.<br>Usage: <code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to every prompt <code>/sequence</code> gets back from Grok.<br><code>/sequence-replacement clear</code> removes them all.`);
+        addMessage('bot', `No sequence replacements set.<br>Usage: <code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Matching is case-insensitive and preserves the matched case (<code>bird</code>→<code>dog</code>, <code>Bird</code>→<code>Dog</code>). Applied to every prompt <code>/sequence</code> gets back from Grok.<br><code>/sequence-replacement clear</code> removes them all.`);
       } else {
         const list = sequenceReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
         addMessage('bot', `<strong>Sequence replacements:</strong><br>${list}<br><br><code>/sequence-replacement clear</code> removes them all.`);
