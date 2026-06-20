@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as app_module
+import image_store as image_store_module
 from app import app
 
 
@@ -92,15 +93,18 @@ class TestArchive(unittest.TestCase):
             "ARCHIVE_AGENT_SOCKET": app_module.ARCHIVE_AGENT_SOCKET,
             "ARCHIVE_MOUNT_DIR": app_module.ARCHIVE_MOUNT_DIR,
         }
+        self._orig_image_store_images_dir = image_store_module.IMAGES_DIR
         app_module.IMAGES_DIR = Path(self.images_dir)
         app_module.ARCHIVE_VOLUME = "/host/archive.img"
         app_module.ARCHIVE_PASSWORD = "s3cret"
         app_module.ARCHIVE_AGENT_SOCKET = self.sock_path
         app_module.ARCHIVE_MOUNT_DIR = Path(self.mount_dir)
+        image_store_module.IMAGES_DIR = Path(self.images_dir)
 
     def tearDown(self):
         for k, v in self._orig.items():
             setattr(app_module, k, v)
+        image_store_module.IMAGES_DIR = self._orig_image_store_images_dir
         self.agent.stop()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
