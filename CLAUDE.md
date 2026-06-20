@@ -29,8 +29,9 @@ docker-compose logs -f comfy-chatbot
 
 # This runs the complete test suite:
 # 1. Python import tests
-# 2. Python unit tests  
+# 2. Python unit tests
 # 3. Docker container tests
+# Note: JS tests (npm run test:js) are NOT included in test-all and must be run separately
 ```
 
 #### Individual Test Components
@@ -45,6 +46,12 @@ python -m pytest tests/test_simple.py -v
 
 # Run all tests
 python -m unittest discover tests/
+```
+
+**JavaScript Unit Tests**
+```bash
+# Run JS tests (Jest, tests/js/*.test.js)
+npm run test:js
 ```
 
 **Docker Container Testing**
@@ -139,3 +146,10 @@ Environment variables for deployment:
 - Gunicorn configuration optimized for container deployment
 - Health checks ensure container reliability in orchestrated environments
 - Scripts provide automated setup and testing across platforms
+
+## Live Configuration (Host Machine)
+
+The `docker-compose.yml` in this repo is an **example only**. The live deployment uses:
+
+- **Docker Compose file**: `~/dot-files/docker-compose/comfy-chatbot.yml`
+- **ComfyUI workflows**: `~/dot-files/comfyui/` (bind-mounted into the container at `/app/workflows`)
