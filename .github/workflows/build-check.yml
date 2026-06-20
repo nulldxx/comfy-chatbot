@@ -34,3 +34,14 @@ jobs:
         python -m unittest discover -s tests -v
         echo "Running Python import tests..."
         python tests/test_imports.py
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Install JS dependencies
+      run: npm ci
+
+    - name: Run JS tests
+      run: npm run test:js
