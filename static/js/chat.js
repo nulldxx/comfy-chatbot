@@ -552,6 +552,29 @@ function importDroppedImage(file) {
     });
 }
 
+// Cuts the last frame out of a generated video (server-side, via ffmpeg) and
+// drops it at the bottom of the chat as a normal generated image, so it can be
+// edited, do-over'd or fed back into image2video for last-frame continuity.
+function extractLastFrame(url) {
+  const bubble = addMessage('bot', '<div class="status-text">Cutting last frame…</div>');
+  return fetch('/api/extract-last-frame', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      bubble.innerHTML = '';
+      sessionImages.push(data.url);
+      appendChatImage(bubble, data.url);
+      scrollBottom();
+    })
+    .catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ Could not cut last frame: ${escapeHtml(err.message)}</span>`;
+    });
+}
+
 // Tap a user bubble to re-edit that prompt
 messagesEl.addEventListener('click', e => {
   if (e.target.tagName === 'IMG') return;
@@ -3681,7 +3704,8 @@ function appendChatImage(container, url) {
 
   // Video results can't be re-fed into the image-input ops (face-detail,
   // upscale, do-over, image2image, inpaint, image2video), so those overlays are
-  // image-only; a video keeps just the delete button.
+  // image-only; a video keeps the delete button plus a scissors button that
+  // cuts its last frame into the chat as an image (for last-frame continuity).
   if (isVideoUrl(url)) {
     const del = document.createElement('button');
     del.className = 'img-del';
@@ -3703,8 +3727,21 @@ function appendChatImage(container, url) {
           }, 3000);
         });
     });
+
+    const cut = document.createElement('button');
+    cut.className = 'img-cut';
+    cut.title = 'Cut last frame into the chat as an image';
+    cut.innerHTML = '&#9986;&#xFE0E;';
+    cut.addEventListener('click', e => {
+      e.stopPropagation();
+      if (cut.disabled) return;
+      cut.disabled = true;
+      extractLastFrame(url).finally(() => { cut.disabled = false; });
+    });
+
     wrap.appendChild(media);
     wrap.appendChild(del);
+    wrap.appendChild(cut);
     container.appendChild(wrap);
     return;
   }

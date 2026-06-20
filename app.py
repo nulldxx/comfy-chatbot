@@ -2,6 +2,7 @@ import base64
 import json
 import queue
 import shutil
+import subprocess
 import threading
 import uuid
 from datetime import datetime
@@ -32,6 +33,7 @@ from config import (
     COMFY_SERVER, COMFY_SERVER_OS, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_MARKER, OUTPUT_VOLUME, PASSWORD, SECRET_KEY, USERNAME,
+    VIDEO_EXTS,
 )
 from generation_service import (
     cancel_auto_purge, jobs, jobs_lock, run_generation, start_generation_job,
@@ -353,6 +355,60 @@ def api_import_image():
     except OSError as e:
         return jsonify({"error": f"Could not save file: {e}"}), 500
     return jsonify({"url": f"/images/{filename}"})
+
+
+@app.route("/api/extract-last-frame", methods=["POST"])
+@login_required
+def api_extract_last_frame():
+    """Extract the final frame of a generated video and save it as a PNG.
+
+    Powers the scissors (✂) overlay on video results: it pulls the last frame
+    out of the clip with ffmpeg, writes it to IMAGES_DIR with a permanent
+    /images/ URL, and the browser drops it at the bottom of the chat like any
+    other generated image. This enables last-frame video continuity — the
+    extracted frame can be edited, do-over'd, or fed back into image2video to
+    continue the sequence while processing the frames in between.
+    """
+    err = output_storage_error()
+    if err:
+        return err
+    data = request.get_json(force=True)
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+
+    filename = url.rsplit("/", 1)[-1]
+    safe = secure_filename(filename)
+    if not safe or safe != filename:
+        return jsonify({"error": "Invalid filename"}), 400
+    src = IMAGES_DIR / safe
+    if src.suffix.lower() not in VIDEO_EXTS:
+        return jsonify({"error": "Not a video"}), 400
+    if not src.is_file():
+        return jsonify({"error": "Video not found"}), 404
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_name = f"{timestamp}_lastframe_{uuid.uuid4().hex[:8]}.png"
+    out_path = IMAGES_DIR / out_name
+    # -sseof -1 seeks to ~1s before the end (cheap — ffmpeg only decodes the
+    # tail); -update 1 rewrites the single output file for every decoded frame,
+    # so the file left behind is the very last frame of the clip.
+    cmd = [
+        "ffmpeg", "-nostdin", "-y", "-sseof", "-1", "-i", str(src),
+        "-update", "1", "-q:v", "2", str(out_path),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=60)
+    except FileNotFoundError:
+        return jsonify({"error": "ffmpeg is not available"}), 500
+    except subprocess.TimeoutExpired:
+        out_path.unlink(missing_ok=True)
+        return jsonify({"error": "Frame extraction timed out"}), 500
+    if proc.returncode != 0 or not out_path.is_file():
+        out_path.unlink(missing_ok=True)
+        detail = proc.stderr.decode("utf-8", "replace").strip()[-300:]
+        return jsonify({"error": f"Could not extract frame: {detail}"}), 500
+    return jsonify({"url": f"/images/{out_name}"})
 
 
 # ---------------------------------------------------------------------------

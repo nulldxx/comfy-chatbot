@@ -19,7 +19,10 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# No additional runtime dependencies needed for basic Flask app
+# ffmpeg is used to extract the last frame from generated videos (the ✂ overlay)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder stage
 COPY --from=builder /root/.local /usr/local

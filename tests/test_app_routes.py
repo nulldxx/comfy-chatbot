@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -376,6 +377,68 @@ class TestImportImage(_AppFixture):
             content_type="multipart/form-data",
         )
         self.assertEqual(resp.status_code, 400)
+
+
+class TestExtractLastFrame(_AppFixture):
+    def _make_video(self, name="clip.mp4", seconds=1):
+        """Render a tiny real test clip with ffmpeg into IMAGES_DIR."""
+        path = self.images_dir / name
+        subprocess.run(
+            [
+                "ffmpeg", "-nostdin", "-y", "-f", "lavfi",
+                "-i", f"testsrc=duration={seconds}:size=64x64:rate=10",
+                "-pix_fmt", "yuv420p", str(path),
+            ],
+            capture_output=True, check=True,
+        )
+        return path
+
+    def test_missing_url_returns_400(self):
+        resp = self.client.post("/api/extract-last-frame", json={})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_non_video_returns_400(self):
+        self._make_image("still.png")
+        resp = self.client.post(
+            "/api/extract-last-frame", json={"url": "/images/still.png"}
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unsafe_filename_returns_400(self):
+        # A name secure_filename would rewrite (space) is rejected outright.
+        resp = self.client.post(
+            "/api/extract-last-frame", json={"url": "/images/my clip.mp4"}
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_traversal_url_reduced_to_basename(self):
+        # A path-traversal URL collapses to its basename, so it never escapes
+        # IMAGES_DIR — here it just resolves to a non-existent file.
+        resp = self.client.post(
+            "/api/extract-last-frame", json={"url": "/images/../etc/passwd.mp4"}
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_video_not_found_returns_404(self):
+        resp = self.client.post(
+            "/api/extract-last-frame", json={"url": "/images/missing.mp4"}
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
+    def test_extracts_last_frame(self):
+        self._make_video("clip.mp4")
+        resp = self.client.post(
+            "/api/extract-last-frame", json={"url": "/images/clip.mp4"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        out_url = resp.get_json()["url"]
+        self.assertTrue(out_url.startswith("/images/"))
+        self.assertTrue(out_url.endswith(".png"))
+        out_path = self.images_dir / out_url.rsplit("/", 1)[-1]
+        self.assertTrue(out_path.is_file())
+        # PNG magic number — the extracted frame is a real image.
+        self.assertEqual(out_path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
 
 
 # ---------------------------------------------------------------------------

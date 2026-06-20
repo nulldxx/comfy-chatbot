@@ -177,6 +177,21 @@ header a:hover { color: #a78bfa; }
 @media (hover: none) {
   .img-del { opacity: 0.6; }
 }
+.img-cut {
+  position: absolute; bottom: 8px; right: 8px;
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 5px 8px; font-size: 0.85rem;
+  cursor: pointer; line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.img-wrap:hover .img-cut { opacity: 1; }
+.img-cut:hover { border-color: #2dd4bf; color: #2dd4bf; }
+.img-cut:disabled { cursor: default; opacity: 0.4; }
+@media (hover: none) {
+  .img-cut { opacity: 0.6; }
+}
 .img-face {
   position: absolute; bottom: 8px; right: 8px;
   background: rgba(15,23,42,0.75); border: 1px solid #334155;
