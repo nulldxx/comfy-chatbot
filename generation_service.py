@@ -83,7 +83,7 @@ def cancel_auto_purge(server_address):
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
                    width=None, height=None, steps=None, denoise=None, workflow_dir=None,
                    input_image=None, input_mask=None, preserve_mtime_from=None,
-                   cleanup_input_image=False):
+                   cleanup_input_image=False, duration=None, frames=None, fps=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
         cancel_event = jobs[job_id]["cancel"]
@@ -123,6 +123,18 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         # below additionally covers templates with a literal denoise value.
         if denoise is not None:
             mapping["DENOISE"] = denoise
+
+        # Video duration/frames/fps placeholders for image2video workflows. These
+        # are bare numeric slots (like <DENOISE>); the UI keeps them mutually
+        # consistent (frames = duration × fps) via /video-settings.
+        if duration is not None:
+            mapping["DURATION"] = duration
+        if frames is not None:
+            mapping["FRAMES"] = frames
+        if fps is not None:
+            mapping["FPS"] = fps
+        if duration is not None or frames is not None or fps is not None:
+            send("progress", message=f"Video: {frames} frames @ {fps} fps ({duration}s)")
 
         if input_image is not None:
             send("progress", message="Uploading source image to ComfyUI...")

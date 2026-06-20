@@ -166,6 +166,9 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 |---|---|
 | `<LORA_1_STRENGTH>` | Strength of the first LoRA (float, e.g. `0.8`), sourced from the `<lora:name:strength>` tag; defaults to `1.0` if omitted |
 | `<DENOISE>` | Denoising strength for KSampler nodes (float 0.0–1.0); used in img2img workflows |
+| `<DURATION>` | Video duration in seconds (float); image2video workflows. Set via `/video-settings` |
+| `<FRAMES>` | Video frame count (int); image2video workflows. Set via `/video-settings` |
+| `<FPS>` | Video frames per second (int); image2video workflows. Set via `/video-settings` |
 
 ### LoRA handling detail
 
@@ -173,9 +176,15 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 - LoRA slots with no corresponding `<lora:...>` tag in the prompt are filled with a sentinel value and then the entire LoRA node is removed from the workflow graph, with its model/clip outputs rewired to bypass it (`strip_lora_nodes()` in `workflow.py`).
 - The pattern for matching lora tags in user input is `<lora:name:strength>` (case-insensitive); strength is optional and defaults to `1.0`.
 
+### Video settings detail
+
+- `<DURATION>`, `<FRAMES>` and `<FPS>` are interdependent: `frames = duration × fps`. The `/video-settings` UI keeps them consistent — you lock one value (only one at a time) and editing either of the other two re-derives the third. The math lives in `utils.js` (`clampVideo` / `recomputeVideo`) and is unit-tested.
+- Output is driven by `<FRAMES>` and `<FPS>` (both integers, fed to `PrimitiveInt` nodes); `<DURATION>` is the human-facing value and may round by a frame at the extremes.
+- In the LTXV image2video template, the latent length math node consumes the Frames primitive as `frames + 1` (the extra conditioning frame), the Frame Rate primitive feeds the conditioning/audio/CreateVideo nodes, and the Duration primitive is informational.
+
 ### Validation
 
-`fill_placeholders_for_validation()` substitutes dummy values (`1.0` for numeric slots, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.
+`fill_placeholders_for_validation()` substitutes dummy values (`1.0` for float slots, `1` for the integer video slots, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.
 
 ## Live Configuration (Host Machine)
 

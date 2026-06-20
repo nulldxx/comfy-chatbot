@@ -473,6 +473,66 @@ class TestParseDenoise(_AppFixture):
         self.assertEqual(resp.status_code, 400)
 
 
+class TestImage2VideoSettings(_AppFixture):
+    """/api/image2video accepts duration/frames/fps for the <DURATION>/<FRAMES>/<FPS> slots."""
+
+    def setUp(self):
+        super().setUp()
+        self._img = self._make_image("src.png")
+        self._gen_patcher = patch("app.start_generation_job", return_value="j")
+        self._gen = self._gen_patcher.start()
+        self._vol_patcher = patch.object(app_module, "OUTPUT_VOLUME", "")
+        self._vol_patcher.start()
+        self._vol_patcher2 = patch.object(image_store_module, "OUTPUT_VOLUME", "")
+        self._vol_patcher2.start()
+        import catalogue
+        self._wf_patcher = patch.object(catalogue, "COMFY_IMAGE2VIDEO_DIR",
+                                        Path(self.tmp) / "image2video")
+        Path(self.tmp, "image2video").mkdir()
+        (Path(self.tmp, "image2video") / "vid.json").write_text("{}")
+        self._wf_patcher.start()
+
+    def tearDown(self):
+        self._gen_patcher.stop()
+        self._vol_patcher.stop()
+        self._vol_patcher2.stop()
+        self._wf_patcher.stop()
+        super().tearDown()
+
+    def test_valid_settings_forwarded(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid",
+                  "duration": 5, "frames": 125, "fps": 25},
+        )
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertEqual(kwargs["duration"], 5.0)
+        self.assertEqual(kwargs["frames"], 125)
+        self.assertEqual(kwargs["fps"], 25)
+
+    def test_negative_duration_returns_400(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid", "duration": -1},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_fps_not_integer_returns_400(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid", "fps": "lots"},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_settings_optional(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid"},
+        )
+        self.assertEqual(resp.status_code, 200)
+
+
 # ---------------------------------------------------------------------------
 # Session endpoints
 # ---------------------------------------------------------------------------

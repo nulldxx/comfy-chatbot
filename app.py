@@ -428,6 +428,41 @@ def _parse_denoise(data):
     return denoise, None
 
 
+def _parse_video_settings(data):
+    """Extract and validate duration/frames/fps from a JSON request dict.
+
+    All three are optional; when present they fill the <DURATION>/<FRAMES>/<FPS>
+    placeholders in image2video workflows. The client (/video-settings) keeps
+    them mutually consistent (frames = duration × fps), so this only sanity-checks
+    each value individually.
+
+    Returns (duration, frames, fps, None) on success, or
+    (None, None, None, error_response) on failure.
+    """
+    raw_duration = data.get("duration")
+    raw_frames   = data.get("frames")
+    raw_fps      = data.get("fps")
+    try:
+        duration = float(raw_duration) if raw_duration is not None else None
+        if duration is not None and duration <= 0:
+            return None, None, None, (jsonify({"error": "duration must be positive"}), 400)
+    except (TypeError, ValueError):
+        return None, None, None, (jsonify({"error": "duration must be a number"}), 400)
+    try:
+        frames = int(raw_frames) if raw_frames is not None else None
+        if frames is not None and frames < 1:
+            return None, None, None, (jsonify({"error": "frames must be a positive integer"}), 400)
+    except (TypeError, ValueError):
+        return None, None, None, (jsonify({"error": "frames must be an integer"}), 400)
+    try:
+        fps = int(raw_fps) if raw_fps is not None else None
+        if fps is not None and fps < 1:
+            return None, None, None, (jsonify({"error": "fps must be a positive integer"}), 400)
+    except (TypeError, ValueError):
+        return None, None, None, (jsonify({"error": "fps must be an integer"}), 400)
+    return duration, frames, fps, None
+
+
 @app.route("/api/face-detail", methods=["POST"])
 @login_required
 def api_face_detail():
@@ -598,6 +633,10 @@ def api_image2video():
     server_address = data.get("server") or COMFY_SERVER
     server_os      = data.get("server_os") or COMFY_SERVER_OS
 
+    duration, frames, fps, err = _parse_video_settings(data)
+    if err:
+        return err
+
     err = output_storage_error()
     if err:
         return err
@@ -608,6 +647,7 @@ def api_image2video():
     job_id = start_generation_job(
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
+        duration=duration, frames=frames, fps=fps,
     )
     return jsonify({"job_id": job_id})
 

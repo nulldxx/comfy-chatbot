@@ -79,3 +79,46 @@ export function deriveFaceDetailPrompt(genPrompt) {
   const desc = [subject, ...expressions].join(', ');
   return `${desc} ${loraTags.join(' ')}`;
 }
+
+// ---------------------------------------------------------------------------
+// Video settings (image2video <DURATION>/<FRAMES>/<FPS>)
+//
+// The three values are interdependent: frames = duration × fps. frames and fps
+// are integers (PrimitiveInt nodes in the workflow); duration is shown to one
+// decimal. Output is driven by frames and fps, so duration is effectively a
+// derived value and may round by a frame at the extremes.
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_VIDEO_SETTINGS = { duration: 5, frames: 125, fps: 25 };
+export const VIDEO_LIMITS = {
+  duration: { min: 0.1, max: 60 },
+  frames:   { min: 1,   max: 1000 },
+  fps:      { min: 1,   max: 60 },
+};
+
+export function fmtDuration(d) {
+  const r = Math.round(d * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
+
+export function clampVideo(key, val) {
+  const lim = VIDEO_LIMITS[key];
+  let v = Math.min(lim.max, Math.max(lim.min, val));
+  return key === 'duration' ? Math.round(v * 10) / 10 : Math.round(v);
+}
+
+// Re-derive `s` in place so frames = duration × fps holds. `lock` is the value
+// held constant; `edited` is the value the user just changed; the remaining one
+// follows, then `edited` is snapped back so the pair stays consistent after any
+// clamping. Editing the locked value is a no-op the caller should prevent.
+export function recomputeVideo(s, lock, edited) {
+  if (edited === lock) return;
+  const derive = key => {
+    if (key === 'frames')   s.frames   = clampVideo('frames',   s.duration * s.fps);
+    else if (key === 'fps') s.fps      = clampVideo('fps',      s.frames / s.duration);
+    else                    s.duration = clampVideo('duration', s.frames / s.fps);
+  };
+  const third = ['duration', 'frames', 'fps'].find(k => k !== lock && k !== edited);
+  derive(third);
+  derive(edited);
+}

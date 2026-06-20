@@ -218,6 +218,15 @@ class TestFillPlaceholdersForValidation(unittest.TestCase):
         result = fill_placeholders_for_validation('"prompt": "<PROMPT>"')
         self.assertIn("placeholder", result)
 
+    def test_fills_video_settings_as_numbers(self):
+        # <DURATION>/<FRAMES>/<FPS> are unquoted numeric slots, so they must parse
+        # as bare numbers rather than the quoted "placeholder" string.
+        template = '{"duration": <DURATION>, "frames": <FRAMES>, "fps": <FPS>}'
+        parsed = json.loads(fill_placeholders_for_validation(template))
+        self.assertEqual(parsed["duration"], 1)
+        self.assertEqual(parsed["frames"], 1)
+        self.assertEqual(parsed["fps"], 1)
+
     def test_result_is_parseable(self):
         # Numeric slots (<LORA_N_STRENGTH>, <DENOISE>) appear unquoted in workflow JSON;
         # string slots appear quoted. This mirrors a realistic API workflow template.

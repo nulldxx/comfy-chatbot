@@ -1,4 +1,5 @@
-import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl } from './utils.js';
+import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
+         DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS, fmtDuration, clampVideo, recomputeVideo } from './utils.js';
 
 // Builds the DOM element for a generated result: a <video> for video outputs,
 // otherwise an <img>. Both carry alt text and the same class so existing CSS
@@ -203,6 +204,7 @@ const SLASH_COMMANDS = [
   { cmd: '/slideshow-session', desc: 'browse this session\'s images',          args: '' },
   { cmd: '/slideshow-today',   desc: 'browse today\'s images, oldest first',   args: '' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
+  { cmd: '/video-settings', desc: 'set video duration, frames & fps (lock one, the others follow)', args: '' },
   { cmd: '/upscale',    desc: 'upscale the last N images (default 1, no prompt)', args: ' ' },
   { cmd: '/workflow',   desc: 'choose a workflow template',         args: ''  },
   { cmd: '/workflow-iterate', desc: 'run a prompt against several workflows', args: ' ' },
@@ -369,6 +371,11 @@ let currentResolution = { width: 1365, height: 768 };  // {width, height} or nul
 let currentGenerationSteps = null; // integer or null (null = workflow default)
 const DEFAULT_DENOISE = { face: 0.35, image2image: 0.30, inpaint: 0.45, upscale: 0.15 };
 let currentDenoise = { ...DEFAULT_DENOISE };
+// Video output settings for image2video workflows (<DURATION>/<FRAMES>/<FPS>).
+// The three are interdependent (frames = duration × fps); the math lives in
+// utils.js. `videoLock` names the one held constant when editing the others.
+let currentVideoSettings = { ...DEFAULT_VIDEO_SETTINGS };
+let videoLock = 'fps';  // 'duration' | 'frames' | 'fps'
 let iterations        = 1;     // images generated per prompt (set via /iterations)
 let iterationsFromSequence = false; // true while `iterations` is borrowed as a /sequence count; reset to 1 on the next non-sequence prompt
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
@@ -690,6 +697,15 @@ function showSessionSummary() {
   if (denoiseOverrides) {
     rows.push({ label: 'Denoise overrides', value: denoiseOverrides });
   }
+
+  const vs = currentVideoSettings;
+  rows.push({
+    label: 'Video settings',
+    value: `<span style="color:#a78bfa">${fmtDuration(vs.duration)}s</span> · ` +
+           `<span style="color:#a78bfa">${vs.frames}</span> frames · ` +
+           `<span style="color:#a78bfa">${vs.fps}</span> fps ` +
+           `<span style="color:#475569">(🔒 ${videoLock})</span>`,
+  });
 
   if (lastFaceDetailPrompt) {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(lastFaceDetailPrompt)}</code>` });
@@ -1291,6 +1307,9 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2video</code> and the 🎬 button instead of each image's original prompt; no args shows it</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt-reset</code> — clear the override prompt</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-workflow</code> — choose which image2video workflow <code>/image2video</code> uses</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/video-settings</code> — set video duration, frames &amp; fps for image2video
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time</div>
+        </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
@@ -1793,6 +1812,8 @@ function handleSlashCommand(raw) {
     currentResolution = { width: 1365, height: 768 };
     currentGenerationSteps = null;
     currentDenoise = { ...DEFAULT_DENOISE };
+    currentVideoSettings = { ...DEFAULT_VIDEO_SETTINGS };
+    videoLock = 'fps';
     iterations = 1;
     iterationsFromSequence = false;
     sequenceReplacements = [];
@@ -1834,6 +1855,8 @@ function handleSlashCommand(raw) {
         lastFaceDetailPrompt,
         lastInpaintingPrompt,
         currentDenoise: { ...currentDenoise },
+        videoSettings: { ...currentVideoSettings },
+        videoLock,
       },
       sessionImages: sessionImages.slice(),
       imagePrompts: Object.assign({}, imagePrompts),
@@ -2165,6 +2188,115 @@ function handleSlashCommand(raw) {
     btnRow.appendChild(resetBtn);
     wrap.appendChild(btnRow);
     const bubble = addMessage('bot', '<strong>Denoise defaults</strong>').parentElement.querySelector('.bubble');
+    bubble.appendChild(wrap);
+    scrollBottom();
+    return;
+  }
+
+  if (cmd === '/video-settings') {
+    addMessage('user', escapeHtml(raw), raw);
+    const VIDEO_ROWS = [
+      { key: 'duration', label: 'Duration (s)' },
+      { key: 'frames',   label: 'Frames'       },
+      { key: 'fps',      label: 'FPS'          },
+    ];
+    // Work on a copy so nothing is committed until Apply.
+    const work    = { ...currentVideoSettings };
+    let   lockSel = videoLock;
+    const els = {};
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
+
+    function refresh() {
+      VIDEO_ROWS.forEach(({ key }) => {
+        const locked = lockSel === key;
+        const { lockBtn, slider, input } = els[key];
+        lockBtn.textContent = locked ? '🔒' : '🔓';
+        lockBtn.title = locked ? `${key} is locked — drag the others` : `lock ${key}`;
+        slider.disabled = locked;
+        input.disabled  = locked;
+        slider.style.opacity = locked ? '0.35' : '';
+        slider.value = String(work[key]);
+        input.value  = key === 'duration' ? fmtDuration(work[key]) : String(work[key]);
+      });
+    }
+
+    function onEdit(key, rawVal) {
+      const v = parseFloat(rawVal);
+      if (isNaN(v)) { refresh(); return; }
+      work[key] = clampVideo(key, v);
+      recomputeVideo(work, lockSel, key);
+      refresh();
+    }
+
+    VIDEO_ROWS.forEach(({ key, label }) => {
+      const lim = VIDEO_LIMITS[key];
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1';
+
+      const lockBtn = document.createElement('button');
+      lockBtn.className = 'sel-btn';
+      lockBtn.style.cssText = 'flex:none;width:30px;padding:2px 0;font-size:0.95rem;line-height:1';
+      lockBtn.addEventListener('click', () => {
+        if (lockSel === key) return;  // only one lock at a time; can't unlock the only lock
+        lockSel = key;
+        refresh();
+      });
+
+      const lbl = document.createElement('span');
+      lbl.textContent = label + ':';
+      lbl.style.cssText = 'min-width:92px;color:#94a3b8';
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = String(lim.min); slider.max = String(lim.max);
+      slider.step = key === 'duration' ? '0.1' : '1';
+      slider.style.cssText = 'width:130px;accent-color:#f472b6;cursor:pointer';
+      slider.addEventListener('input', () => onEdit(key, slider.value));
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.style.cssText = 'width:52px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+      input.addEventListener('change', () => onEdit(key, input.value));
+
+      els[key] = { lockBtn, slider, input };
+      row.appendChild(lockBtn); row.appendChild(lbl); row.appendChild(slider); row.appendChild(input);
+      wrap.appendChild(row);
+    });
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:2px';
+    hint.innerHTML = 'Lock one value (🔒), then drag or type the others — the third follows so that <code>frames = duration × fps</code>.';
+    wrap.appendChild(hint);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
+    const applyBtn = document.createElement('button');
+    applyBtn.textContent = 'Apply';
+    applyBtn.className = 'sel-btn';
+    applyBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem';
+    const resetBtn = document.createElement('button');
+    resetBtn.textContent = 'Reset to defaults';
+    resetBtn.className = 'sel-btn';
+    resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+    applyBtn.addEventListener('click', () => {
+      currentVideoSettings = { ...work };
+      videoLock = lockSel;
+      addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> <span style="color:#475569">(🔒 ${lockSel})</span>`);
+      scrollBottom();
+    });
+    resetBtn.addEventListener('click', () => {
+      Object.assign(work, DEFAULT_VIDEO_SETTINGS);
+      lockSel = 'fps';
+      refresh();
+    });
+    btnRow.appendChild(applyBtn);
+    btnRow.appendChild(resetBtn);
+    wrap.appendChild(btnRow);
+
+    refresh();
+    const bubble = addMessage('bot', '<strong>Video settings</strong> <span style="color:#475569">(image2video)</span>').parentElement.querySelector('.bubble');
     bubble.appendChild(wrap);
     scrollBottom();
     return;
@@ -3886,6 +4018,8 @@ function restoreSession(data) {
   if (s.lastFaceDetailPrompt    !== undefined) lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastInpaintingPrompt    !== undefined) lastInpaintingPrompt    = s.lastInpaintingPrompt;
   if (s.currentDenoise          !== undefined) currentDenoise          = { ...DEFAULT_DENOISE, ...s.currentDenoise };
+  if (s.videoSettings           !== undefined) currentVideoSettings    = { ...DEFAULT_VIDEO_SETTINGS, ...s.videoSettings };
+  if (s.videoLock               !== undefined) videoLock               = s.videoLock;
   iterationsFromSequence = false;
   updateHeaderStatus();
 
@@ -4047,6 +4181,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(face        ? { denoise: currentDenoise.face } : {}),
       ...(upscale     ? { denoise: currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: currentDenoise.image2image } : {}),
+      ...(image2video ? { duration: currentVideoSettings.duration, frames: currentVideoSettings.frames, fps: currentVideoSettings.fps } : {}),
       ...(inpaint     ? { denoise: inpaint.denoise != null ? inpaint.denoise : currentDenoise.inpaint } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),

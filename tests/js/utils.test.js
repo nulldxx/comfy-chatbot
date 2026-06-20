@@ -1,4 +1,5 @@
-import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl } from '../../static/js/utils.js';
+import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
+         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // escapeHtml
@@ -293,5 +294,99 @@ describe('isVideoUrl', () => {
 
   test('does not match the extension mid-path', () => {
     expect(isVideoUrl('/images/mp4-thumbnail.png')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Video settings math (fmtDuration / clampVideo / recomputeVideo)
+// ---------------------------------------------------------------------------
+
+describe('fmtDuration', () => {
+  test('drops the decimal for whole seconds', () => {
+    expect(fmtDuration(5)).toBe('5');
+    expect(fmtDuration(5.0)).toBe('5');
+  });
+
+  test('keeps one decimal otherwise', () => {
+    expect(fmtDuration(5.2)).toBe('5.2');
+    expect(fmtDuration(5.24)).toBe('5.2');
+  });
+});
+
+describe('clampVideo', () => {
+  test('rounds frames and fps to integers', () => {
+    expect(clampVideo('frames', 124.6)).toBe(125);
+    expect(clampVideo('fps', 24.4)).toBe(24);
+  });
+
+  test('rounds duration to one decimal', () => {
+    expect(clampVideo('duration', 5.24)).toBe(5.2);
+  });
+
+  test('clamps to the configured limits', () => {
+    expect(clampVideo('fps', 999)).toBe(60);
+    expect(clampVideo('fps', 0)).toBe(1);
+    expect(clampVideo('frames', 99999)).toBe(1000);
+  });
+});
+
+describe('recomputeVideo', () => {
+  test('lock fps: editing duration recomputes frames', () => {
+    const s = { duration: 4, frames: 125, fps: 25 };
+    recomputeVideo(s, 'fps', 'duration');
+    expect(s.fps).toBe(25);
+    expect(s.frames).toBe(100);   // 4 × 25
+    expect(s.duration).toBe(4);
+  });
+
+  test('lock fps: editing frames recomputes duration', () => {
+    const s = { duration: 5, frames: 200, fps: 25 };
+    recomputeVideo(s, 'fps', 'frames');
+    expect(s.fps).toBe(25);
+    expect(s.frames).toBe(200);
+    expect(s.duration).toBe(8);   // 200 / 25
+  });
+
+  test('lock duration: editing fps recomputes frames', () => {
+    const s = { duration: 5, frames: 125, fps: 30 };
+    recomputeVideo(s, 'duration', 'fps');
+    expect(s.duration).toBe(5);
+    expect(s.fps).toBe(30);
+    expect(s.frames).toBe(150);   // 5 × 30
+  });
+
+  test('lock frames: editing fps recomputes duration', () => {
+    const s = { duration: 5, frames: 120, fps: 24 };
+    recomputeVideo(s, 'frames', 'fps');
+    expect(s.frames).toBe(120);
+    expect(s.fps).toBe(24);
+    expect(s.duration).toBe(5);   // 120 / 24
+  });
+
+  test('the locked value is never changed', () => {
+    const s = { duration: 5, frames: 125, fps: 25 };
+    recomputeVideo(s, 'frames', 'fps');
+    expect(s.frames).toBe(125);
+  });
+
+  test('editing the locked value is a no-op', () => {
+    const s = { duration: 5, frames: 125, fps: 25 };
+    recomputeVideo(s, 'fps', 'fps');
+    expect(s).toEqual({ duration: 5, frames: 125, fps: 25 });
+  });
+
+  test('snaps back when a derived value hits a limit', () => {
+    // lock fps=60, push duration high so frames clamps at 1000; duration then
+    // snaps to 1000/60 ≈ 16.7 to stay consistent with the clamped frame count.
+    const s = { duration: 60, frames: 125, fps: 60 };
+    recomputeVideo(s, 'fps', 'duration');
+    expect(s.fps).toBe(60);
+    expect(s.frames).toBe(1000);
+    expect(s.duration).toBe(16.7);
+  });
+
+  test('default settings are self-consistent (frames = duration × fps)', () => {
+    const { duration, frames, fps } = DEFAULT_VIDEO_SETTINGS;
+    expect(frames).toBe(duration * fps);
   });
 });
