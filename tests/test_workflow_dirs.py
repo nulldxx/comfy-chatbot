@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app
+import generation_service
 
 
 class TestListWorkflowNames(unittest.TestCase):
@@ -31,7 +32,7 @@ class TestListWorkflowNames(unittest.TestCase):
 class TestRunGenerationTraversalGuard(unittest.TestCase):
     def _run(self, workflow_name, workflow_dir):
         job_id = "test-job"
-        app.jobs[job_id] = {
+        generation_service.jobs[job_id] = {
             "status": "pending",
             "queue": queue.Queue(),
             "images": [],
@@ -39,12 +40,12 @@ class TestRunGenerationTraversalGuard(unittest.TestCase):
             "server": "127.0.0.1:8000",
             "prompt_id": None,
         }
-        app.run_generation(
+        generation_service.run_generation(
             job_id, "a cat", [], "127.0.0.1:8000", "unix", workflow_name,
             workflow_dir=workflow_dir,
         )
-        status = app.jobs[job_id]["status"]
-        del app.jobs[job_id]
+        status = generation_service.jobs[job_id]["status"]
+        del generation_service.jobs[job_id]
         return status
 
     def test_escape_name_is_rejected(self):

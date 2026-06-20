@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as app_module
+import image_store as image_store_module
 from app import app, output_storage_error
 import agent_client
 
@@ -79,12 +80,20 @@ class TestOutputGuard(unittest.TestCase):
             "IMAGES_DIR": app_module.IMAGES_DIR,
             "OUTPUT_VOLUME": app_module.OUTPUT_VOLUME,
         }
+        self._orig_image_store = {
+            "IMAGES_DIR": image_store_module.IMAGES_DIR,
+            "OUTPUT_VOLUME": image_store_module.OUTPUT_VOLUME,
+        }
         app_module.IMAGES_DIR = Path(self.images_dir)
         app_module.OUTPUT_VOLUME = "/host/output.luks"
+        image_store_module.IMAGES_DIR = Path(self.images_dir)
+        image_store_module.OUTPUT_VOLUME = "/host/output.luks"
 
     def tearDown(self):
         for k, v in self._orig.items():
             setattr(app_module, k, v)
+        for k, v in self._orig_image_store.items():
+            setattr(image_store_module, k, v)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _auth(self):
@@ -96,6 +105,7 @@ class TestOutputGuard(unittest.TestCase):
 
     def test_helper_ok_when_disabled(self):
         app_module.OUTPUT_VOLUME = ""
+        image_store_module.OUTPUT_VOLUME = ""
         with app.app_context():
             self.assertIsNone(output_storage_error())
 
@@ -120,6 +130,7 @@ class TestOutputGuard(unittest.TestCase):
     def test_generate_allowed_when_disabled(self):
         # With encryption off the guard never blocks (route proceeds past it).
         app_module.OUTPUT_VOLUME = ""
+        image_store_module.OUTPUT_VOLUME = ""
         with app.app_context():
             self.assertIsNone(output_storage_error())
 

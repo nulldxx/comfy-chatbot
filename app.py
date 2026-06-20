@@ -30,10 +30,10 @@ from config import (
     COMFY_INPAINTING_DIR, COMFY_INPAINTING_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
-    IMAGE_EXTS, IMAGES_DIR, PASSWORD, SECRET_KEY, USERNAME,
+    IMAGE_EXTS, IMAGES_DIR, OUTPUT_MARKER, OUTPUT_VOLUME, PASSWORD, SECRET_KEY, USERNAME,
 )
 from generation_service import (
-    cancel_auto_purge, jobs, jobs_lock, start_generation_job,
+    cancel_auto_purge, jobs, jobs_lock, run_generation, start_generation_job,
 )
 from grok import GrokError, generate_prompt_sequence
 from image_store import (
