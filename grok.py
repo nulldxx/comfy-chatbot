@@ -48,14 +48,18 @@ def grok_available():
 # the worker kill and the client receives a non-JSON body (gunicorn error page)
 # instead of a clean {"error": ...} — surfacing as a "JSON.parse: unexpected
 # character at line 1 column 1" in the browser.
-def _chat(messages, temperature=0.8, timeout=90, max_tokens=None, model=None):
+def _chat(messages, temperature=0.8, timeout=90, max_tokens=None, model=None, session=None):
     if not GROK_API_KEY:
         raise GrokError("Grok is not configured — set XAI_API_KEY in the environment.")
     payload = {"model": model or GROK_MODEL, "messages": messages, "temperature": temperature}
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    # When a session is supplied the caller can abort an in-flight request from
+    # another thread by closing it (see the /sequence cancel path); a bare
+    # requests.post() cannot be interrupted that way.
+    http = session or requests
     try:
-        resp = requests.post(
+        resp = http.post(
             f"{GROK_BASE_URL}/chat/completions",
             headers={
                 "Authorization": f"Bearer {GROK_API_KEY}",
@@ -76,10 +80,14 @@ def _chat(messages, temperature=0.8, timeout=90, max_tokens=None, model=None):
         raise GrokError(f"Unexpected Grok API response: {e}")
 
 
-def generate_prompt_sequence(master_prompt, count):
+def generate_prompt_sequence(master_prompt, count, cancel_event=None, session=None):
     """Ask Grok for `count` distinct image prompts derived from `master_prompt`.
 
     Returns a list of prompt strings. Raises GrokError on any failure.
+
+    Pass `session` (a requests.Session) and `cancel_event` (a threading.Event)
+    to make the call cancellable: closing the session aborts the in-flight HTTP
+    request, and a set event stops us from trying the fallback model.
     """
     system = (
         "You are an expert at writing detailed prompts for photorealistic AI image "
@@ -124,8 +132,10 @@ Return ONLY valid JSON in exactly this structure:
 
     last_error = None
     for model in models:
+        if cancel_event is not None and cancel_event.is_set():
+            raise GrokError("Cancelled")
         try:
-            content = _chat(messages, max_tokens=max_tokens, model=model)
+            content = _chat(messages, max_tokens=max_tokens, model=model, session=session)
             return _parse_prompts(content)
         except GrokError as e:
             last_error = e
@@ -134,7 +144,7 @@ Return ONLY valid JSON in exactly this structure:
     raise last_error or GrokError("Grok is not configured — no model to try.")
 
 
-def generate_video_prompt_sequence(master_prompt, count):
+def generate_video_prompt_sequence(master_prompt, count, cancel_event=None, session=None):
     """Ask Grok for `count` distinct video shots derived from `master_prompt`.
 
     Like generate_prompt_sequence, but each item carries three fields:
@@ -190,8 +200,10 @@ Return ONLY valid JSON in exactly this structure:
 
     last_error = None
     for model in models:
+        if cancel_event is not None and cancel_event.is_set():
+            raise GrokError("Cancelled")
         try:
-            content = _chat(messages, max_tokens=max_tokens, model=model)
+            content = _chat(messages, max_tokens=max_tokens, model=model, session=session)
             return _parse_video_prompts(content)
         except GrokError as e:
             last_error = e

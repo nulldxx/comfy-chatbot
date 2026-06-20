@@ -81,6 +81,32 @@ class GenerateVideoPromptSequenceTests(unittest.TestCase):
         self.assertEqual(out[0]["prompt"], "a cat")
         self.assertEqual(mock_chat.call_count, 2)
 
+    def test_set_cancel_event_stops_before_calling_grok(self):
+        import threading
+        cancel = threading.Event()
+        cancel.set()
+        with patch.object(grok, "_chat") as mock_chat:
+            with self.assertRaises(GrokError):
+                generate_video_prompt_sequence("a cat", 1, cancel_event=cancel)
+        mock_chat.assert_not_called()
+
+    def test_cancel_event_stops_fallback_attempt(self):
+        # First model fails; a cancel between attempts must prevent the fallback
+        # call rather than firing a second request.
+        import threading
+        cancel = threading.Event()
+
+        def boom(*a, **k):
+            cancel.set()  # cancelled while the first attempt is in flight
+            raise GrokError("boom")
+
+        with patch.object(grok, "GROK_MODEL", "primary"), \
+             patch.object(grok, "GROK_FALLBACK_MODEL", "fallback"), \
+             patch.object(grok, "_chat", side_effect=boom) as mock_chat:
+            with self.assertRaises(GrokError):
+                generate_video_prompt_sequence("a cat", 1, cancel_event=cancel)
+        self.assertEqual(mock_chat.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

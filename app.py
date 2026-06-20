@@ -35,8 +35,8 @@ from config import (
 )
 from generation_service import (
     cancel_auto_purge, jobs, jobs_lock, run_generation, start_generation_job,
+    start_sequence_job,
 )
-from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequence
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
     register_draw_token, register_mask_token,
@@ -722,18 +722,14 @@ def api_inpaint():
     return jsonify({"job_id": job_id})
 
 
-@app.route("/api/sequence", methods=["POST"])
-@login_required
-def api_sequence():
-    """Turn a single master prompt into a sequence of prompts via Grok.
+def _parse_sequence_request(data):
+    """Validate a /sequence-style request, returning (master, count, replacements).
 
-    The client then feeds each returned prompt back through /api/generate,
-    one after another (the same flow as /multi).
+    Raises ValueError with a user-facing message if the master prompt is missing.
     """
-    data = request.get_json(force=True)
     master = (data.get("prompt") or "").strip()
     if not master:
-        return jsonify({"error": "A master prompt is required"}), 400
+        raise ValueError("A master prompt is required")
 
     try:
         count = int(data.get("count", 15))
@@ -741,25 +737,35 @@ def api_sequence():
         count = 15
     count = max(1, min(count, 64))
 
-    # Replacements arrive as a list of [from, to] pairs and are applied to each
-    # prompt after it comes back from Grok.
+    # Replacements arrive as a list of [from, to] pairs applied to each prompt
+    # after it comes back from Grok.
     replacements = []
     for pair in data.get("replacements") or []:
         if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0]:
             replacements.append((str(pair[0]), str(pair[1])))
 
+    return master, count, replacements
+
+
+@app.route("/api/sequence", methods=["POST"])
+@login_required
+def api_sequence():
+    """Turn a single master prompt into a sequence of prompts via Grok.
+
+    Runs the (slow) Grok call as a tracked job and returns a job_id immediately;
+    the client watches /api/progress/<job_id> for the result and can cancel it
+    via /api/cancel/<job_id>, exactly like a ComfyUI generation. The returned
+    prompts are then fed back through /api/generate one after another (the same
+    flow as /multi).
+    """
+    data = request.get_json(force=True)
     try:
-        prompts = generate_prompt_sequence(master, count)
-    except GrokError as e:
-        return jsonify({"error": str(e)}), 502
+        master, count, replacements = _parse_sequence_request(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
-    out = []
-    for p in prompts:
-        for src, dst in replacements:
-            p = p.replace(src, dst)
-        out.append(p)
-
-    return jsonify({"prompts": out})
+    job_id = start_sequence_job(master, count, replacements, video=False)
+    return jsonify({"job_id": job_id})
 
 
 @app.route("/api/video-sequence", methods=["POST"])
@@ -772,41 +778,13 @@ def api_video_sequence():
     the video prompt later if the image is turned into a video.
     """
     data = request.get_json(force=True)
-    master = (data.get("prompt") or "").strip()
-    if not master:
-        return jsonify({"error": "A master prompt is required"}), 400
-
     try:
-        count = int(data.get("count", 15))
-    except (ValueError, TypeError):
-        count = 15
-    count = max(1, min(count, 64))
+        master, count, replacements = _parse_sequence_request(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
-    # Replacements arrive as a list of [from, to] pairs and are applied to all
-    # three text fields of each shot so a name swap propagates consistently.
-    replacements = []
-    for pair in data.get("replacements") or []:
-        if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0]:
-            replacements.append((str(pair[0]), str(pair[1])))
-
-    try:
-        shots = generate_video_prompt_sequence(master, count)
-    except GrokError as e:
-        return jsonify({"error": str(e)}), 502
-
-    out = []
-    for shot in shots:
-        item = {
-            "prompt": shot.get("prompt", ""),
-            "action": shot.get("action", ""),
-            "audio": shot.get("audio", ""),
-        }
-        for src, dst in replacements:
-            for key in ("prompt", "action", "audio"):
-                item[key] = item[key].replace(src, dst)
-        out.append(item)
-
-    return jsonify({"prompts": out})
+    job_id = start_sequence_job(master, count, replacements, video=True)
+    return jsonify({"job_id": job_id})
 
 
 # ---------------------------------------------------------------------------
@@ -822,6 +800,8 @@ def api_cancel(job_id):
         return jsonify({"error": "Job not found"}), 404
 
     job["cancel"].set()
+
+    # ComfyUI job: tell the server to interrupt the running prompt.
     prompt_id = job.get("prompt_id")
     if prompt_id:
         try:
@@ -829,6 +809,15 @@ def api_cancel(job_id):
         except Exception as e:
             # Best-effort: the poll loop still aborts via the cancel event.
             print(f"Interrupt failed for {job['server']}/{prompt_id}: {e}", flush=True)
+
+    # Grok sequence job: close the HTTP session to abort the in-flight request.
+    session = job.get("session")
+    if session is not None:
+        try:
+            session.close()
+        except Exception as e:
+            # Best-effort: the worker still aborts via the cancel event.
+            print(f"Closing Grok session failed for {job_id}: {e}", flush=True)
 
     return jsonify({"ok": True})
 

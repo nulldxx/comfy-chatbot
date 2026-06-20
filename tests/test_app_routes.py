@@ -533,41 +533,49 @@ class TestImage2VideoSettings(_AppFixture):
         self.assertEqual(resp.status_code, 200)
 
 
-class TestVideoSequenceRoute(_AppFixture):
-    """/api/video-sequence returns Grok's {prompt, action, audio} shots (Grok mocked)."""
+class TestSequenceRoutes(_AppFixture):
+    """/api/sequence and /api/video-sequence start a cancellable Grok job and
+    return a job_id; the slow Grok call runs in the job (see test_generation_service)."""
 
-    def test_requires_master_prompt(self):
+    def setUp(self):
+        super().setUp()
+        self._job_patcher = patch.object(
+            app_module, "start_sequence_job", return_value="seq-job-id"
+        )
+        self._job = self._job_patcher.start()
+
+    def tearDown(self):
+        self._job_patcher.stop()
+        super().tearDown()
+
+    def test_sequence_requires_master_prompt(self):
+        resp = self.client.post("/api/sequence", json={"prompt": "  "})
+        self.assertEqual(resp.status_code, 400)
+        self._job.assert_not_called()
+
+    def test_video_sequence_requires_master_prompt(self):
         resp = self.client.post("/api/video-sequence", json={"prompt": "  "})
         self.assertEqual(resp.status_code, 400)
+        self._job.assert_not_called()
 
-    def test_returns_structured_shots(self):
-        shots = [
-            {"prompt": "a cat", "action": "leaps", "audio": "meow"},
-            {"prompt": "a dog", "action": "runs", "audio": "bark"},
-        ]
-        with patch.object(app_module, "generate_video_prompt_sequence", return_value=shots) as gen:
-            resp = self.client.post("/api/video-sequence", json={"prompt": "pets", "count": 2})
+    def test_sequence_returns_job_id(self):
+        resp = self.client.post(
+            "/api/sequence",
+            json={"prompt": "pets", "count": 2, "replacements": [["cat", "dog"]]},
+        )
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.get_json()["prompts"], shots)
-        gen.assert_called_once_with("pets", 2)
+        self.assertEqual(resp.get_json()["job_id"], "seq-job-id")
+        self._job.assert_called_once_with("pets", 2, [("cat", "dog")], video=False)
 
-    def test_replacements_apply_to_all_three_fields(self):
-        shots = [{"prompt": "a cat sits", "action": "the cat leaps", "audio": "cat meow"}]
-        with patch.object(app_module, "generate_video_prompt_sequence", return_value=shots):
-            resp = self.client.post(
-                "/api/video-sequence",
-                json={"prompt": "x", "replacements": [["cat", "dog"]]},
-            )
-        item = resp.get_json()["prompts"][0]
-        self.assertEqual(item["prompt"], "a dog sits")
-        self.assertEqual(item["action"], "the dog leaps")
-        self.assertEqual(item["audio"], "dog meow")
+    def test_video_sequence_returns_job_id(self):
+        resp = self.client.post("/api/video-sequence", json={"prompt": "pets", "count": 3})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["job_id"], "seq-job-id")
+        self._job.assert_called_once_with("pets", 3, [], video=True)
 
-    def test_grok_error_returns_502(self):
-        from grok import GrokError
-        with patch.object(app_module, "generate_video_prompt_sequence", side_effect=GrokError("down")):
-            resp = self.client.post("/api/video-sequence", json={"prompt": "x"})
-        self.assertEqual(resp.status_code, 502)
+    def test_count_is_clamped(self):
+        self.client.post("/api/sequence", json={"prompt": "x", "count": 999})
+        self.assertEqual(self._job.call_args[0][1], 64)
 
 
 # ---------------------------------------------------------------------------

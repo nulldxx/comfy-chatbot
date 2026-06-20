@@ -810,15 +810,12 @@ function handleSlashCommand(raw) {
       <div class="status-text">Asking Grok for ${count} prompt(s)…</div>
       <div class="dots"><span></span><span></span><span></span></div>
     `);
-    fetch('/api/sequence', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: master, count, replacements: sequenceReplacements }),
-    })
-    .then(parseJsonResponse)
-    .then(async data => {
-      if (data.error) throw new Error(data.error);
-      const prompts = data.prompts || [];
+    (async () => {
+      // The Grok call runs as a cancellable job; null means cancelled/errored
+      // (the bubble already shows why).
+      const result = await runSequenceJob('/api/sequence', master, count, statusBubble);
+      if (!result) { sendBtn.disabled = false; return; }
+      const prompts = result.prompts || [];
       // Remember this run for /sequence-review (plain sequence — no action/audio).
       lastSequence = { video: false, items: prompts.map(p => ({ prompt: p, action: '', audio: '' })) };
       statusBubble.innerHTML = `<div class="status-text">Grok returned <strong style="color:#a78bfa">${prompts.length}</strong> prompt(s) — generating one after another…</div>`;
@@ -830,11 +827,7 @@ function handleSlashCommand(raw) {
         if (!ok) break;
       }
       sendBtn.disabled = false;
-    })
-    .catch(err => {
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
-      sendBtn.disabled = false;
-    });
+    })();
     return;
   }
 
@@ -853,15 +846,10 @@ function handleSlashCommand(raw) {
       <div class="status-text">Asking Grok for ${count} video shot(s)…</div>
       <div class="dots"><span></span><span></span><span></span></div>
     `);
-    fetch('/api/video-sequence', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: master, count, replacements: sequenceReplacements }),
-    })
-    .then(parseJsonResponse)
-    .then(async data => {
-      if (data.error) throw new Error(data.error);
-      const shots = data.prompts || [];
+    (async () => {
+      const result = await runSequenceJob('/api/video-sequence', master, count, statusBubble);
+      if (!result) { sendBtn.disabled = false; return; }
+      const shots = result.prompts || [];
       // Remember this run for /sequence-review (carries action/audio per shot).
       lastSequence = {
         video: true,
@@ -881,11 +869,7 @@ function handleSlashCommand(raw) {
         if (!ok) break;
       }
       sendBtn.disabled = false;
-    })
-    .catch(err => {
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
-      sendBtn.disabled = false;
-    });
+    })();
     return;
   }
 
@@ -4260,6 +4244,71 @@ function sendMessage() {
     }
     sendBtn.disabled = false;
   })();
+}
+
+// Runs a Grok prompt-sequence job (the slow call that expands a master prompt
+// into many prompts). Mirrors runGeneration's lifecycle: the job is tracked
+// server-side, watched over SSE, and cancellable with the same ✕ button on the
+// status bubble. Resolves with the `done` message ({prompts, video}) on success,
+// or null if the job was cancelled or errored — the reason is rendered in the
+// bubble. Never rejects.
+function runSequenceJob(endpoint, master, count, statusBubble) {
+  return new Promise(resolve => {
+    const statusText = statusBubble.querySelector('.status-text');
+
+    // ✕ cancel button — enabled once we have a job_id, removed when the job ends.
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'cancel-btn';
+    cancelBtn.title = 'Cancel this job';
+    cancelBtn.textContent = '✕';
+    cancelBtn.disabled = true;
+    statusBubble.appendChild(cancelBtn);
+
+    const fail = message => {
+      cancelBtn.remove();
+      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(message)}</span>`;
+      resolve(null);
+    };
+
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: master, count, replacements: sequenceReplacements }),
+    })
+    .then(parseJsonResponse)
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+
+      // Now we have a job_id, the ✕ can actually cancel it.
+      cancelBtn.disabled = false;
+      cancelBtn.addEventListener('click', () => {
+        cancelBtn.disabled = true;
+        if (statusText) statusText.textContent = 'Cancelling…';
+        fetch('/api/cancel/' + data.job_id, { method: 'POST' }).catch(() => {});
+      });
+
+      const es = new EventSource(`/api/progress/${data.job_id}`);
+      es.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'progress') {
+          if (statusText) statusText.textContent = msg.message;
+          scrollBottom();
+        } else if (msg.type === 'done') {
+          es.close();
+          cancelBtn.remove();
+          resolve(msg);
+        } else if (msg.type === 'cancelled') {
+          es.close();
+          fail('Cancelled');
+        } else if (msg.type === 'error') {
+          es.close();
+          fail(msg.message);
+        }
+      };
+      es.onerror = () => { es.close(); fail('Connection lost'); };
+    })
+    .catch(err => fail(err.message));
+  });
 }
 
 // Runs one generation job in its own bot bubble. Resolves true on success,

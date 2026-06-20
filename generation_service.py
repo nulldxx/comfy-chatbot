@@ -5,10 +5,13 @@ import queue
 import threading
 from pathlib import Path
 from datetime import datetime
+
+import requests
 from werkzeug.utils import secure_filename
 
 from config import COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS
 from ComfyServer import ComfyServer, JobCancelled
+from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequence
 from workflow import (
     LORA_PLACEHOLDER_RE,
     apply_placeholders, find_placeholders, fill_lora_sentinels,
@@ -287,6 +290,109 @@ def start_generation_job(prompt, loras, server_address, server_os, workflow_name
         target=run_generation,
         args=(job_id, prompt, loras, server_address, server_os, workflow_name),
         kwargs=kwargs,
+        daemon=True,
+    )
+    t.start()
+    return job_id
+
+
+# ---------------------------------------------------------------------------
+# Grok prompt-sequence jobs
+# ---------------------------------------------------------------------------
+#
+# A /sequence (or /video-sequence) call makes one potentially-slow HTTP request
+# to the Grok API. Rather than block the request thread until it returns, we run
+# it as a tracked job — exactly like a ComfyUI generation — so the client can
+# watch it over SSE and cancel it with the same ✕ button. Cancellation closes
+# the job's requests.Session, which aborts the in-flight call to Grok.
+
+def run_sequence(job_id, master, count, replacements, video):
+    with jobs_lock:
+        q = jobs[job_id]["queue"]
+        cancel_event = jobs[job_id]["cancel"]
+        session = jobs[job_id]["session"]
+
+    def send(msg_type, **kwargs):
+        q.put(json.dumps({"type": msg_type, **kwargs}))
+
+    try:
+        if cancel_event.is_set():
+            raise JobCancelled()
+
+        send("progress", message=f"Asking Grok for {count} {'shot' if video else 'prompt'}(s)…")
+
+        if video:
+            shots = generate_video_prompt_sequence(
+                master, count, cancel_event=cancel_event, session=session
+            )
+            out = []
+            for shot in shots:
+                item = {
+                    "prompt": shot.get("prompt", ""),
+                    "action": shot.get("action", ""),
+                    "audio": shot.get("audio", ""),
+                }
+                for src, dst in replacements:
+                    for key in ("prompt", "action", "audio"):
+                        item[key] = item[key].replace(src, dst)
+                out.append(item)
+        else:
+            prompts = generate_prompt_sequence(
+                master, count, cancel_event=cancel_event, session=session
+            )
+            out = []
+            for p in prompts:
+                for src, dst in replacements:
+                    p = p.replace(src, dst)
+                out.append(p)
+
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+        send("done", prompts=out, video=video)
+
+    except JobCancelled:
+        with jobs_lock:
+            jobs[job_id]["status"] = "cancelled"
+        send("cancelled", message="Cancelled")
+    except GrokError as e:
+        # A cancel closes the session, which surfaces as a GrokError from the
+        # aborted request — report it as a cancellation, not an error.
+        if cancel_event.is_set():
+            with jobs_lock:
+                jobs[job_id]["status"] = "cancelled"
+            send("cancelled", message="Cancelled")
+        else:
+            with jobs_lock:
+                jobs[job_id]["status"] = "error"
+            send("error", message=str(e))
+    except Exception as e:
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+        send("error", message=str(e))
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+def start_sequence_job(master, count, replacements, video):
+    """Create a tracked Grok prompt-sequence job; return its job_id."""
+    job_id = str(uuid.uuid4())
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "queue": queue.Queue(),
+            "images": [],
+            "cancel": threading.Event(),
+            "server": None,
+            "prompt_id": None,
+            "session": requests.Session(),
+        }
+
+    t = threading.Thread(
+        target=run_sequence,
+        args=(job_id, master, count, replacements, video),
         daemon=True,
     )
     t.start()
