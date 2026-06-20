@@ -27,10 +27,15 @@ COPY --from=builder /root/.local /usr/local
 # Copy application code
 COPY app.py .
 COPY agent_client.py .
+COPY catalogue.py .
 COPY ComfyServer.py .
-COPY workflow.py .
+COPY config.py .
+COPY generation_service.py .
 COPY grok.py .
 COPY gunicorn.conf.py .
+COPY image_store.py .
+COPY persistence.py .
+COPY workflow.py .
 COPY docker-entrypoint.sh .
 COPY templates/ templates/
 COPY static/ static/
