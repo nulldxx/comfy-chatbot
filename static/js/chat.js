@@ -1,5 +1,5 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
-         DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS, fmtDuration, clampVideo, recomputeVideo, buildVideoPrompt } from './utils.js';
+         DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS, fmtDuration, clampVideo, recomputeVideo, buildVideoPrompt, i2vTooltip } from './utils.js';
 
 // Builds the DOM element for a generated result: a <video> for video outputs,
 // otherwise an <img>. Both carry alt text and the same class so existing CSS
@@ -3805,7 +3805,7 @@ function appendChatImage(container, url) {
 
   const i2v = document.createElement('button');
   i2v.className = 'img-i2v';
-  i2v.title = 'Image to video';
+  i2v.title = i2vTooltip(imageVideoMeta[url]);
   i2v.innerHTML = '&#127916;&#xFE0E;';
   i2v.addEventListener('click', e => {
     e.stopPropagation();
@@ -4065,7 +4065,7 @@ function renderReviewGrid(bubble, urls) {
 
     const ri2v = document.createElement('button');
     ri2v.className = 'img-i2v review-i2v';
-    ri2v.title = 'Image to video';
+    ri2v.title = i2vTooltip(imageVideoMeta[url]);
     ri2v.innerHTML = '&#127916;&#xFE0E;';
     ri2v.addEventListener('click', e => {
       e.stopPropagation();

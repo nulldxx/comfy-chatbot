@@ -1,5 +1,5 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
-         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt } from '../../static/js/utils.js';
+         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // escapeHtml
@@ -426,5 +426,39 @@ describe('buildVideoPrompt', () => {
   test('trims whitespace around fields', () => {
     expect(buildVideoPrompt('a cat', { action: '  it leaps  ', audio: '  a meow ' }))
       .toBe('a cat. it leaps. Audio: a meow');
+  });
+});
+
+describe('i2vTooltip', () => {
+  test('returns the plain label when meta is null', () => {
+    expect(i2vTooltip(null)).toBe('Image to video');
+  });
+
+  test('returns the plain label when meta is undefined', () => {
+    expect(i2vTooltip(undefined)).toBe('Image to video');
+  });
+
+  test('returns the plain label when meta has empty fields', () => {
+    expect(i2vTooltip({ action: '', audio: '' })).toBe('Image to video');
+  });
+
+  test('appends action and audio when both present', () => {
+    expect(i2vTooltip({ action: 'it leaps down', audio: 'a meow' }))
+      .toBe('Image to video: it leaps down, a meow');
+  });
+
+  test('appends action only when audio is missing', () => {
+    expect(i2vTooltip({ action: 'it leaps down', audio: '' }))
+      .toBe('Image to video: it leaps down');
+  });
+
+  test('appends audio only when action is missing', () => {
+    expect(i2vTooltip({ action: '', audio: 'a meow' }))
+      .toBe('Image to video: a meow');
+  });
+
+  test('trims whitespace around fields', () => {
+    expect(i2vTooltip({ action: '  it leaps  ', audio: '  a meow ' }))
+      .toBe('Image to video: it leaps, a meow');
   });
 });

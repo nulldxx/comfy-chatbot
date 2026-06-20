@@ -95,6 +95,17 @@ export function buildVideoPrompt(base, meta) {
   return parts.filter(p => p && p.trim()).join('. ');
 }
 
+// Builds the tooltip for an image's image2video button. Defaults to
+// "Image to video"; when the image carries video metadata (action/audio from
+// /video-sequence) it appends them: "Image to video: <action>, <audio>" (only
+// the parts present). `meta` is { action, audio } or null/undefined.
+export function i2vTooltip(meta) {
+  const base = 'Image to video';
+  if (!meta) return base;
+  const parts = [(meta.action || '').trim(), (meta.audio || '').trim()].filter(p => p);
+  return parts.length ? `${base}: ${parts.join(', ')}` : base;
+}
+
 // ---------------------------------------------------------------------------
 // Video settings (image2video <DURATION>/<FRAMES>/<FPS>)
 //
