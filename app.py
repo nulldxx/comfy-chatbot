@@ -17,9 +17,9 @@ from werkzeug.utils import secure_filename
 from agent_client import send as agent_send
 from catalogue import (
     list_facedetailer_workflows, list_image2image_workflows,
-    list_inpainting_workflows, list_upscaler_workflows,
-    list_workflow_names, load_loras, load_server_catalogue,
-    parse_loras_from_prompt, resolve_workflow,
+    list_image2video_workflows, list_inpainting_workflows,
+    list_upscaler_workflows, list_workflow_names, load_loras,
+    load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
 )
 from ComfyServer import ComfyServer
 from config import (
@@ -27,6 +27,7 @@ from config import (
     ARCHIVE_PASSWORD, ARCHIVE_VOLUME,
     BUILD_VERSION, COMFY_FACEDETAILER_DIR, COMFY_FACEDETAILER_WORKFLOW,
     COMFY_GENERATION_DIR, COMFY_IMAGE2IMAGE_DIR, COMFY_IMAGE2IMAGE_WORKFLOW,
+    COMFY_IMAGE2VIDEO_DIR, COMFY_IMAGE2VIDEO_WORKFLOW,
     COMFY_INPAINTING_DIR, COMFY_INPAINTING_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
@@ -102,6 +103,7 @@ def index():
         default_upscale_workflow=COMFY_UPSCALER_WORKFLOW,
         default_image2image_workflow=COMFY_IMAGE2IMAGE_WORKFLOW,
         default_inpainting_workflow=COMFY_INPAINTING_WORKFLOW,
+        default_image2video_workflow=COMFY_IMAGE2VIDEO_WORKFLOW,
     )
 
 
@@ -190,6 +192,12 @@ def api_image2image_workflows():
 @login_required
 def api_inpainting_workflows():
     return jsonify(list_inpainting_workflows())
+
+
+@app.route("/api/image2video-workflows")
+@login_required
+def api_image2video_workflows():
+    return jsonify(list_image2video_workflows())
 
 
 @app.route("/api/upload-workflow", methods=["POST"])
@@ -556,6 +564,48 @@ def api_image2image():
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2IMAGE_DIR, input_image=image_path,
         preserve_mtime_from=safe, denoise=denoise,
+    )
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/image2video", methods=["POST"])
+@login_required
+def api_image2video():
+    """Run an image2video workflow over a previously generated image.
+
+    Like /api/image2image this loads a workflow from the image2video/ subdir and
+    fills its <INPUT_IMAGE> placeholder with the source image, plus an optional
+    <PROMPT>. No LoRA or denoise support in this initial implementation.
+    """
+    data = request.get_json(force=True)
+    raw_prompt = (data.get("prompt") or "").strip()
+    prompt, _ = parse_loras_from_prompt(raw_prompt)
+
+    image_url = (data.get("image") or "").strip()
+    if not image_url:
+        return jsonify({"error": "image is required"}), 400
+    safe, image_path, err = resolve_input_image(image_url)
+    if err:
+        return err
+
+    available = list_image2video_workflows()
+    workflow_name, err = resolve_workflow(
+        data.get("workflow") or COMFY_IMAGE2VIDEO_WORKFLOW, available, "image2video"
+    )
+    if err:
+        return err
+
+    server_address = data.get("server") or COMFY_SERVER
+    server_os      = data.get("server_os") or COMFY_SERVER_OS
+
+    err = output_storage_error()
+    if err:
+        return err
+
+    job_id = start_generation_job(
+        prompt, [], server_address, server_os, workflow_name,
+        workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
+        preserve_mtime_from=safe,
     )
     return jsonify({"job_id": job_id})
 

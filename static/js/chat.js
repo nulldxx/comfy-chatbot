@@ -155,6 +155,12 @@ const SLASH_COMMANDS = [
   { cmd: '/image2image-set-prompt', desc: 'set an override prompt for prompt-less /image2image', args: ' ' },
   { cmd: '/image2image-set-prompt-reset', desc: 'clear the image2image override prompt', args: '' },
   { cmd: '/image2image-workflow', desc: 'choose an image2image workflow',     args: ''  },
+  { cmd: '/image2video', desc: 'image2video the last N images (default 1)', args: ' ' },
+  { cmd: '/image2video-replacement', desc: 'add a find→replace for prompt-less /image2video', args: ' ' },
+  { cmd: '/image2video-replacement-reset', desc: 'clear all image2video replacements', args: '' },
+  { cmd: '/image2video-set-prompt', desc: 'set an override prompt for prompt-less /image2video', args: ' ' },
+  { cmd: '/image2video-set-prompt-reset', desc: 'clear the image2video override prompt', args: '' },
+  { cmd: '/image2video-workflow', desc: 'choose an image2video workflow',     args: ''  },
   { cmd: '/inpaint-workflow',  desc: 'choose an inpainting workflow',        args: ''  },
   { cmd: '/inpainting-prompt', desc: 'set the prompt used by the inpaint button', args: ' ' },
   { cmd: '/denoise', desc: 'set denoise defaults for face-detail, image2image, inpainting, upscale', args: '' },
@@ -335,6 +341,7 @@ let currentWorkflow   = null;  // string
 let currentFaceWorkflow = null;  // string — face-detailer workflow the face icons use
 let currentUpscaleWorkflow = null; // string — upscaler workflow for /upscale
 let currentImage2ImageWorkflow = null; // string — image2image workflow for /image2image
+let currentImage2VideoWorkflow = null; // string — image2video workflow for /image2video
 let currentInpaintingWorkflow = null; // string — inpainting workflow for the 🩹 button
 let lastFaceDetailPrompt = null; // global override set by /face-detail-prompt; takes priority over per-image derivation
 let lastInpaintingPrompt = null; // set via /inpainting-prompt; required before the 🩹 button works
@@ -347,6 +354,8 @@ let iterationsFromSequence = false; // true while `iterations` is borrowed as a 
 let sequenceReplacements = []; // [from, to] pairs applied to /sequence prompts
 let image2imageReplacements = []; // [from, to] pairs applied to the original generation prompt for prompt-less /image2image
 let image2imageOverridePrompt = null; // set via /image2image-set-prompt; overrides the per-image original prompt for prompt-less /image2image and the 🎨 button
+let image2videoReplacements = []; // [from, to] pairs applied to the original generation prompt for prompt-less /image2video
+let image2videoOverridePrompt = null; // set via /image2video-set-prompt; overrides the per-image original prompt for prompt-less /image2video and the 🎬 button
 
 // Auto-purge of idle GPU memory is handled server-side (see app.py),
 // so it fires even after the browser is closed.
@@ -626,6 +635,14 @@ function showSessionSummary() {
     : `<span style="color:#475569">not set</span>`;
   rows.push({ label: 'Image2image workflow', value: i2iWfLabel });
 
+  const i2vWfActive = currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW;
+  const i2vWfLabel  = i2vWfActive
+    ? (currentImage2VideoWorkflow
+        ? `<span style="color:#a78bfa">${escapeHtml(i2vWfActive)}</span>`
+        : `<span style="color:#a78bfa">${escapeHtml(i2vWfActive)}</span> <span style="color:#475569">(default)</span>`)
+    : `<span style="color:#475569">not set</span>`;
+  rows.push({ label: 'Image2video workflow', value: i2vWfLabel });
+
   const inpaintWfActive = currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW;
   const inpaintWfLabel  = inpaintWfActive
     ? (currentInpaintingWorkflow
@@ -678,6 +695,17 @@ function showSessionSummary() {
 
   if (image2imageOverridePrompt) {
     rows.push({ label: 'Image2image override prompt', value: `<code>${escapeHtml(image2imageOverridePrompt)}</code>` });
+  }
+
+  if (image2videoReplacements.length) {
+    const list = image2videoReplacements
+      .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
+      .join(', ');
+    rows.push({ label: `Image2video replacements (${image2videoReplacements.length})`, value: list });
+  }
+
+  if (image2videoOverridePrompt) {
+    rows.push({ label: 'Image2video override prompt', value: `<code>${escapeHtml(image2videoOverridePrompt)}</code>` });
   }
 
   const aliasKeys = Object.keys(ALIASES).sort();
@@ -855,6 +883,113 @@ function handleSlashCommand(raw) {
       current: currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW,
       setMsg: 'Image2image workflow set to',
       onSelect: wf => { currentImage2ImageWorkflow = wf; },
+    });
+    return;
+  }
+
+  if (cmd === '/image2video-replacement') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!parts[1]) {
+      if (!image2videoReplacements.length) {
+        addMessage('bot', `No image2video replacements set.<br>Usage: <code>/image2video-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to the original generation prompt when <code>/image2video</code> is run with no prompt.<br><code>/image2video-replacement-reset</code> removes them all.`);
+      } else {
+        const list = image2videoReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
+        addMessage('bot', `<strong>Image2video replacements:</strong><br>${list}<br><br><code>/image2video-replacement-reset</code> removes them all.`);
+      }
+      return;
+    }
+    const from = parts[1];
+    const to   = parts.slice(2).join(' ');
+    if (!to) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/image2video-replacement Dog Cat</code></span>');
+      return;
+    }
+    image2videoReplacements.push([from, to]);
+    addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/image2video</code> runs with no prompt.`);
+    return;
+  }
+
+  if (cmd === '/image2video-replacement-reset') {
+    addMessage('user', escapeHtml(raw), raw);
+    image2videoReplacements = [];
+    addMessage('bot', 'Image2video replacements cleared.');
+    return;
+  }
+
+  if (cmd === '/image2video-set-prompt') {
+    addMessage('user', escapeHtml(raw), raw);
+    const override = raw.slice('/image2video-set-prompt'.length).trim();
+    if (!override) {
+      if (image2videoOverridePrompt) {
+        addMessage('bot', `Current image2video override prompt: <code>${escapeHtml(image2videoOverridePrompt)}</code><br>Usage: <code>/image2video-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/image2video</code> (or the 🎬 button) runs without its own prompt. <code>/image2video-set-prompt-reset</code> clears it.`);
+      } else {
+        addMessage('bot', 'No image2video override prompt set.<br>Usage: <code>/image2video-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/image2video</code> (or the 🎬 button) runs without its own prompt. Useful after a <code>/review</code> when the original prompts aren\'t available.');
+      }
+      return;
+    }
+    image2videoOverridePrompt = override;
+    addMessage('bot', `Image2video override prompt set: <code>${escapeHtml(override)}</code>. It will be used by <code>/image2video</code> and the 🎬 button until cleared with <code>/image2video-set-prompt-reset</code>.`);
+    return;
+  }
+
+  if (cmd === '/image2video-set-prompt-reset') {
+    addMessage('user', escapeHtml(raw), raw);
+    image2videoOverridePrompt = null;
+    addMessage('bot', 'Image2video override prompt cleared.');
+    return;
+  }
+
+  if (cmd === '/image2video-workflow') {
+    renderWorkflowPicker({
+      url: '/api/image2video-workflows',
+      title: 'Select an image2video workflow:',
+      loadingText: 'Loading image2video workflows…',
+      failLabel: 'image2video workflows',
+      emptyMsg: 'No image2video workflows available — add one to the <code>image2video/</code> folder.',
+      current: currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW,
+      setMsg: 'Image2video workflow set to',
+      onSelect: wf => { currentImage2VideoWorkflow = wf; },
+    });
+    return;
+  }
+
+  if (cmd === '/image2video') {
+    addMessage('user', escapeHtml(raw), raw);
+    if (!sessionImages.length) {
+      addMessage('bot', 'No image from this session for image2video — generate one first.');
+      return;
+    }
+    const i2vArg = raw.slice('/image2video'.length).trim();
+    if (i2vArg !== '' && !/^\d+$/.test(i2vArg)) {
+      addMessage('bot', '<span style="color:#f87171">⚠ <code>/image2video</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/image2video-set-prompt &lt;prompt&gt;</code> first.</span>');
+      return;
+    }
+    const i2vN = i2vArg !== '' ? parseInt(i2vArg, 10) : 1;
+    if (i2vN < 1) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/image2video</code> or <code>/image2video &lt;N&gt;</code></span>');
+      return;
+    }
+    const i2vTargets = sessionImages.slice(-i2vN);
+    let i2vChain = Promise.resolve();
+    let i2vAborted = false;
+    i2vTargets.forEach(img => {
+      i2vChain = i2vChain.then(() => {
+        if (i2vAborted) return;
+        let prompt;
+        if (image2videoOverridePrompt) {
+          prompt = image2videoOverridePrompt;
+        } else {
+          const orig = imagePrompts[img];
+          if (!orig) {
+            i2vAborted = true;
+            addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
+            return;
+          }
+          prompt = applyReplacements(orig, image2videoReplacements);
+        }
+        addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
+        return runImage2Video(prompt, img);
+      });
     });
     return;
   }
@@ -1130,6 +1265,12 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2image</code> and the 🎨 button instead of each image's original prompt (handy after a <code>/review</code>); no args shows it</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-set-prompt-reset</code> — clear the override prompt</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-workflow</code> — choose which image2image workflow <code>/image2image</code> uses</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video [N]</code> — run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to the original prompt when <code>/image2video</code> runs with no override (no args lists them)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-replacement-reset</code> — clear all image2video replacements</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2video</code> and the 🎬 button instead of each image's original prompt; no args shows it</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt-reset</code> — clear the override prompt</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-workflow</code> — choose which image2video workflow <code>/image2video</code> uses</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
@@ -1625,6 +1766,7 @@ function handleSlashCommand(raw) {
     currentFaceWorkflow = null;
     currentUpscaleWorkflow = null;
     currentImage2ImageWorkflow = null;
+    currentImage2VideoWorkflow = null;
     currentInpaintingWorkflow = null;
     lastFaceDetailPrompt = null;
     lastInpaintingPrompt = null;
@@ -1636,6 +1778,8 @@ function handleSlashCommand(raw) {
     sequenceReplacements = [];
     image2imageReplacements = [];
     image2imageOverridePrompt = null;
+    image2videoReplacements = [];
+    image2videoOverridePrompt = null;
     messagesEl.innerHTML = '';
     updateHeaderStatus();
     addMessage('bot', 'New session started. Describe the image you\'d like to generate.');
@@ -1657,6 +1801,7 @@ function handleSlashCommand(raw) {
         faceWorkflow: currentFaceWorkflow,
         upscaleWorkflow: currentUpscaleWorkflow,
         image2imageWorkflow: currentImage2ImageWorkflow,
+        image2videoWorkflow: currentImage2VideoWorkflow,
         inpaintingWorkflow: currentInpaintingWorkflow,
         resolution: currentResolution,
         generationSteps: currentGenerationSteps,
@@ -1664,6 +1809,8 @@ function handleSlashCommand(raw) {
         sequenceReplacements: sequenceReplacements.slice(),
         image2imageReplacements: image2imageReplacements.slice(),
         image2imageOverridePrompt,
+        image2videoReplacements: image2videoReplacements.slice(),
+        image2videoOverridePrompt,
         lastFaceDetailPrompt,
         lastInpaintingPrompt,
         currentDenoise: { ...currentDenoise },
@@ -2374,6 +2521,20 @@ function runImage2Image(prompt, image, imgWrap) {
   sendBtn.disabled = true;
   return runGeneration(prompt, '', null, {
     image2image: { image, workflow: currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW },
+    sliderReplace: imgWrap || null,
+  })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
+// Runs an image2video workflow over `image` using `prompt`. Mirrors
+// runImage2Image but uses the image2video endpoint (no denoise, no LoRA).
+// When `imgWrap` (the source image's .img-wrap) is given, the result is
+// offered in place as a before/after slider.
+function runImage2Video(prompt, image, imgWrap) {
+  iterationsFromSequence = false;
+  sendBtn.disabled = true;
+  return runGeneration(prompt, '', null, {
+    image2video: { image, workflow: currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW },
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
@@ -3389,6 +3550,29 @@ function appendChatImage(container, url) {
     openMaskEditor(url, wrap);
   });
 
+  const i2v = document.createElement('button');
+  i2v.className = 'img-i2v';
+  i2v.title = 'Image to video';
+  i2v.innerHTML = '&#127916;&#xFE0E;';
+  i2v.addEventListener('click', e => {
+    e.stopPropagation();
+    if (i2v.disabled || sendBtn.disabled) return;
+    let prompt;
+    if (image2videoOverridePrompt) {
+      prompt = image2videoOverridePrompt;
+    } else {
+      const orig = imagePrompts[url];
+      if (!orig) {
+        addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
+        return;
+      }
+      prompt = applyReplacements(orig, image2videoReplacements);
+    }
+    i2v.disabled = true;
+    addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
+    runImage2Video(prompt, url, wrap).finally(() => { i2v.disabled = false; });
+  });
+
   wrap.appendChild(img);
   wrap.appendChild(del);
   wrap.appendChild(face);
@@ -3396,6 +3580,7 @@ function appendChatImage(container, url) {
   wrap.appendChild(redo);
   wrap.appendChild(i2i);
   wrap.appendChild(inpaintBtn);
+  wrap.appendChild(i2v);
 
   // Re-run inpaint: only present once this image has an associated mask (i.e.
   // it is itself an inpaint result, or the rejected original of one). Sits just
@@ -3550,6 +3735,29 @@ function renderReviewGrid(bubble, urls) {
       openMaskEditor(url, null);
     });
 
+    const ri2v = document.createElement('button');
+    ri2v.className = 'img-i2v review-i2v';
+    ri2v.title = 'Image to video';
+    ri2v.innerHTML = '&#127916;&#xFE0E;';
+    ri2v.addEventListener('click', e => {
+      e.stopPropagation();
+      if (ri2v.disabled || sendBtn.disabled) return;
+      let prompt;
+      if (image2videoOverridePrompt) {
+        prompt = image2videoOverridePrompt;
+      } else {
+        const orig = imagePrompts[url];
+        if (!orig) {
+          addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
+          return;
+        }
+        prompt = applyReplacements(orig, image2videoReplacements);
+      }
+      ri2v.disabled = true;
+      addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
+      runImage2Video(prompt, url).finally(() => { ri2v.disabled = false; });
+    });
+
     cell.appendChild(img);
     cell.appendChild(del);
     cell.appendChild(face);
@@ -3557,6 +3765,7 @@ function renderReviewGrid(bubble, urls) {
     cell.appendChild(rredo);
     cell.appendChild(ri2i);
     cell.appendChild(rinpaint);
+    cell.appendChild(ri2v);
     grid.appendChild(cell);
   });
 
@@ -3605,6 +3814,7 @@ function restoreSession(data) {
   if (s.faceWorkflow        !== undefined) currentFaceWorkflow       = s.faceWorkflow;
   if (s.upscaleWorkflow     !== undefined) currentUpscaleWorkflow    = s.upscaleWorkflow;
   if (s.image2imageWorkflow !== undefined) currentImage2ImageWorkflow = s.image2imageWorkflow;
+  if (s.image2videoWorkflow !== undefined) currentImage2VideoWorkflow = s.image2videoWorkflow;
   if (s.inpaintingWorkflow  !== undefined) currentInpaintingWorkflow  = s.inpaintingWorkflow;
   if (s.resolution          !== undefined) currentResolution         = s.resolution;
   if (s.generationSteps     !== undefined) currentGenerationSteps    = s.generationSteps;
@@ -3612,6 +3822,8 @@ function restoreSession(data) {
   if (s.sequenceReplacements    !== undefined) sequenceReplacements    = s.sequenceReplacements;
   if (s.image2imageReplacements !== undefined) image2imageReplacements = s.image2imageReplacements;
   if (s.image2imageOverridePrompt !== undefined) image2imageOverridePrompt = s.image2imageOverridePrompt;
+  if (s.image2videoReplacements !== undefined) image2videoReplacements = s.image2videoReplacements;
+  if (s.image2videoOverridePrompt !== undefined) image2videoOverridePrompt = s.image2videoOverridePrompt;
   if (s.lastFaceDetailPrompt    !== undefined) lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastInpaintingPrompt    !== undefined) lastInpaintingPrompt    = s.lastInpaintingPrompt;
   if (s.currentDenoise          !== undefined) currentDenoise          = { ...DEFAULT_DENOISE, ...s.currentDenoise };
@@ -3707,6 +3919,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const face = opts.face || null;
   const upscale = opts.upscale || null;
   const image2image = opts.image2image || null;
+  const image2video = opts.image2video || null;
   const inpaint = opts.inpaint || null;
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
@@ -3715,10 +3928,11 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   // image rather than appending a new one, so the progress bubble belongs
   // beside that image, not at the bottom of the chat.
   const inPlaceWrap = sliderReplace || replaceWrap;
-  const job = face || upscale || image2image || inpaint; // an image-input job vs a plain generation
+  const job = face || upscale || image2image || image2video || inpaint; // an image-input job vs a plain generation
   const endpoint = face ? '/api/face-detail'
                  : upscale ? '/api/upscale'
                  : image2image ? '/api/image2image'
+                 : image2video ? '/api/image2video'
                  : inpaint ? '/api/inpaint'
                  : '/api/generate';
   const botBubble = addMessage('bot', `

@@ -61,6 +61,14 @@ COMFY_INPAINTING_DIR = COMFY_WORKFLOW_DIR / 'inpainting'
 # Default inpainting workflow, normalised to match list_inpainting_workflows().
 COMFY_INPAINTING_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_INPAINTING_WORKFLOW'))
 
+# Image2video workflows live in a subdir of the main workflow folder. They take
+# the last generated image as input (via an <INPUT_IMAGE> LoadImage placeholder)
+# and an optional <PROMPT> to guide the video generation. No LoRA or denoise
+# support — those are handled in a future iteration.
+COMFY_IMAGE2VIDEO_DIR = COMFY_WORKFLOW_DIR / 'image2video'
+# Default image2video workflow, normalised to match list_image2video_workflows().
+COMFY_IMAGE2VIDEO_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_IMAGE2VIDEO_WORKFLOW'))
+
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 # Temporary mask storage — kept separate from IMAGES_DIR so mask files never
