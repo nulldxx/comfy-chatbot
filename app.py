@@ -584,7 +584,7 @@ def api_image2video():
     image_url = (data.get("image") or "").strip()
     if not image_url:
         return jsonify({"error": "image is required"}), 400
-    safe, image_path, err = resolve_input_image(image_url)
+    _, image_path, err = resolve_input_image(image_url)
     if err:
         return err
 
@@ -602,10 +602,12 @@ def api_image2video():
     if err:
         return err
 
+    # Unlike image2image/upscale/face-detail, image2video does not replace its
+    # source — the original image is kept alongside the new video — so the video
+    # gets its own (newest) mtime rather than inheriting the source's position.
     job_id = start_generation_job(
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
-        preserve_mtime_from=safe,
     )
     return jsonify({"job_id": job_id})
 
