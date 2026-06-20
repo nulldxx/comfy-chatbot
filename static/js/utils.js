@@ -80,6 +80,21 @@ export function deriveFaceDetailPrompt(genPrompt) {
   return `${desc} ${loraTags.join(' ')}`;
 }
 
+// Folds an image's video metadata into its base (image) prompt to form the prompt
+// sent to an image2video workflow: "<base>. <action>. Audio: <audio>". Empty
+// parts are skipped; with no/empty meta it returns `base` unchanged, preserving
+// backward compatibility with /sequence and plain generations (which carry no
+// action/audio). `meta` is { action, audio } or null/undefined.
+export function buildVideoPrompt(base, meta) {
+  if (!meta) return base;
+  const action = (meta.action || '').trim();
+  const audio = (meta.audio || '').trim();
+  const parts = [base];
+  if (action) parts.push(action);
+  if (audio) parts.push('Audio: ' + audio);
+  return parts.filter(p => p && p.trim()).join('. ');
+}
+
 // ---------------------------------------------------------------------------
 // Video settings (image2video <DURATION>/<FRAMES>/<FPS>)
 //

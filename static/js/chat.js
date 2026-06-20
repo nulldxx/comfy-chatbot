@@ -1,5 +1,5 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
-         DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS, fmtDuration, clampVideo, recomputeVideo } from './utils.js';
+         DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS, fmtDuration, clampVideo, recomputeVideo, buildVideoPrompt } from './utils.js';
 
 // Builds the DOM element for a generated result: a <video> for video outputs,
 // otherwise an <img>. Both carry alt text and the same class so existing CSS
@@ -196,6 +196,7 @@ const SLASH_COMMANDS = [
   { cmd: '/review-session', desc: 'grid of this session\'s images (tap to view, trash to delete)', args: '' },
   { cmd: '/review-today',   desc: 'grid of today\'s images (tap to view, trash to delete)', args: '' },
   { cmd: '/sequence',   desc: 'generate a prompt sequence from a master prompt (Grok)', args: ' ' },
+  { cmd: '/video-sequence', desc: 'like /sequence, plus per-shot action & audio for video (Grok)', args: ' ' },
   { cmd: '/sequence-replacement', desc: 'add a find→replace applied to Grok prompts', args: ' ' },
   { cmd: '/server',     desc: 'choose a ComfyUI server',            args: ''  },
   { cmd: '/slideshow',         desc: 'browse the last N images, oldest first',  args: ' ' },
@@ -830,6 +831,52 @@ function handleSlashCommand(raw) {
     return;
   }
 
+  if (cmd === '/video-sequence') {
+    const master = expandAliases(raw.slice('/video-sequence'.length).trim(), ALIASES);
+    addMessage('user', escapeHtml(raw), raw);
+    if (!master) {
+      addMessage('bot', '<span style="color:#f87171">⚠ Provide a master prompt, e.g. <code>/video-sequence a woman dancing in the rain</code></span>');
+      return;
+    }
+    // Same count rules as /sequence — borrow /iterations, default 15.
+    const count = iterations === 1 ? 15 : iterations;
+    iterationsFromSequence = true;
+    sendBtn.disabled = true;
+    const statusBubble = addMessage('bot', `
+      <div class="status-text">Asking Grok for ${count} video shot(s)…</div>
+      <div class="dots"><span></span><span></span><span></span></div>
+    `);
+    fetch('/api/video-sequence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: master, count, replacements: sequenceReplacements }),
+    })
+    .then(parseJsonResponse)
+    .then(async data => {
+      if (data.error) throw new Error(data.error);
+      const shots = data.prompts || [];
+      statusBubble.innerHTML = `<div class="status-text">Grok returned <strong style="color:#a78bfa">${shots.length}</strong> shot(s) — generating one after another…</div>`;
+      scrollBottom();
+      // Generate each still from its prompt only; remember action/audio so the
+      // video button can fold them in later.
+      for (const shot of shots) {
+        const prompt = shot.prompt || '';
+        if (!prompt) continue;
+        addMessage('user', escapeHtml(prompt), prompt);
+        const ok = await runGeneration(prompt, '', null, {
+          videoMeta: { action: shot.action || '', audio: shot.audio || '' },
+        });
+        if (!ok) break;
+      }
+      sendBtn.disabled = false;
+    })
+    .catch(err => {
+      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+      sendBtn.disabled = false;
+    });
+    return;
+  }
+
   if (cmd === '/sequence-replacement') {
     addMessage('user', escapeHtml(raw), raw);
     if (!parts[1]) {
@@ -1021,7 +1068,7 @@ function handleSlashCommand(raw) {
             addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
             return;
           }
-          prompt = applyReplacements(orig, image2videoReplacements);
+          prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[img]);
         }
         addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
         return runImage2Video(prompt, img);
@@ -1286,6 +1333,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence &lt;master prompt&gt;</code> — ask Grok to expand a master prompt into a sequence of prompts, then generate them one after another
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">count comes from <code>/iterations</code> (or 15 if iterations is 1) &nbsp;·&nbsp; needs <code>XAI_API_KEY</code> set on the server</div>
         </div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/video-sequence &lt;master prompt&gt;</code> — like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to each Grok prompt (no args lists them; <code>clear</code> removes them)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose a workflow template</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several workflows, then run the prompt against each one</div>
@@ -1785,6 +1833,7 @@ function handleSlashCommand(raw) {
     savedDraft = '';
     sessionImages.length = 0;
     for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
+    for (const k of Object.keys(imageVideoMeta)) delete imageVideoMeta[k];
     fauxFullscreenEls.clear();
     document.body.style.overflow = '';
     messagesEl.innerHTML = '';
@@ -1798,6 +1847,7 @@ function handleSlashCommand(raw) {
     savedDraft = '';
     sessionImages.length = 0;
     for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
+    for (const k of Object.keys(imageVideoMeta)) delete imageVideoMeta[k];
     fauxFullscreenEls.clear();
     document.body.style.overflow = '';
     currentServer = null;
@@ -1860,6 +1910,7 @@ function handleSlashCommand(raw) {
       },
       sessionImages: sessionImages.slice(),
       imagePrompts: Object.assign({}, imagePrompts),
+      imageVideoMeta: Object.assign({}, imageVideoMeta),
       messages: captureSessionMessages(),
     };
     const bubble = addMessage('bot', '<div class="status-text">Saving session…</div>').parentElement.querySelector('.bubble');
@@ -2605,6 +2656,13 @@ const imagePrompts = {};
 // single-use token consumption.
 const imageMasks = {};
 
+// url -> { action, audio } for images generated via /video-sequence, where Grok
+// also produced an "action" (what happens in the video) and "audio" (what's said
+// / heard) alongside the still-image prompt. Used to enrich the video prompt when
+// the image is later turned into a video. Absent for plain /sequence images, in
+// which case the video flow falls back to the bare original prompt.
+const imageVideoMeta = {};
+
 // Deletes an image file from the server's output folder. Resolves on
 // success; a 404 also resolves since the file is already gone (e.g.
 // deleted from a slideshow).
@@ -2625,6 +2683,7 @@ function removeImageFromChat(url) {
   if (i !== -1) sessionImages.splice(i, 1);
   delete imagePrompts[url];
   delete imageMasks[url];
+  delete imageVideoMeta[url];
 }
 
 // Build a default face-detail prompt from a generation prompt by keeping its
@@ -3749,7 +3808,7 @@ function appendChatImage(container, url) {
         addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
         return;
       }
-      prompt = applyReplacements(orig, image2videoReplacements);
+      prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[url]);
     }
     i2v.disabled = true;
     addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
@@ -3942,7 +4001,7 @@ function renderReviewGrid(bubble, urls) {
           addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
           return;
         }
-        prompt = applyReplacements(orig, image2videoReplacements);
+        prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[url]);
       }
       ri2v.disabled = true;
       addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
@@ -3995,6 +4054,7 @@ function restoreSession(data) {
   savedDraft = '';
   sessionImages.length = 0;
   for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
+  for (const k of Object.keys(imageVideoMeta)) delete imageVideoMeta[k];
   fauxFullscreenEls.clear();
   document.body.style.overflow = '';
   messagesEl.innerHTML = '';
@@ -4025,6 +4085,7 @@ function restoreSession(data) {
 
   for (const url of (data.sessionImages || [])) sessionImages.push(url);
   Object.assign(imagePrompts, data.imagePrompts || {});
+  Object.assign(imageVideoMeta, data.imageVideoMeta || {});
 
   const validImages = new Set(data.sessionImages || []);
   for (const msg of (data.messages || [])) {
@@ -4114,6 +4175,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const image2image = opts.image2image || null;
   const image2video = opts.image2video || null;
   const inpaint = opts.inpaint || null;
+  const videoMeta = opts.videoMeta || null;
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
@@ -4222,6 +4284,11 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         // lets a face icon on the result re-derive cleanly. A plain generation
         // just uses its own prompt.
         const originPrompt = job ? (imagePrompts[job.image] || '') : (raw || '');
+        // Video metadata (action/audio from /video-sequence) follows the same
+        // inheritance: a directly-passed videoMeta for a fresh generation, else
+        // the source image's metadata for an image-input job (do-over,
+        // face-detail, upscale, i2i) so the result keeps a working video button.
+        const originVideoMeta = videoMeta || (job ? imageVideoMeta[job.image] : null);
 
         // In-place before/after slider for a single-image face-detail / upscale
         // result: replace the source .img-wrap with a comparison slider and let
@@ -4237,7 +4304,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             if (idx !== -1) sessionImages.splice(idx, 1, newUrl);
             else sessionImages.push(newUrl);
             delete imagePrompts[oldUrl];
+            delete imageVideoMeta[oldUrl];
             if (originPrompt) imagePrompts[newUrl] = originPrompt;
+            if (originVideoMeta) imageVideoMeta[newUrl] = originVideoMeta;
             // Carry the mask onto the kept inpaint result so it can be re-run;
             // the old image is gone, so drop its (stale) mask. Non-inpaint ops
             // (face/upscale/i2i) clear it too — their result has new pixels the
@@ -4274,7 +4343,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             else sessionImages.push(compositeUrl);
             delete imagePrompts[oldUrl];
             delete imageMasks[oldUrl];
+            delete imageVideoMeta[oldUrl];
             if (originPrompt) imagePrompts[compositeUrl] = originPrompt;
+            if (originVideoMeta) imageVideoMeta[compositeUrl] = originVideoMeta;
             const tmp = document.createElement('div');
             appendChatImage(tmp, compositeUrl);
             sliderEl.replaceWith(tmp.firstChild);
@@ -4287,6 +4358,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
 
         msg.images.forEach((url, i) => {
           if (originPrompt) imagePrompts[url] = originPrompt;
+          // Remember Grok's action/audio against this image so a later video
+          // generation can fold them into the video prompt.
+          if (originVideoMeta) imageVideoMeta[url] = originVideoMeta;
           // Inpaint result added directly (no in-place slider, e.g. launched
           // from the lightbox/review grid): record its mask so it too gets a
           // "re-run inpaint" button.
@@ -4299,6 +4373,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             if (oldSrc) {
               deleteImageFile(oldSrc).catch(() => {});  // discard the old file from disk so it doesn't linger in /review-session
               delete imagePrompts[oldSrc];
+              delete imageVideoMeta[oldSrc];
             }
             // Replace the old image in-place in sessionImages so /review-session
             // keeps its position rather than moving the regenerated image to the end.

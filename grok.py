@@ -134,8 +134,78 @@ Return ONLY valid JSON in exactly this structure:
     raise last_error or GrokError("Grok is not configured — no model to try.")
 
 
-def _parse_prompts(content):
-    """Extract the prompts list from a Grok JSON reply, or raise GrokError."""
+def generate_video_prompt_sequence(master_prompt, count):
+    """Ask Grok for `count` distinct video shots derived from `master_prompt`.
+
+    Like generate_prompt_sequence, but each item carries three fields:
+      - prompt: the self-contained still-image prompt (used for image generation)
+      - action: what is happening/moving if the still were animated into a video
+      - audio:  what is being said and/or what sounds are heard
+
+    Returns a list of dicts {"prompt", "action", "audio"} (action/audio may be
+    empty strings). Raises GrokError on any failure.
+    """
+    system = (
+        "You are an expert at writing detailed prompts for photorealistic AI image "
+        "and video generation. You always respond with valid JSON and nothing else."
+    )
+    user = f"""Based on the following master prompt, create a set of exactly {count} distinct video shots.
+
+Master prompt: {master_prompt}
+
+For EACH shot, produce three pieces of text:
+1. "prompt" — a detailed still-image generation prompt describing a single frame of the shot.
+2. "action" — a short description of what happens/moves in the shot if that still frame were animated into a few seconds of video.
+3. "audio" — a short description of what is being said (dialogue) and/or what ambient sounds are heard in the shot.
+
+CRITICAL: Each "prompt" is sent to the image model completely on its own, with no knowledge of the other shots. There is NO shared context between shots. Treat every shot as if it were the only one. This means each "prompt" MUST:
+- Fully restate the subject, scene, and style from scratch — never rely on, refer to, or continue from another shot
+- Never use back-references like "the same woman", "she", "as before", "this time", "again", "now", "continuing", or "the previous scene"; every noun must be introduced fresh as if for the first time
+- Stand completely alone and be fully understandable in isolation
+
+Each "prompt" should also:
+- Be a single self-contained paragraph describing one specific image
+- Keep the core subject, scene, and overall style consistent with the master prompt (by re-describing it in full, not by referring back)
+- Vary the pose, composition, camera angle, and small details from shot to shot
+- Describe a single moment — never multiple poses or sequential actions in one prompt
+- Be optimised for a photorealistic text-to-image model
+
+The "action" and "audio" fields should each be a single concise sentence or two.
+
+Return ONLY valid JSON in exactly this structure:
+{{"prompts": [{{"prompt": "...", "action": "...", "audio": "..."}}]}}"""
+
+    # Each item is a full image paragraph (~300 tokens) plus a short action and
+    # audio line (~100 tokens combined). Budget generously so the JSON array is
+    # never cut off mid-string — a truncated response fails parsing.
+    max_tokens = 1024 + count * 600
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+    models = [GROK_MODEL]
+    if GROK_FALLBACK_MODEL and GROK_FALLBACK_MODEL != GROK_MODEL:
+        models.append(GROK_FALLBACK_MODEL)
+
+    last_error = None
+    for model in models:
+        try:
+            content = _chat(messages, max_tokens=max_tokens, model=model)
+            return _parse_video_prompts(content)
+        except GrokError as e:
+            last_error = e
+            log.warning("Grok model %s failed for /video-sequence: %s", model, e)
+
+    raise last_error or GrokError("Grok is not configured — no model to try.")
+
+
+def _extract_json_object(content):
+    """Reject leaked special tokens and return the parsed top-level JSON object.
+
+    Shared by _parse_prompts and _parse_video_prompts. Raises GrokError if the
+    response is corrupt, contains no JSON object, or is not valid JSON.
+    """
     # A leaked special token means the model corrupted its own output; the JSON
     # may even parse but cannot be trusted, so reject it (triggers a fallback).
     if _SPECIAL_TOKEN_RE.search(content or ""):
@@ -152,9 +222,39 @@ def _parse_prompts(content):
         raise GrokError(f"Grok did not return JSON — model said: {snippet}")
 
     try:
-        data = json.loads(content[start:end])
+        return json.loads(content[start:end])
     except json.JSONDecodeError as e:
         raise GrokError(f"Grok returned invalid JSON: {e} — model said: {content[start:end][:300]}")
+
+
+def _parse_video_prompts(content):
+    """Extract the list of {prompt, action, audio} dicts from a Grok reply."""
+    data = _extract_json_object(content)
+
+    out = []
+    for item in data.get("prompts", []):
+        if not isinstance(item, dict):
+            continue
+        prompt = item.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            continue
+        action = item.get("action")
+        audio = item.get("audio")
+        out.append({
+            "prompt": prompt.strip(),
+            "action": action.strip() if isinstance(action, str) else "",
+            "audio": audio.strip() if isinstance(audio, str) else "",
+        })
+
+    if not out:
+        raise GrokError("Grok returned no usable video prompts.")
+
+    return out
+
+
+def _parse_prompts(content):
+    """Extract the prompts list from a Grok JSON reply, or raise GrokError."""
+    data = _extract_json_object(content)
 
     prompts = [p.strip() for p in data.get("prompts", []) if isinstance(p, str) and p.strip()]
     if not prompts:

@@ -533,6 +533,43 @@ class TestImage2VideoSettings(_AppFixture):
         self.assertEqual(resp.status_code, 200)
 
 
+class TestVideoSequenceRoute(_AppFixture):
+    """/api/video-sequence returns Grok's {prompt, action, audio} shots (Grok mocked)."""
+
+    def test_requires_master_prompt(self):
+        resp = self.client.post("/api/video-sequence", json={"prompt": "  "})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_returns_structured_shots(self):
+        shots = [
+            {"prompt": "a cat", "action": "leaps", "audio": "meow"},
+            {"prompt": "a dog", "action": "runs", "audio": "bark"},
+        ]
+        with patch.object(app_module, "generate_video_prompt_sequence", return_value=shots) as gen:
+            resp = self.client.post("/api/video-sequence", json={"prompt": "pets", "count": 2})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["prompts"], shots)
+        gen.assert_called_once_with("pets", 2)
+
+    def test_replacements_apply_to_all_three_fields(self):
+        shots = [{"prompt": "a cat sits", "action": "the cat leaps", "audio": "cat meow"}]
+        with patch.object(app_module, "generate_video_prompt_sequence", return_value=shots):
+            resp = self.client.post(
+                "/api/video-sequence",
+                json={"prompt": "x", "replacements": [["cat", "dog"]]},
+            )
+        item = resp.get_json()["prompts"][0]
+        self.assertEqual(item["prompt"], "a dog sits")
+        self.assertEqual(item["action"], "the dog leaps")
+        self.assertEqual(item["audio"], "dog meow")
+
+    def test_grok_error_returns_502(self):
+        from grok import GrokError
+        with patch.object(app_module, "generate_video_prompt_sequence", side_effect=GrokError("down")):
+            resp = self.client.post("/api/video-sequence", json={"prompt": "x"})
+        self.assertEqual(resp.status_code, 502)
+
+
 # ---------------------------------------------------------------------------
 # Session endpoints
 # ---------------------------------------------------------------------------

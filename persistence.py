@@ -64,7 +64,8 @@ def load_session(safe_name):
         raise FileNotFoundError(safe_name)
     data = json.loads(path.read_text())
 
-    # Filter sessionImages and imagePrompts to files that still exist on disk.
+    # Filter sessionImages, imagePrompts and imageVideoMeta to files that still
+    # exist on disk.
     valid = set()
     for url in data.get("sessionImages", []):
         filename = url.rsplit("/", 1)[-1]
@@ -76,6 +77,7 @@ def load_session(safe_name):
 
     data["sessionImages"] = [u for u in data.get("sessionImages", []) if u in valid]
     data["imagePrompts"] = {k: v for k, v in data.get("imagePrompts", {}).items() if k in valid}
+    data["imageVideoMeta"] = {k: v for k, v in data.get("imageVideoMeta", {}).items() if k in valid}
 
     filtered = []
     for msg in data.get("messages", []):

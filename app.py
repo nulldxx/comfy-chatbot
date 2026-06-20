@@ -36,7 +36,7 @@ from config import (
 from generation_service import (
     cancel_auto_purge, jobs, jobs_lock, run_generation, start_generation_job,
 )
-from grok import GrokError, generate_prompt_sequence
+from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequence
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
     register_draw_token, register_mask_token,
@@ -758,6 +758,53 @@ def api_sequence():
         for src, dst in replacements:
             p = p.replace(src, dst)
         out.append(p)
+
+    return jsonify({"prompts": out})
+
+
+@app.route("/api/video-sequence", methods=["POST"])
+@login_required
+def api_video_sequence():
+    """Like /api/sequence, but Grok also returns an action and audio prompt per shot.
+
+    The client generates each still image from the `prompt` field only; the
+    `action`/`audio` are remembered against the resulting image and folded into
+    the video prompt later if the image is turned into a video.
+    """
+    data = request.get_json(force=True)
+    master = (data.get("prompt") or "").strip()
+    if not master:
+        return jsonify({"error": "A master prompt is required"}), 400
+
+    try:
+        count = int(data.get("count", 15))
+    except (ValueError, TypeError):
+        count = 15
+    count = max(1, min(count, 64))
+
+    # Replacements arrive as a list of [from, to] pairs and are applied to all
+    # three text fields of each shot so a name swap propagates consistently.
+    replacements = []
+    for pair in data.get("replacements") or []:
+        if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0]:
+            replacements.append((str(pair[0]), str(pair[1])))
+
+    try:
+        shots = generate_video_prompt_sequence(master, count)
+    except GrokError as e:
+        return jsonify({"error": str(e)}), 502
+
+    out = []
+    for shot in shots:
+        item = {
+            "prompt": shot.get("prompt", ""),
+            "action": shot.get("action", ""),
+            "audio": shot.get("audio", ""),
+        }
+        for src, dst in replacements:
+            for key in ("prompt", "action", "audio"):
+                item[key] = item[key].replace(src, dst)
+        out.append(item)
 
     return jsonify({"prompts": out})
 

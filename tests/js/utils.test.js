@@ -1,5 +1,5 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
-         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS } from '../../static/js/utils.js';
+         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // escapeHtml
@@ -388,5 +388,43 @@ describe('recomputeVideo', () => {
   test('default settings are self-consistent (frames = duration × fps)', () => {
     const { duration, frames, fps } = DEFAULT_VIDEO_SETTINGS;
     expect(frames).toBe(duration * fps);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildVideoPrompt
+// ---------------------------------------------------------------------------
+
+describe('buildVideoPrompt', () => {
+  test('returns base unchanged when meta is null (backward compatible)', () => {
+    expect(buildVideoPrompt('a cat on a wall', null)).toBe('a cat on a wall');
+  });
+
+  test('returns base unchanged when meta is undefined', () => {
+    expect(buildVideoPrompt('a cat on a wall', undefined)).toBe('a cat on a wall');
+  });
+
+  test('returns base unchanged when meta has empty fields', () => {
+    expect(buildVideoPrompt('a cat', { action: '', audio: '' })).toBe('a cat');
+  });
+
+  test('folds in action and audio in the documented format', () => {
+    expect(buildVideoPrompt('a cat on a wall', { action: 'it leaps down', audio: 'a meow' }))
+      .toBe('a cat on a wall. it leaps down. Audio: a meow');
+  });
+
+  test('includes action only when audio is missing', () => {
+    expect(buildVideoPrompt('a cat', { action: 'it leaps down', audio: '' }))
+      .toBe('a cat. it leaps down');
+  });
+
+  test('includes audio only when action is missing', () => {
+    expect(buildVideoPrompt('a cat', { action: '', audio: 'a meow' }))
+      .toBe('a cat. Audio: a meow');
+  });
+
+  test('trims whitespace around fields', () => {
+    expect(buildVideoPrompt('a cat', { action: '  it leaps  ', audio: '  a meow ' }))
+      .toBe('a cat. it leaps. Audio: a meow');
   });
 });

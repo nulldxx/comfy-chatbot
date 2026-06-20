@@ -118,6 +118,10 @@ class TestSessions(unittest.TestCase):
         payload = {
             "sessionImages": ["/images/real.png", "/images/ghost.png"],
             "imagePrompts": {"/images/real.png": "a", "/images/ghost.png": "b"},
+            "imageVideoMeta": {
+                "/images/real.png": {"action": "x", "audio": "y"},
+                "/images/ghost.png": {"action": "p", "audio": "q"},
+            },
             "messages": [
                 {"role": "bot", "images": ["/images/real.png", "/images/ghost.png"], "text": ""}
             ],
@@ -126,6 +130,8 @@ class TestSessions(unittest.TestCase):
         data = persistence.load_session("s")
         self.assertEqual(data["sessionImages"], ["/images/real.png"])
         self.assertNotIn("/images/ghost.png", data["imagePrompts"])
+        self.assertNotIn("/images/ghost.png", data["imageVideoMeta"])
+        self.assertIn("/images/real.png", data["imageVideoMeta"])
         self.assertEqual(data["messages"][0]["images"], ["/images/real.png"])
 
     def test_load_session_drops_bot_message_with_no_images_no_text(self):
