@@ -8,6 +8,12 @@ export function escapeHtml(s) {
     .replace(/>/g, '&gt;');
 }
 
+// True for output URLs that are videos (rendered via <video> rather than <img>).
+// Mirrors VIDEO_EXTS in config.py. A query string / fragment is ignored.
+export function isVideoUrl(url) {
+  return /\.(mp4|webm)(?:[?#]|$)/i.test(String(url));
+}
+
 // Subsequence fuzzy match: every query char must appear in order.
 // Returns a score (higher = better) or -1 for no match.
 export function fuzzyScore(query, text) {

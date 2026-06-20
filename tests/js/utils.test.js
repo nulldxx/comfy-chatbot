@@ -1,4 +1,4 @@
-import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt } from '../../static/js/utils.js';
+import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // escapeHtml
@@ -263,5 +263,35 @@ describe('deriveFaceDetailPrompt', () => {
   test('preserves LoRA name and strength verbatim', () => {
     const result = deriveFaceDetailPrompt('a woman <lora:my-model/detail:0.75>');
     expect(result).toContain('<lora:my-model/detail:0.75>');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isVideoUrl
+// ---------------------------------------------------------------------------
+
+describe('isVideoUrl', () => {
+  test('matches video extensions', () => {
+    expect(isVideoUrl('/images/20240101_clip.mp4')).toBe(true);
+    expect(isVideoUrl('/images/20240101_clip.webm')).toBe(true);
+  });
+
+  test('is case-insensitive', () => {
+    expect(isVideoUrl('/images/CLIP.MP4')).toBe(true);
+  });
+
+  test('rejects image extensions', () => {
+    expect(isVideoUrl('/images/pic.png')).toBe(false);
+    expect(isVideoUrl('/images/anim.gif')).toBe(false);
+    expect(isVideoUrl('/images/anim.webp')).toBe(false);
+  });
+
+  test('ignores a trailing query string or fragment', () => {
+    expect(isVideoUrl('/images/clip.mp4?v=2')).toBe(true);
+    expect(isVideoUrl('/images/clip.webm#t=1')).toBe(true);
+  });
+
+  test('does not match the extension mid-path', () => {
+    expect(isVideoUrl('/images/mp4-thumbnail.png')).toBe(false);
   });
 });

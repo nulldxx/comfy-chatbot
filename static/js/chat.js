@@ -1,4 +1,24 @@
-import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt } from './utils.js';
+import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl } from './utils.js';
+
+// Builds the DOM element for a generated result: a <video> for video outputs,
+// otherwise an <img>. Both carry alt text and the same class so existing CSS
+// applies. Videos get inline controls + loop; `autoplay` (muted) is used for a
+// single inline result but skipped in grids to avoid many simultaneous plays.
+function createMediaElement(url, { autoplay = false } = {}) {
+  if (isVideoUrl(url)) {
+    const video = document.createElement('video');
+    video.src = url;
+    video.controls = true;
+    video.loop = true;
+    video.playsInline = true;
+    if (autoplay) { video.muted = true; video.autoplay = true; }
+    return video;
+  }
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = 'Generated image';
+  return img;
+}
 
 const messagesEl = document.getElementById('messages');
 const inputEl    = document.getElementById('prompt-input');
@@ -2466,8 +2486,8 @@ function deleteImageFile(url) {
 
 // Removes every chat copy of an image and forgets it from session tracking.
 function removeImageFromChat(url) {
-  messagesEl.querySelectorAll('.img-wrap img').forEach(img => {
-    if (img.getAttribute('src') === url) img.closest('.img-wrap').remove();
+  messagesEl.querySelectorAll('.img-wrap img, .img-wrap video').forEach(media => {
+    if (media.getAttribute('src') === url) media.closest('.img-wrap').remove();
   });
   const i = sessionImages.indexOf(url);
   if (i !== -1) sessionImages.splice(i, 1);
@@ -2528,14 +2548,15 @@ function runImage2Image(prompt, image, imgWrap) {
 
 // Runs an image2video workflow over `image` using `prompt`. Mirrors
 // runImage2Image but uses the image2video endpoint (no denoise, no LoRA).
-// When `imgWrap` (the source image's .img-wrap) is given, the result is
-// offered in place as a before/after slider.
-function runImage2Video(prompt, image, imgWrap) {
+// Unlike image2image, the result is a video — a different artifact from the
+// source image, not a refinement of it — so it is appended as a new item below
+// rather than offered as an in-place before/after slider (which compares two
+// images). The source image is left untouched.
+function runImage2Video(prompt, image) {
   iterationsFromSequence = false;
   sendBtn.disabled = true;
   return runGeneration(prompt, '', null, {
     image2video: { image, workflow: currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW },
-    sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
 }
@@ -3454,9 +3475,39 @@ function appendChatImage(container, url) {
   const wrap = document.createElement('div');
   wrap.className = 'img-wrap';
 
-  const img = document.createElement('img');
-  img.src = url;
-  img.alt = 'Generated image';
+  const media = createMediaElement(url, { autoplay: true });
+
+  // Video results can't be re-fed into the image-input ops (face-detail,
+  // upscale, do-over, image2image, inpaint, image2video), so those overlays are
+  // image-only; a video keeps just the delete button.
+  if (isVideoUrl(url)) {
+    const del = document.createElement('button');
+    del.className = 'img-del';
+    del.title = 'Delete video';
+    del.innerHTML = '&#128465;&#xFE0E;';
+    del.addEventListener('click', e => {
+      e.stopPropagation();
+      if (del.disabled) return;
+      del.disabled = true;
+      deleteImageFile(url)
+        .then(() => removeImageFromChat(url))
+        .catch(err => {
+          del.disabled = false;
+          del.innerHTML = '&#9888;&#xFE0E;';
+          del.title = 'Delete failed: ' + err.message + ' — click to retry';
+          setTimeout(() => {
+            del.innerHTML = '&#128465;&#xFE0E;';
+            del.title = 'Delete video';
+          }, 3000);
+        });
+    });
+    wrap.appendChild(media);
+    wrap.appendChild(del);
+    container.appendChild(wrap);
+    return;
+  }
+
+  const img = media;  // an <img> for the image path; named `img` for the overlays below
 
   const face = document.createElement('button');
   face.className = 'img-face';
@@ -3570,7 +3621,7 @@ function appendChatImage(container, url) {
     }
     i2v.disabled = true;
     addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
-    runImage2Video(prompt, url, wrap).finally(() => { i2v.disabled = false; });
+    runImage2Video(prompt, url).finally(() => { i2v.disabled = false; });
   });
 
   wrap.appendChild(img);
@@ -3630,10 +3681,10 @@ function renderReviewGrid(bubble, urls) {
     const cell = document.createElement('div');
     cell.className = 'review-thumb';
 
-    const img = document.createElement('img');
-    img.src = url;
-    img.alt = 'Generated image';
-    img.addEventListener('click', () => openLightbox(url));
+    const isVideo = isVideoUrl(url);
+    const media = createMediaElement(url);
+    if (!isVideo) media.addEventListener('click', () => openLightbox(url));
+    const img = media;  // named `img` for the shared appends/overlays below
 
     const del = document.createElement('button');
     del.className = 'img-del review-del';   // reuse existing img-del styling
@@ -3661,6 +3712,14 @@ function renderReviewGrid(bubble, urls) {
           }, 3000);
         });
     });
+
+    // A video thumbnail keeps only the delete button — the rest are image-input ops.
+    if (isVideo) {
+      cell.appendChild(media);
+      cell.appendChild(del);
+      grid.appendChild(cell);
+      return;
+    }
 
     const face = document.createElement('button');
     face.className = 'img-face review-face';   // reuse existing img-face styling
@@ -3787,7 +3846,7 @@ function captureSessionMessages() {
       const prompt = bubble.dataset.prompt;
       if (prompt) messages.push({ role: 'user', prompt });
     } else {
-      const images = [...bubble.querySelectorAll('.img-wrap img')].map(img => img.getAttribute('src'));
+      const images = [...bubble.querySelectorAll('.img-wrap img, .img-wrap video')].map(m => m.getAttribute('src'));
       if (images.length) {
         const statusEl = bubble.querySelector('.status-text');
         const text = statusEl ? statusEl.textContent.trim() : '';
@@ -4019,7 +4078,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         barWrap.remove();
         cancelBtn.remove();
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        statusLine.textContent = `Done — ${msg.images.length} image(s) in ${elapsed}s${label}`;
+        statusLine.textContent = `Done — ${msg.images.length} result(s) in ${elapsed}s${label}`;
         // The prompt to remember for this image. For an image-input job
         // (face-detail, upscale or image2image) we inherit the *source image's*
         // original generation prompt — not `raw`, which for face-detail is the

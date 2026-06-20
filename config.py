@@ -109,5 +109,11 @@ ARCHIVE_MARKER = '.comfy-archive'
 OUTPUT_VOLUME = os.environ.get('OUTPUT_VOLUME', '')   # host path to the output volume
 OUTPUT_MARKER = ARCHIVE_MARKER                        # same marker file the agent drops
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+# Still-image outputs (and acceptable inputs), rendered in the browser via <img>.
+# Animated GIF/WebP also live here — they play natively in an <img>.
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+# True video outputs (e.g. from a VHS_VideoCombine node), rendered via <video>.
+VIDEO_EXTS = {".mp4", ".webm"}
+# Any output file we'll serve/list/delete — image or video.
+MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))

@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
-from config import IMAGES_DIR, IMAGE_EXTS
+from config import IMAGES_DIR, MEDIA_EXTS
 
 
 def slugify(name):
@@ -70,7 +70,7 @@ def load_session(safe_name):
         filename = url.rsplit("/", 1)[-1]
         safe_name_inner = secure_filename(filename)
         if (safe_name_inner
-                and Path(safe_name_inner).suffix.lower() in IMAGE_EXTS
+                and Path(safe_name_inner).suffix.lower() in MEDIA_EXTS
                 and (IMAGES_DIR / safe_name_inner).is_file()):
             valid.add(url)
 

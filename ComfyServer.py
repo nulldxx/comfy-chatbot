@@ -235,15 +235,21 @@ class ComfyServer:
                     callback(f"\nPolling error: {e}")
                 time.sleep(2)
 
+    # Output node result keys we know how to download. ComfyUI puts still images
+    # under "images"; video/animation nodes (e.g. VHS_VideoCombine) put their
+    # results under "gifs", and some nodes use "videos". They all share the same
+    # {filename, subfolder, type} shape, so we treat them uniformly.
+    OUTPUT_RESULT_KEYS = ("images", "gifs", "videos")
+
     def get_output_images(self, prompt_data):
         """
-        Extract image information from completed prompt data.
+        Extract output media (images or videos) from completed prompt data.
 
         Args:
             prompt_data: Completed prompt data from poll_status
 
         Returns:
-            list: List of dicts with image info (filename, subfolder, type)
+            list: List of dicts with media info (filename, subfolder, type)
         """
         images = []
 
@@ -252,21 +258,21 @@ class ComfyServer:
 
         outputs = prompt_data["outputs"]
 
-        # Iterate through all output nodes
-        for node_id, node_output in outputs.items():
-            if "images" in node_output:
-                for img in node_output["images"]:
-                    filename = img["filename"]
-                    img_type = img.get("type", "output")
+        # Iterate through all output nodes, collecting every known result kind.
+        for node_output in outputs.values():
+            for key in self.OUTPUT_RESULT_KEYS:
+                for item in node_output.get(key, []):
+                    filename = item["filename"]
+                    item_type = item.get("type", "output")
 
-                    # Skip temporary/preview images
-                    if "_temp_" in filename or img_type == "temp":
+                    # Skip temporary/preview results
+                    if "_temp_" in filename or item_type == "temp":
                         continue
 
                     images.append({
                         "filename": filename,
-                        "subfolder": img.get("subfolder", ""),
-                        "type": img_type
+                        "subfolder": item.get("subfolder", ""),
+                        "type": item_type
                     })
 
         return images

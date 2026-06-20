@@ -31,7 +31,7 @@ from config import (
     COMFY_INPAINTING_DIR, COMFY_INPAINTING_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
-    IMAGE_EXTS, IMAGES_DIR, OUTPUT_MARKER, OUTPUT_VOLUME, PASSWORD, SECRET_KEY, USERNAME,
+    IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_MARKER, OUTPUT_VOLUME, PASSWORD, SECRET_KEY, USERNAME,
 )
 from generation_service import (
     cancel_auto_purge, jobs, jobs_lock, run_generation, start_generation_job,
@@ -802,7 +802,7 @@ def api_delete_image(filename):
     if not safe or safe != filename:
         return jsonify({"error": "Invalid filename"}), 400
     path = IMAGES_DIR / safe
-    if path.suffix.lower() not in IMAGE_EXTS:
+    if path.suffix.lower() not in MEDIA_EXTS:
         return jsonify({"error": "Invalid filename"}), 400
     if not path.is_file():
         return jsonify({"error": "Image not found"}), 404
@@ -818,7 +818,7 @@ def api_delete_all_images():
     deleted = 0
     failed = []
     for p in IMAGES_DIR.iterdir():
-        if p.suffix.lower() not in IMAGE_EXTS:
+        if p.suffix.lower() not in MEDIA_EXTS:
             continue
         try:
             p.unlink()
