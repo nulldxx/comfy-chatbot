@@ -566,6 +566,9 @@ function extractLastFrame(url) {
     .then(data => {
       if (data.error) throw new Error(data.error);
       bubble.innerHTML = '';
+      // Inherit the source video's metadata so the extracted frame carries the
+      // same action/audio when fed back into image2video (last-frame continuity).
+      if (imageVideoMeta[url]) imageVideoMeta[data.url] = { ...imageVideoMeta[url] };
       sessionImages.push(data.url);
       appendChatImage(bubble, data.url);
       scrollBottom();
@@ -573,6 +576,83 @@ function extractLastFrame(url) {
     .catch(err => {
       bubble.innerHTML = `<span style="color:#f87171">⚠ Could not cut last frame: ${escapeHtml(err.message)}</span>`;
     });
+}
+
+// Inline editor (pencil overlay) for an image's metadata: its generation prompt
+// (imagePrompts[url]) plus the image2video action/audio (imageVideoMeta[url]).
+// The prompt drives do-over / image2image / image2video; action & audio are
+// folded into the image2video prompt by buildVideoPrompt().
+function openVideoMetaEditor(url, wrap) {
+  const meta = imageVideoMeta[url] || {};
+
+  const box = document.createElement('div');
+  box.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
+
+  // `multiline` rows use a textarea (the prompt can be long); the rest are single-line.
+  const mkRow = (label, value, placeholder, multiline) => {
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex;${multiline ? 'align-items:flex-start' : 'align-items:center'};gap:8px;font-size:0.85rem;color:#cbd5e1`;
+    const lbl = document.createElement('span');
+    lbl.textContent = label + ':';
+    lbl.style.cssText = `min-width:64px;color:#94a3b8${multiline ? ';padding-top:4px' : ''}`;
+    const input = document.createElement(multiline ? 'textarea' : 'input');
+    if (!multiline) input.type = 'text';
+    input.value = value || '';
+    input.placeholder = placeholder;
+    input.style.cssText = `flex:1;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:4px 6px;font-size:0.85rem${multiline ? ';resize:vertical;min-height:48px;font-family:inherit' : ''}`;
+    row.appendChild(lbl); row.appendChild(input);
+    box.appendChild(row);
+    return input;
+  };
+
+  const promptInput = mkRow('Prompt', imagePrompts[url], 'image generation prompt', true);
+  const actionInput = mkRow('Action', meta.action, 'what happens in the video');
+  const audioInput  = mkRow('Audio',  meta.audio,  'sounds / dialogue');
+
+  const refreshTooltip = () => {
+    const i2v = wrap && wrap.querySelector('.img-i2v');
+    if (i2v) i2v.title = i2vTooltip(imageVideoMeta[url]);
+  };
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
+  const applyBtn = document.createElement('button');
+  applyBtn.textContent = 'Apply';
+  applyBtn.className = 'sel-btn';
+  applyBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem';
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear';
+  clearBtn.className = 'sel-btn';
+  clearBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+
+  applyBtn.addEventListener('click', () => {
+    const prompt = promptInput.value.trim();
+    const action = actionInput.value.trim();
+    const audio  = audioInput.value.trim();
+    if (prompt) imagePrompts[url] = prompt; else delete imagePrompts[url];
+    if (action || audio) {
+      imageVideoMeta[url] = { action, audio };
+    } else {
+      delete imageVideoMeta[url];
+    }
+    refreshTooltip();
+    addMessage('bot', `Metadata set — Prompt <strong style="color:#a78bfa">${escapeHtml(prompt || '—')}</strong> · Action <strong style="color:#a78bfa">${escapeHtml(action || '—')}</strong> · Audio <strong style="color:#a78bfa">${escapeHtml(audio || '—')}</strong>.`);
+    scrollBottom();
+  });
+  clearBtn.addEventListener('click', () => {
+    delete imagePrompts[url];
+    delete imageVideoMeta[url];
+    refreshTooltip();
+    addMessage('bot', 'Metadata cleared.');
+    scrollBottom();
+  });
+  btnRow.appendChild(applyBtn);
+  btnRow.appendChild(clearBtn);
+  box.appendChild(btnRow);
+
+  const bubble = addMessage('bot', '<strong>Edit metadata</strong> <span style="color:#475569">(prompt · image2video action / audio)</span>').parentElement.querySelector('.bubble');
+  bubble.appendChild(box);
+  scrollBottom();
 }
 
 // Tap a user bubble to re-edit that prompt
@@ -3863,6 +3943,15 @@ function appendChatImage(container, url) {
     runImage2Video(prompt, url).finally(() => { i2v.disabled = false; });
   });
 
+  const editMeta = document.createElement('button');
+  editMeta.className = 'img-edit-meta';
+  editMeta.title = 'Edit metadata (prompt / action / audio)';
+  editMeta.innerHTML = '&#9998;&#xFE0E;';   // ✎ pencil
+  editMeta.addEventListener('click', e => {
+    e.stopPropagation();
+    openVideoMetaEditor(url, wrap);
+  });
+
   wrap.appendChild(img);
   wrap.appendChild(del);
   wrap.appendChild(face);
@@ -3871,6 +3960,7 @@ function appendChatImage(container, url) {
   wrap.appendChild(i2i);
   wrap.appendChild(inpaintBtn);
   wrap.appendChild(i2v);
+  wrap.appendChild(editMeta);
 
   // Re-run inpaint: only present once this image has an associated mask (i.e.
   // it is itself an inpaint result, or the rejected original of one). Sits just

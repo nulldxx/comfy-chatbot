@@ -253,6 +253,23 @@ header a:hover { color: #a78bfa; }
   .img-i2v { opacity: 0.6; }
 }
 
+/* Pencil that opens the metadata editor, sitting 5px to the left of the
+   centred video icon (anchored by its right edge so it ignores its own width). */
+.img-edit-meta {
+  position: absolute; top: 8px; right: calc(50% + 20px);
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 5px 8px; font-size: 0.85rem;
+  cursor: pointer; line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.img-wrap:hover .img-edit-meta { opacity: 1; }
+.img-edit-meta:hover { border-color: #94a3b8; color: #f1f5f9; }
+@media (hover: none) {
+  .img-edit-meta { opacity: 0.6; }
+}
+
 .img-i2i {
   position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
   background: rgba(15,23,42,0.75); border: 1px solid #334155;
