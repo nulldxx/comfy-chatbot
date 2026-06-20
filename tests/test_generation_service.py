@@ -1,0 +1,100 @@
+"""Tests for the Grok prompt-sequence job runner in generation_service.
+
+run_sequence() runs the (mocked) Grok call inside a tracked job, applies any
+find→replace pairs, and emits queue messages (done/cancelled/error) the SSE
+endpoint relays to the client. The HTTP layer (grok._chat) is never touched."""
+import os
+import sys
+import json
+import queue
+import threading
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import generation_service as gs
+from grok import GrokError
+
+
+def _drain(q):
+    """Collect all queued JSON messages without blocking."""
+    out = []
+    while True:
+        try:
+            out.append(json.loads(q.get_nowait()))
+        except queue.Empty:
+            break
+    return out
+
+
+class RunSequenceTests(unittest.TestCase):
+    def _make_job(self):
+        job_id = "test-job"
+        gs.jobs[job_id] = {
+            "status": "pending",
+            "queue": queue.Queue(),
+            "images": [],
+            "cancel": threading.Event(),
+            "server": None,
+            "prompt_id": None,
+            "session": None,  # run_sequence calls .close() in finally — guarded below
+        }
+        return job_id
+
+    def tearDown(self):
+        gs.jobs.pop("test-job", None)
+
+    def test_plain_sequence_done_with_replacements(self):
+        job_id = self._make_job()
+        with patch.object(gs, "generate_prompt_sequence", return_value=["a cat", "a cat too"]):
+            gs.run_sequence(job_id, "x", 2, [("cat", "dog")], video=False)
+        msgs = _drain(gs.jobs[job_id]["queue"])
+        done = [m for m in msgs if m["type"] == "done"][0]
+        self.assertEqual(done["prompts"], ["a dog", "a dog too"])
+        self.assertFalse(done["video"])
+        self.assertEqual(gs.jobs[job_id]["status"], "done")
+
+    def test_video_sequence_replacements_apply_to_all_fields(self):
+        job_id = self._make_job()
+        shots = [{"prompt": "a cat sits", "action": "the cat leaps", "audio": "cat meow"}]
+        with patch.object(gs, "generate_video_prompt_sequence", return_value=shots):
+            gs.run_sequence(job_id, "x", 1, [("cat", "dog")], video=True)
+        done = [m for m in _drain(gs.jobs[job_id]["queue"]) if m["type"] == "done"][0]
+        self.assertTrue(done["video"])
+        item = done["prompts"][0]
+        self.assertEqual(item["prompt"], "a dog sits")
+        self.assertEqual(item["action"], "the dog leaps")
+        self.assertEqual(item["audio"], "dog meow")
+
+    def test_grok_error_emits_error(self):
+        job_id = self._make_job()
+        with patch.object(gs, "generate_prompt_sequence", side_effect=GrokError("down")):
+            gs.run_sequence(job_id, "x", 1, [], video=False)
+        msgs = _drain(gs.jobs[job_id]["queue"])
+        err = [m for m in msgs if m["type"] == "error"][0]
+        self.assertEqual(err["message"], "down")
+        self.assertEqual(gs.jobs[job_id]["status"], "error")
+
+    def test_grok_error_after_cancel_reports_cancelled(self):
+        # Closing the session aborts the request as a GrokError; with the cancel
+        # event set, that surfaces as a cancellation, not an error.
+        job_id = self._make_job()
+        gs.jobs[job_id]["cancel"].set()
+        with patch.object(gs, "generate_prompt_sequence", side_effect=GrokError("aborted")):
+            gs.run_sequence(job_id, "x", 1, [], video=False)
+        msgs = _drain(gs.jobs[job_id]["queue"])
+        self.assertEqual(msgs[-1]["type"], "cancelled")
+        self.assertEqual(gs.jobs[job_id]["status"], "cancelled")
+
+    def test_precancelled_job_does_not_call_grok(self):
+        job_id = self._make_job()
+        gs.jobs[job_id]["cancel"].set()
+        with patch.object(gs, "generate_prompt_sequence") as gen:
+            gs.run_sequence(job_id, "x", 1, [], video=False)
+        gen.assert_not_called()
+        self.assertEqual(gs.jobs[job_id]["status"], "cancelled")
+
+
+if __name__ == "__main__":
+    unittest.main()
