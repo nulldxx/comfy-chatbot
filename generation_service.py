@@ -166,20 +166,21 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
                     pass
 
         # First-frame/last-frame conditioning (image2video). The template carries an
-        # optional <INPUT_LAST_FRAME> LoadImage and a <LAST_FRAME_BYPASS> boolean that
-        # disables the end-frame guide node. When a last frame is supplied we upload it
-        # and switch the guide on; when it isn't, we reuse the first frame as a harmless
-        # stand-in and leave the guide bypassed, so the workflow behaves exactly like the
+        # optional <INPUT_LAST_FRAME> LoadImage feeding an LTXVAddGuide node pinned to
+        # the final frame (frame_idx = -1); its <LAST_FRAME_STRENGTH> is the on/off
+        # toggle. When a last frame is supplied we upload it and set strength 1.0; when
+        # it isn't, we reuse the first frame as a harmless stand-in and set strength 0.0
+        # so the guide contributes nothing and the workflow behaves exactly like the
         # single-image image2video it is today.
         if "<INPUT_LAST_FRAME>" in template:
             if input_last_frame is not None:
                 send("progress", message="Uploading last frame to ComfyUI...")
                 mapping["INPUT_LAST_FRAME"] = server.upload_image(input_last_frame)
-                mapping["LAST_FRAME_BYPASS"] = "false"
+                mapping["LAST_FRAME_STRENGTH"] = 1.0
             else:
-                # No end frame designated: stand in the first frame and bypass the guide.
+                # No end frame designated: stand in the first frame, guide off.
                 mapping["INPUT_LAST_FRAME"] = mapping.get("INPUT_IMAGE", "")
-                mapping["LAST_FRAME_BYPASS"] = "true"
+                mapping["LAST_FRAME_STRENGTH"] = 0.0
 
         filled = apply_placeholders(template, mapping)
 

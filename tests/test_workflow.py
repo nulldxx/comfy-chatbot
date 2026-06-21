@@ -37,11 +37,11 @@ class TestApplyPlaceholders(unittest.TestCase):
         result = apply_placeholders("<UNKNOWN>", {"OTHER": "val"})
         self.assertEqual(result, "<UNKNOWN>")
 
-    def test_bare_boolean_slot(self):
-        # The runtime fills <LAST_FRAME_BYPASS> with the strings "true"/"false" so
-        # the unquoted slot becomes a real JSON boolean, not a quoted string.
-        result = apply_placeholders('"value": <LAST_FRAME_BYPASS>', {"LAST_FRAME_BYPASS": "true"})
-        self.assertEqual(json.loads("{" + result + "}")["value"], True)
+    def test_bare_float_slot(self):
+        # The runtime fills <LAST_FRAME_STRENGTH> with a float (1.0 on / 0.0 off) so the
+        # unquoted guide-strength slot becomes a bare JSON number, not a quoted string.
+        result = apply_placeholders('"value": <LAST_FRAME_STRENGTH>', {"LAST_FRAME_STRENGTH": 0.0})
+        self.assertEqual(json.loads("{" + result + "}")["value"], 0.0)
 
     def test_empty_mapping(self):
         result = apply_placeholders("no change", {})
@@ -233,12 +233,12 @@ class TestFillPlaceholdersForValidation(unittest.TestCase):
         self.assertEqual(parsed["frames"], 1)
         self.assertEqual(parsed["fps"], 1)
 
-    def test_fills_last_frame_bypass_as_bare_boolean(self):
-        # <LAST_FRAME_BYPASS> is an unquoted boolean slot (image2video), so it must
-        # parse as a JSON bool rather than the quoted "placeholder" string.
-        template = '{"value": <LAST_FRAME_BYPASS>}'
+    def test_fills_last_frame_strength_as_bare_number(self):
+        # <LAST_FRAME_STRENGTH> is an unquoted float slot (image2video guide), so it
+        # must parse as a bare JSON number rather than the quoted "placeholder" string.
+        template = '{"value": <LAST_FRAME_STRENGTH>}'
         parsed = json.loads(fill_placeholders_for_validation(template))
-        self.assertIs(parsed["value"], False)
+        self.assertAlmostEqual(parsed["value"], 1.0)
 
     def test_result_is_parseable(self):
         # Numeric slots (<LORA_N_STRENGTH>, <DENOISE>) appear unquoted in workflow JSON;

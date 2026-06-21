@@ -180,9 +180,10 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 ### First-frame / last-frame detail (image2video)
 
 - The LTX 2.3 image2video template optionally accepts a second image, `<INPUT_LAST_FRAME>`, so the model interpolates from the source (first) frame to a designated end frame, instead of only conditioning on the first frame.
-- A boolean placeholder, `<LAST_FRAME_BYPASS>` (a bare JSON `true`/`false`, fed to a `PrimitiveBoolean` node), toggles the end-frame guide. The UI designates the end frame with the 🎞️ button on an image (`makeLastFrameButton` / global `lastFrameUrl` in `chat.js`); `/api/image2video` accepts a `last_frame` image URL.
-- When **no** end frame is supplied, `run_generation` fills `<INPUT_LAST_FRAME>` with the same uploaded name as `<INPUT_IMAGE>` and sets `<LAST_FRAME_BYPASS>` to `true`, so the guide is skipped and the workflow behaves exactly like the original single-image image2video. When one **is** supplied, the bypass is `false` and the second image drives the end frame.
-- The end-frame guide node itself is wired in the ComfyUI editor and consumes the `Load Last Frame` (node `270`) and `Bypass last frame guide` (node `320:325`) inputs the app provides.
+- The end frame is conditioned by an **`LTXVAddGuide`** node (node `320:330`) pinned to the final frame (`frame_idx = -1`). LTX's `LTXVImgToVideoInplace` (used for the first frame) has **no** frame index, so it cannot place a last frame — `LTXVAddGuide` is required. The graph also contains the paired `LTXVCropGuides` (`320:284`) that strips the guide frames back out after sampling.
+- The guide is toggled by a float placeholder, `<LAST_FRAME_STRENGTH>` (a bare JSON number fed to a `PrimitiveFloat` node, `320:325`): `1.0` = on, `0.0` = off. The UI designates the end frame with the 🎞️ button on an image (`makeLastFrameButton` / global `lastFrameUrl` in `chat.js`); `/api/image2video` accepts a `last_frame` image URL.
+- When **no** end frame is supplied, `run_generation` fills `<INPUT_LAST_FRAME>` with the same uploaded name as `<INPUT_IMAGE>` and sets `<LAST_FRAME_STRENGTH>` to `0.0`, so the guide contributes nothing and the workflow behaves exactly like the original single-image image2video. When one **is** supplied, strength is `1.0` and the second image drives the end frame.
+- Wiring: `Load Last Frame` (`270`) → `Resize Last Frame` (`320:331`) → `LTXVPreprocess` (`320:332`) → `LTXVAddGuide` (`320:330`). The guide takes its conditioning from `LTXVConditioning` (`320:304`) and its latent from the first-frame `LTXVImgToVideoInplace` (`320:296`); its outputs feed the pass-1 concat (`320:318`), pass-1 guider (`320:314`) and `LTXVCropGuides` (`320:284`).
 
 ### Video settings detail
 
@@ -192,7 +193,7 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 
 ### Validation
 
-`fill_placeholders_for_validation()` substitutes dummy values (`1.0` for float slots, `1` for the integer video slots, `false` for the `<LAST_FRAME_BYPASS>` boolean slot, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.
+`fill_placeholders_for_validation()` substitutes dummy values (`1.0` for float slots including `<LAST_FRAME_STRENGTH>`, `1` for the integer video slots, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.
 
 ## Live Configuration (Host Machine)
 
