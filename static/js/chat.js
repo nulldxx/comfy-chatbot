@@ -155,7 +155,7 @@ const SLASH_COMMANDS = [
   { cmd: '/archive-all',     desc: 'archive every image to the encrypted volume (optional folder name)',     args: ' ' },
   { cmd: '/archive-session', desc: 'archive all images from this session (optional folder name)',            args: ' ' },
   { cmd: '/archive-today',   desc: 'archive images generated today (optional folder name)',                  args: ' ' },
-  { cmd: '/clear',       desc: 'clear chat history (keeps settings)',  args: ''  },
+  { cmd: '/clear',       desc: 'clear visible chat (keeps settings, prompt history & session images)',  args: ''  },
   { cmd: '/session-load',    desc: 'load a previously saved session',                args: ''  },
   { cmd: '/session-new',    desc: 'start a new session (resets all settings)',       args: '' },
   { cmd: '/session-save',   desc: 'save the current session with a name',            args: ' ' },
@@ -1484,7 +1484,7 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all [name]</code> — archive every image in the output folder into the encrypted volume (asks y/n first; optional folder name)
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
         </div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear chat history while keeping all settings (workflow, replacements, etc.)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the visible chat while keeping settings, prompt history (up-arrow recall) and session images (<code>/review-session</code>)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-new</code> — start a completely new session, resetting all settings to defaults</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-save &lt;name&gt;</code> — save the current session (chat history, images, settings) to disk</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-load</code> — pick and restore a previously saved session</div>
@@ -1957,17 +1957,12 @@ function handleSlashCommand(raw) {
   }
 
   if (cmd === '/clear') {
-    history.length = 0;
-    historyIdx = -1;
-    savedDraft = '';
-    sessionImages.length = 0;
-    for (const k of Object.keys(imagePrompts)) delete imagePrompts[k];
-    for (const k of Object.keys(imageVideoMeta)) delete imageVideoMeta[k];
-    lastSequence = null;
+    // Only wipe the visible chat. Prompt history (up-arrow recall), session
+    // images (/review-session) and per-image metadata are all preserved.
     fauxFullscreenEls.clear();
     document.body.style.overflow = '';
     messagesEl.innerHTML = '';
-    addMessage('bot', 'Chat cleared. Settings preserved — describe the image you\'d like to generate.');
+    addMessage('bot', 'Chat cleared. Settings, prompt history and session images preserved — describe the image you\'d like to generate.');
     return;
   }
 
