@@ -459,6 +459,21 @@ describe('buildVideoPrompt', () => {
     expect(buildVideoPrompt('a cat', { action: '  it leaps  ', audio: '  a meow ' }))
       .toBe('a cat. it leaps. Audio: a meow');
   });
+
+  test('drops the Audio segment when includeAudio is false', () => {
+    expect(buildVideoPrompt('a cat on a wall', { action: 'it leaps down', audio: 'a meow' }, false))
+      .toBe('a cat on a wall. it leaps down');
+  });
+
+  test('keeps action when audio is suppressed and base has no action', () => {
+    expect(buildVideoPrompt('a cat', { action: '', audio: 'a meow' }, false))
+      .toBe('a cat');
+  });
+
+  test('includes audio when includeAudio defaults to true', () => {
+    expect(buildVideoPrompt('a cat', { action: '', audio: 'a meow' }))
+      .toBe('a cat. Audio: a meow');
+  });
 });
 
 describe('i2vTooltip', () => {

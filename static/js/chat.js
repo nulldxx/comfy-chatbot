@@ -207,7 +207,7 @@ const SLASH_COMMANDS = [
   { cmd: '/slideshow-session', desc: 'browse this session\'s images',          args: '' },
   { cmd: '/slideshow-today',   desc: 'browse today\'s images, oldest first',   args: '' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
-  { cmd: '/video-settings', desc: 'set video duration, frames & fps (lock one, the others follow)', args: '' },
+  { cmd: '/video-settings', desc: 'set video duration, frames, fps & audio (lock one, the others follow)', args: '' },
   { cmd: '/upscale',    desc: 'upscale the last N images (default 1, no prompt)', args: ' ' },
   { cmd: '/workflow',   desc: 'choose a workflow template',         args: ''  },
   { cmd: '/workflow-iterate', desc: 'run a prompt against several workflows', args: ' ' },
@@ -890,7 +890,8 @@ function showSessionSummary() {
     label: 'Video settings',
     value: `<span style="color:#a78bfa">${fmtDuration(vs.duration)}s</span> · ` +
            `<span style="color:#a78bfa">${vs.frames}</span> frames · ` +
-           `<span style="color:#a78bfa">${vs.fps}</span> fps ` +
+           `<span style="color:#a78bfa">${vs.fps}</span> fps · ` +
+           `audio <span style="color:#a78bfa">${vs.audio !== false ? 'on' : 'off'}</span> ` +
            `<span style="color:#475569">(🔒 ${videoLock})</span>`,
   });
 
@@ -1256,7 +1257,7 @@ function handleSlashCommand(raw) {
             addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
             return;
           }
-          prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[img]);
+          prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[img], currentVideoSettings.audio);
         }
         addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
         return runImage2Video(prompt, img);
@@ -1544,8 +1545,8 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2video</code> and the 🎬 button instead of each image's original prompt; no args shows it</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt-reset</code> — clear the override prompt</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-workflow</code> — choose which image2video workflow <code>/image2video</code> uses</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/video-settings</code> — set video duration, frames &amp; fps for image2video
-          <div style="margin-top:2px;color:#475569;font-size:0.78rem">lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/video-settings</code> — set video duration, frames, fps &amp; audio for image2video
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
@@ -2463,6 +2464,22 @@ function handleSlashCommand(raw) {
       wrap.appendChild(row);
     });
 
+    // Audio toggle — when off, the "Audio: …" cue that /video-sequence folds into
+    // a video prompt (buildVideoPrompt) is dropped. Useful for image2video
+    // workflows that don't generate audio (e.g. the Wan template), so the model
+    // isn't fed audio instructions it ignores.
+    const audioRow = document.createElement('label');
+    audioRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;cursor:pointer';
+    const audioBox = document.createElement('input');
+    audioBox.type = 'checkbox';
+    audioBox.checked = work.audio !== false;
+    audioBox.style.cssText = 'width:15px;height:15px;accent-color:#f472b6;cursor:pointer';
+    audioBox.addEventListener('change', () => { work.audio = audioBox.checked; });
+    const audioLbl = document.createElement('span');
+    audioLbl.innerHTML = 'Audio <span style="color:#475569">— include <code>Audio:</code> cues in video prompts</span>';
+    audioRow.appendChild(audioBox); audioRow.appendChild(audioLbl);
+    wrap.appendChild(audioRow);
+
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:2px';
     hint.innerHTML = 'Lock one value (🔒), then drag or type the others — the third follows so that <code>frames = duration × fps</code>.';
@@ -2481,12 +2498,13 @@ function handleSlashCommand(raw) {
     applyBtn.addEventListener('click', () => {
       currentVideoSettings = { ...work };
       videoLock = lockSel;
-      addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> <span style="color:#475569">(🔒 ${lockSel})</span>`);
+      addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> · Audio <strong style="color:#a78bfa">${work.audio !== false ? 'on' : 'off'}</strong> <span style="color:#475569">(🔒 ${lockSel})</span>`);
       scrollBottom();
     });
     resetBtn.addEventListener('click', () => {
       Object.assign(work, DEFAULT_VIDEO_SETTINGS);
       lockSel = 'fps';
+      audioBox.checked = work.audio !== false;
       refresh();
     });
     btnRow.appendChild(applyBtn);
@@ -4008,7 +4026,7 @@ function appendChatImage(container, url) {
         addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
         return;
       }
-      prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[url]);
+      prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[url], currentVideoSettings.audio);
     }
     i2v.disabled = true;
     addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
@@ -4281,7 +4299,7 @@ function renderReviewGrid(bubble, urls) {
           addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
           return;
         }
-        prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[url]);
+        prompt = buildVideoPrompt(applyReplacements(orig, image2videoReplacements), imageVideoMeta[url], currentVideoSettings.audio);
       }
       ri2v.disabled = true;
       addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);

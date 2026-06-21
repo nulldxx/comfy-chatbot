@@ -97,13 +97,18 @@ export function deriveFaceDetailPrompt(genPrompt) {
 // parts are skipped; with no/empty meta it returns `base` unchanged, preserving
 // backward compatibility with /sequence and plain generations (which carry no
 // action/audio). `meta` is { action, audio } or null/undefined.
-export function buildVideoPrompt(base, meta) {
+//
+// `includeAudio` (default true) gates the "Audio: <audio>" segment. The Audio
+// checkbox in /video-settings sets it false for workflows that don't generate
+// audio (e.g. the Wan image2video template), so audio cues aren't fed to a model
+// that ignores them. action is always kept.
+export function buildVideoPrompt(base, meta, includeAudio = true) {
   if (!meta) return base;
   const action = (meta.action || '').trim();
   const audio = (meta.audio || '').trim();
   const parts = [base];
   if (action) parts.push(action);
-  if (audio) parts.push('Audio: ' + audio);
+  if (includeAudio && audio) parts.push('Audio: ' + audio);
   return parts.filter(p => p && p.trim()).join('. ');
 }
 
@@ -127,7 +132,7 @@ export function i2vTooltip(meta) {
 // derived value and may round by a frame at the extremes.
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_VIDEO_SETTINGS = { duration: 5, frames: 125, fps: 25 };
+export const DEFAULT_VIDEO_SETTINGS = { duration: 5, frames: 125, fps: 25, audio: true };
 export const VIDEO_LIMITS = {
   duration: { min: 0.1, max: 60 },
   frames:   { min: 1,   max: 1000 },
