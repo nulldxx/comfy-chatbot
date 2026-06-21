@@ -158,7 +158,7 @@ const SLASH_COMMANDS = [
   { cmd: '/clear',       desc: 'clear visible chat (keeps settings, prompt history & session images)',  args: ''  },
   { cmd: '/session-load',    desc: 'load a previously saved session',                args: ''  },
   { cmd: '/session-new',    desc: 'start a new session (resets all settings)',       args: '' },
-  { cmd: '/session-save',   desc: 'save the current session with a name',            args: ' ' },
+  { cmd: '/session-save',   desc: 'save the current session (no name: pick one to overwrite)', args: ' ' },
   { cmd: '/session-summary', desc: 'show active settings (workflow, replacements, etc.)', args: '' },
   { cmd: '/delete',         desc: 'delete the last generated image',              args: '' },
   { cmd: '/delete-all',     desc: 'delete every image in the output folder',       args: '' },
@@ -732,6 +732,80 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
     });
     scrollBottom();
   }).catch(() => { bubble.innerHTML = `<span style="color:#f87171">Failed to load ${failLabel}.</span>`; });
+}
+
+// Renders the list of saved sessions into a new bot bubble. Each row is a
+// clickable button (invokes onSelect with the session name and the bubble)
+// plus a trash icon that deletes the saved session. Shared by /session-load
+// (click = restore) and /session-save with no name (click = overwrite).
+function renderSessionPicker({ headerHtml, onSelect }) {
+  const bubble = addMessage('bot', '<div class="status-text">Loading saved sessions…</div>').parentElement.querySelector('.bubble');
+  fetch('/api/sessions')
+  .then(parseJsonResponse)
+  .then(sessions => {
+    if (!sessions.length) {
+      bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
+      scrollBottom();
+      return;
+    }
+    const list = document.createElement('div');
+    list.innerHTML = headerHtml;
+    const selList = document.createElement('div');
+    selList.className = 'sel-list';
+
+    sessions.forEach(s => {
+      const date = s.saved_at ? new Date(s.saved_at).toLocaleDateString() : '';
+      const row = document.createElement('div');
+      row.className = 'sel-row';
+
+      const btn = document.createElement('button');
+      btn.className = 'sel-btn';
+      btn.dataset.name = s.name;
+      btn.innerHTML = `<span>${escapeHtml(s.name)}</span>
+        <span style="color:#475569;font-size:0.8em">${s.image_count} image(s)${date ? ' · ' + date : ''}</span>`;
+      btn.addEventListener('click', () => onSelect(btn.dataset.name, bubble));
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'sel-del-btn';
+      delBtn.title = 'Delete session';
+      delBtn.innerHTML = '🗑';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const name = btn.dataset.name;
+        delBtn.disabled = true;
+        delBtn.style.opacity = '0.4';
+        fetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' })
+        .then(parseJsonResponse)
+        .then(data => {
+          if (data.error) throw new Error(data.error);
+          row.remove();
+          if (!selList.querySelector('.sel-row')) {
+            bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
+          }
+          scrollBottom();
+        })
+        .catch(err => {
+          delBtn.disabled = false;
+          delBtn.style.opacity = '';
+          addMessage('bot', `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
+          scrollBottom();
+        });
+      });
+
+      row.appendChild(btn);
+      row.appendChild(delBtn);
+      selList.appendChild(row);
+    });
+
+    list.appendChild(selList);
+    bubble.innerHTML = '';
+    bubble.appendChild(list);
+    scrollBottom();
+  })
+  .catch(() => {
+    bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load sessions.</span>';
+    scrollBottom();
+  });
 }
 
 function showSessionSummary() {
@@ -1486,7 +1560,7 @@ function handleSlashCommand(raw) {
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the visible chat while keeping settings, prompt history (up-arrow recall) and session images (<code>/review-session</code>)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-new</code> — start a completely new session, resetting all settings to defaults</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/session-save &lt;name&gt;</code> — save the current session (chat history, images, settings) to disk</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/session-save &lt;name&gt;</code> — save the current session (chat history, images, settings) to disk; omit the name to pick an existing session to overwrite or delete</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-load</code> — pick and restore a previously saved session</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-summary</code> — show a summary of all active settings (server, workflow, resolution, replacements, etc.)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review &lt;n&gt;</code> — grid of the last N images, oldest first</div>
@@ -2006,12 +2080,9 @@ function handleSlashCommand(raw) {
   if (cmd === '/session-save') {
     const rawName = raw.slice('/session-save'.length).trim();
     addMessage('user', escapeHtml(raw), raw);
-    if (!rawName) {
-      addMessage('bot', '<span style="color:#f87171">⚠ Provide a session name, e.g. <code>/session-save beach portraits</code></span>');
-      return;
-    }
-    const payload = {
-      name: rawName,
+
+    const buildPayload = (name) => ({
+      name,
       settings: {
         server: currentServer,
         workflow: currentWorkflow,
@@ -2039,113 +2110,61 @@ function handleSlashCommand(raw) {
       imageVideoMeta: Object.assign({}, imageVideoMeta),
       lastSequence,
       messages: captureSessionMessages(),
+    });
+
+    const doSave = (name, bubble) => {
+      bubble.innerHTML = '<div class="status-text">Saving session…</div>';
+      fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildPayload(name)),
+      })
+      .then(parseJsonResponse)
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        bubble.innerHTML = `Session saved as <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong>. Use <code>/session-load</code> to restore it.`;
+        scrollBottom();
+      })
+      .catch(err => {
+        bubble.innerHTML = `<span style="color:#f87171">⚠ Save failed: ${escapeHtml(err.message)}</span>`;
+        scrollBottom();
+      });
     };
-    const bubble = addMessage('bot', '<div class="status-text">Saving session…</div>').parentElement.querySelector('.bubble');
-    fetch('/api/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    .then(parseJsonResponse)
-    .then(data => {
-      if (data.error) throw new Error(data.error);
-      bubble.innerHTML = `Session saved as <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong>. Use <code>/session-load</code> to restore it.`;
-      scrollBottom();
-    })
-    .catch(err => {
-      bubble.innerHTML = `<span style="color:#f87171">⚠ Save failed: ${escapeHtml(err.message)}</span>`;
-      scrollBottom();
+
+    if (rawName) {
+      const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+      doSave(rawName, bubble);
+      return;
+    }
+
+    // No name given: let the user pick an existing session to overwrite (or
+    // delete one via the trash icon).
+    renderSessionPicker({
+      headerHtml: '<strong>Select a session to overwrite:</strong>',
+      onSelect: (name, bubble) => doSave(name, bubble),
     });
     return;
   }
 
   if (cmd === '/session-load') {
-    const bubble = addMessage('bot', '<div class="status-text">Loading saved sessions…</div>').parentElement.querySelector('.bubble');
-    fetch('/api/sessions')
-    .then(parseJsonResponse)
-    .then(sessions => {
-      if (!sessions.length) {
-        bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
-        scrollBottom();
-        return;
-      }
-      const list = document.createElement('div');
-      list.innerHTML = '<strong>Select a session to restore:</strong>';
-      const selList = document.createElement('div');
-      selList.className = 'sel-list';
-
-      const buildRows = (sessionList) => {
-        selList.innerHTML = '';
-        sessionList.forEach(s => {
-          const date = s.saved_at ? new Date(s.saved_at).toLocaleDateString() : '';
-          const row = document.createElement('div');
-          row.className = 'sel-row';
-
-          const btn = document.createElement('button');
-          btn.className = 'sel-btn';
-          btn.dataset.name = s.name;
-          btn.innerHTML = `<span>${escapeHtml(s.name)}</span>
-            <span style="color:#475569;font-size:0.8em">${s.image_count} image(s)${date ? ' · ' + date : ''}</span>`;
-          btn.addEventListener('click', () => {
-            const name = btn.dataset.name;
-            bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
-            fetch('/api/sessions/' + encodeURIComponent(name))
-            .then(parseJsonResponse)
-            .then(data => {
-              if (data.error) throw new Error(data.error);
-              restoreSession(data);
-              bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
-              scrollBottom();
-              showSessionSummary();
-            })
-            .catch(err => {
-              bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
-              scrollBottom();
-            });
-          });
-
-          const delBtn = document.createElement('button');
-          delBtn.className = 'sel-del-btn';
-          delBtn.title = 'Delete session';
-          delBtn.innerHTML = '🗑';
-          delBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const name = btn.dataset.name;
-            delBtn.disabled = true;
-            delBtn.style.opacity = '0.4';
-            fetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' })
-            .then(parseJsonResponse)
-            .then(data => {
-              if (data.error) throw new Error(data.error);
-              row.remove();
-              if (!selList.querySelector('.sel-row')) {
-                bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
-              }
-              scrollBottom();
-            })
-            .catch(err => {
-              delBtn.disabled = false;
-              delBtn.style.opacity = '';
-              addMessage('bot', `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
-              scrollBottom();
-            });
-          });
-
-          row.appendChild(btn);
-          row.appendChild(delBtn);
-          selList.appendChild(row);
+    renderSessionPicker({
+      headerHtml: '<strong>Select a session to restore:</strong>',
+      onSelect: (name, bubble) => {
+        bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
+        fetch('/api/sessions/' + encodeURIComponent(name))
+        .then(parseJsonResponse)
+        .then(data => {
+          if (data.error) throw new Error(data.error);
+          restoreSession(data);
+          bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
+          scrollBottom();
+          showSessionSummary();
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
         });
-      };
-
-      buildRows(sessions);
-      list.appendChild(selList);
-      bubble.innerHTML = '';
-      bubble.appendChild(list);
-      scrollBottom();
-    })
-    .catch(() => {
-      bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load sessions.</span>';
-      scrollBottom();
+      },
     });
     return;
   }
