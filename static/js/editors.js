@@ -6,7 +6,7 @@ import { addMessage } from './dom.js';
 // yellow mask; on "Apply Inpaint" the mask is exported as a binary PNG, uploaded
 // to the server, and onInpaint() is called. `imgWrap` is the source .img-wrap
 // for the in-place comparison slider (null in the review-grid case).
-export function openMaskEditor(imageUrl, imgWrap, { onInpaint }) {
+export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
   if (document.getElementById('mask-editor-overlay')) return;
 
   // Capture the prompt at editor-open time so a concurrent /inpainting-prompt
@@ -79,9 +79,20 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint }) {
   colorPicker.value = '#ff3b30';
   colorPicker.title = 'Pen colour';
 
+  let removalMode = false;
+  let removeToolBtn = null;
+  if (onRemove) {
+    removeToolBtn = document.createElement('button');
+    removeToolBtn.type = 'button';
+    removeToolBtn.className = 'mask-editor-tool';
+    removeToolBtn.textContent = '✂';
+    removeToolBtn.title = 'Removal mode — paint over the object to erase it';
+  }
+
   toolGroup.appendChild(maskToolBtn);
   toolGroup.appendChild(penToolBtn);
   toolGroup.appendChild(colorPicker);
+  if (removeToolBtn) toolGroup.appendChild(removeToolBtn);
 
   const clearBtn = document.createElement('button');
   clearBtn.textContent = 'Clear';
@@ -174,6 +185,17 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint }) {
   updateCursorSize();
   canvas.style.cursor = 'none';
 
+  function setRemovalMode(active) {
+    removalMode = active;
+    if (removeToolBtn) removeToolBtn.classList.toggle('is-active', active);
+    applyBtn.textContent = active ? 'Apply Removal' : 'Apply Inpaint';
+    promptInput.placeholder = active
+      ? 'Background hint (optional)…'
+      : 'Describe what to inpaint…';
+    promptLabel.textContent = active ? 'Hint (optional):' : 'Prompt:';
+    promptInput.classList.remove('mask-editor-prompt-invalid');
+  }
+
   function setTool(name) {
     tool = name;
     maskToolBtn.classList.toggle('is-active', name === 'mask');
@@ -184,6 +206,9 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint }) {
 
   penToolBtn.addEventListener('click', () => setTool('pen'));
   maskToolBtn.addEventListener('click', () => setTool('mask'));
+  if (removeToolBtn) {
+    removeToolBtn.addEventListener('click', () => setRemovalMode(!removalMode));
+  }
   colorPicker.addEventListener('input', () => {
     penColor = colorPicker.value;
     setTool('pen');
@@ -258,7 +283,7 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint }) {
 
   applyBtn.addEventListener('click', () => {
     if (!img.naturalWidth || !img.naturalHeight) return;
-    if (!promptInput.value.trim()) {
+    if (!removalMode && !promptInput.value.trim()) {
       promptInput.focus();
       promptInput.classList.add('mask-editor-prompt-invalid');
       return;
@@ -325,15 +350,21 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint }) {
       if (aborted) return;
       const capturedDenoise = parseFloat(denoiseSlider.value);
       const finalPrompt = promptInput.value.trim();
-      state.lastInpaintingPrompt = finalPrompt || null;
+      const isRemoval = removalMode;
       closeEditor();
-      addMessage('user', `Inpaint: ${escapeHtml(finalPrompt)}`);
-      onInpaint(imageUrl, maskToken, imgWrap, finalPrompt, capturedDenoise, b64, drawToken);
+      if (isRemoval) {
+        addMessage('user', finalPrompt ? `Remove object (hint: ${escapeHtml(finalPrompt)})` : 'Remove object');
+        onRemove(imageUrl, maskToken, imgWrap, finalPrompt, capturedDenoise, b64, drawToken);
+      } else {
+        state.lastInpaintingPrompt = finalPrompt || null;
+        addMessage('user', `Inpaint: ${escapeHtml(finalPrompt)}`);
+        onInpaint(imageUrl, maskToken, imgWrap, finalPrompt, capturedDenoise, b64, drawToken);
+      }
     })
     .catch(err => {
       if (aborted) return;
       applyBtn.disabled = false;
-      applyBtn.textContent = 'Apply Inpaint';
+      applyBtn.textContent = removalMode ? 'Apply Removal' : 'Apply Inpaint';
       addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
     });
   });

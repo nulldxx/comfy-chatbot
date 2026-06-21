@@ -18,6 +18,7 @@ export const state = {
   currentImage2ImageWorkflow:  null,
   currentImage2VideoWorkflow:  null,
   currentInpaintingWorkflow:   null,
+  currentRemovalWorkflow:      null,
 
   // Prompt overrides
   lastFaceDetailPrompt:        null,

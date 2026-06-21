@@ -18,8 +18,8 @@ from agent_client import send as agent_send
 from catalogue import (
     list_facedetailer_workflows, list_image2image_workflows,
     list_image2video_workflows, list_inpainting_workflows,
-    list_upscaler_workflows, list_workflow_names, load_loras,
-    load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
+    list_removal_workflows, list_upscaler_workflows, list_workflow_names,
+    load_loras, load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
 )
 from ComfyServer import ComfyServer
 from config import (
@@ -29,6 +29,7 @@ from config import (
     COMFY_GENERATION_DIR, COMFY_IMAGE2IMAGE_DIR, COMFY_IMAGE2IMAGE_WORKFLOW,
     COMFY_IMAGE2VIDEO_DIR, COMFY_IMAGE2VIDEO_WORKFLOW,
     COMFY_INPAINTING_DIR, COMFY_INPAINTING_WORKFLOW,
+    COMFY_REMOVAL_DIR, COMFY_REMOVAL_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_MARKER, OUTPUT_VOLUME, PASSWORD, SECRET_KEY, USERNAME,
@@ -103,6 +104,7 @@ def index():
         default_image2image_workflow=COMFY_IMAGE2IMAGE_WORKFLOW,
         default_inpainting_workflow=COMFY_INPAINTING_WORKFLOW,
         default_image2video_workflow=COMFY_IMAGE2VIDEO_WORKFLOW,
+        default_removal_workflow=COMFY_REMOVAL_WORKFLOW,
     )
 
 
@@ -197,6 +199,12 @@ def api_inpainting_workflows():
 @login_required
 def api_image2video_workflows():
     return jsonify(list_image2video_workflows())
+
+
+@app.route("/api/removal-workflows")
+@login_required
+def api_removal_workflows():
+    return jsonify(list_removal_workflows())
 
 
 # ---------------------------------------------------------------------------
@@ -919,6 +927,53 @@ def api_inpaint():
         preserve_mtime_from=safe,
         denoise=denoise,
         cleanup_input_image=draw_path is not None,
+    )
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/remove", methods=["POST"])
+@login_required
+def api_remove():
+    """Run an object-removal workflow (e.g. LaMa) over a previously generated image.
+
+    Like /api/inpaint but without a required prompt — removal models fill in the
+    background from context alone, so <PROMPT> is absent from the workflow template.
+    """
+    data = request.get_json(force=True)
+
+    image_url = (data.get("image") or "").strip()
+    if not image_url:
+        return jsonify({"error": "image is required"}), 400
+    safe, image_path, err = resolve_input_image(image_url)
+    if err:
+        return err
+
+    mask_token = (data.get("mask") or "").strip()
+    if not mask_token:
+        return jsonify({"error": "mask is required"}), 400
+    mask_path, err = resolve_mask(mask_token, session.get("user"))
+    if err:
+        return err
+
+    available = list_removal_workflows()
+    workflow_name, err = resolve_workflow(
+        data.get("workflow") or COMFY_REMOVAL_WORKFLOW, available, "removal"
+    )
+    if err:
+        return err
+
+    server_address = data.get("server") or COMFY_SERVER
+    server_os      = data.get("server_os") or COMFY_SERVER_OS
+
+    err = output_storage_error()
+    if err:
+        return err
+
+    job_id = start_generation_job(
+        "", [], server_address, server_os, workflow_name,
+        workflow_dir=COMFY_REMOVAL_DIR,
+        input_image=image_path, input_mask=mask_path,
+        preserve_mtime_from=safe,
     )
     return jsonify({"job_id": job_id})
 

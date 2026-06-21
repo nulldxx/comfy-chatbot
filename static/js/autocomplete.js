@@ -36,6 +36,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/image2video-workflow',         desc: 'choose an image2video workflow',                                                     args: ''  },
   { cmd: '/inpaint-workflow',             desc: 'choose an inpainting workflow',                                                      args: ''  },
   { cmd: '/inpainting-prompt',            desc: 'set the prompt used by the inpaint button',                                          args: ' ' },
+  { cmd: '/removal-workflow',             desc: 'choose an object-removal workflow',                                                   args: ''  },
   { cmd: '/iterations',                   desc: 'set images generated per prompt',                                                    args: ' ' },
   { cmd: '/jobs',                         desc: 'show the last 10 server-side jobs (status, cancel, pull asset into chat)',           args: ''  },
   { cmd: '/lora',                         desc: 'fuzzy-find a LoRA to insert',                                                        args: ' ' },

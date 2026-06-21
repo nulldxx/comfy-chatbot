@@ -61,6 +61,13 @@ COMFY_INPAINTING_DIR = COMFY_WORKFLOW_DIR / 'inpainting'
 # Default inpainting workflow, normalised to match list_inpainting_workflows().
 COMFY_INPAINTING_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_INPAINTING_WORKFLOW'))
 
+# Object-removal workflows live in a subdir of the main workflow folder. Like
+# inpainting they take <INPUT_IMAGE> and <INPUT_MASK>, but no <PROMPT> — removal
+# models (e.g. LaMa) fill in background without a text prompt.
+COMFY_REMOVAL_DIR = COMFY_WORKFLOW_DIR / 'removal'
+# Default removal workflow, normalised to match list_removal_workflows().
+COMFY_REMOVAL_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_REMOVAL_WORKFLOW'))
+
 # Image2video workflows live in a subdir of the main workflow folder. They take
 # the last generated image as input (via an <INPUT_IMAGE> LoadImage placeholder)
 # and an optional <PROMPT> to guide the video generation. No LoRA or denoise

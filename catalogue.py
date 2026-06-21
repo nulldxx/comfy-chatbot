@@ -5,7 +5,7 @@ from config import (
     COMFY_WORKFLOW_DIR, COMFY_LORAS_FILE,
     COMFY_FACEDETAILER_DIR,
     COMFY_UPSCALER_DIR, COMFY_IMAGE2IMAGE_DIR, COMFY_INPAINTING_DIR,
-    COMFY_IMAGE2VIDEO_DIR,
+    COMFY_IMAGE2VIDEO_DIR, COMFY_REMOVAL_DIR,
 )
 from workflow import LORA_TAG_RE
 
@@ -85,6 +85,10 @@ def list_inpainting_workflows():
 
 def list_image2video_workflows():
     return list_workflow_names(COMFY_IMAGE2VIDEO_DIR)
+
+
+def list_removal_workflows():
+    return list_workflow_names(COMFY_REMOVAL_DIR)
 
 
 def resolve_workflow(workflow_name, available, kind):

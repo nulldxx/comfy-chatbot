@@ -362,6 +362,16 @@ function runInpaint(image, mask, imgWrap, prompt, denoise, maskB64, drawToken) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+function runRemove(image, mask, imgWrap, _prompt, _denoise, maskB64) {
+  state.iterationsFromSequence = false;
+  sendBtn.disabled = true;
+  return runGeneration('', '', null, {
+    removal: { image, mask, workflow: state.currentRemovalWorkflow || DEFAULT_REMOVAL_WORKFLOW, maskB64 },
+    sliderReplace: imgWrap || null,
+  })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
 function runDoOver(url, imgWrap) {
   const prompt = state.imagePrompts[url] || '';
   return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url });
@@ -540,7 +550,7 @@ function appendChatImage(container, url) {
   inpaintBtn.addEventListener('click', e => {
     e.stopPropagation();
     if (inpaintBtn.disabled || sendBtn.disabled) return;
-    openMaskEditor(url, wrap, { onInpaint: runInpaint });
+    openMaskEditor(url, wrap, { onInpaint: runInpaint, onRemove: runRemove });
   });
 
   const i2v = document.createElement('button');
@@ -856,17 +866,19 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const image2image = opts.image2image || null;
   const image2video = opts.image2video || null;
   const inpaint = opts.inpaint || null;
+  const removal = opts.removal || null;
   const videoMeta = opts.videoMeta || null;
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
   const inPlaceWrap = sliderReplace || replaceWrap;
-  const job = face || upscale || image2image || image2video || inpaint;
+  const job = face || upscale || image2image || image2video || inpaint || removal;
   const endpoint = face ? '/api/face-detail'
                  : upscale ? '/api/upscale'
                  : image2image ? '/api/image2image'
                  : image2video ? '/api/image2video'
                  : inpaint ? '/api/inpaint'
+                 : removal ? '/api/remove'
                  : '/api/generate';
   const botBubble = addMessage('bot', `
     <div class="status-text" id="status-line">Connecting…${label}</div>
@@ -906,6 +918,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(job ? { image: job.image } : {}),
       ...(inpaint ? { mask: inpaint.mask } : {}),
       ...(inpaint && inpaint.drawToken ? { draw_token: inpaint.drawToken } : {}),
+      ...(removal ? { mask: removal.mask } : {}),
       ...(face        ? { denoise: state.currentDenoise.face } : {}),
       ...(upscale     ? { denoise: state.currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: state.currentDenoise.image2image } : {}),
@@ -961,6 +974,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             if (inpaint && inpaint.maskB64) {
               state.imageMasks[newUrl] = { maskB64: inpaint.maskB64, prompt: inpaint.prompt, denoise: inpaint.denoise };
             }
+            if (removal && removal.maskB64) {
+              state.imageMasks[newUrl] = { maskB64: removal.maskB64, isRemoval: true };
+            }
             const tmp = document.createElement('div');
             appendChatImage(tmp, newUrl);
             sliderEl.replaceWith(tmp.firstChild);
@@ -969,6 +985,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             deleteImageFile(newUrl).catch(() => {});
             if (inpaint && inpaint.maskB64) {
               state.imageMasks[oldUrl] = { maskB64: inpaint.maskB64, prompt: inpaint.prompt, denoise: inpaint.denoise };
+            }
+            if (removal && removal.maskB64) {
+              state.imageMasks[oldUrl] = { maskB64: removal.maskB64, isRemoval: true };
             }
             const tmp = document.createElement('div');
             appendChatImage(tmp, oldUrl);

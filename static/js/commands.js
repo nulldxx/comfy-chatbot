@@ -162,6 +162,14 @@ function showSessionSummary() {
     : `<span style="color:#475569">not set</span>`;
   rows.push({ label: 'Inpainting workflow', value: inpaintWfLabel });
 
+  const removalWfActive = state.currentRemovalWorkflow || DEFAULT_REMOVAL_WORKFLOW;
+  const removalWfLabel  = removalWfActive
+    ? (state.currentRemovalWorkflow
+        ? `<span style="color:#a78bfa">${escapeHtml(removalWfActive)}</span>`
+        : `<span style="color:#a78bfa">${escapeHtml(removalWfActive)}</span> <span style="color:#475569">(default)</span>`)
+    : `<span style="color:#475569">not set</span>`;
+  rows.push({ label: 'Removal workflow', value: removalWfLabel });
+
   const resLabel = state.currentResolution
     ? `<span style="color:#a78bfa">${state.currentResolution.width}×${state.currentResolution.height}</span>`
     : `<span style="color:#475569">workflow default</span>`;
@@ -763,6 +771,20 @@ export function makeCommandHandler(deps) {
       }
       state.lastInpaintingPrompt = prompt;
       addMessage('bot', `Inpainting prompt set — the 🩹 button will use <code>${escapeHtml(prompt)}</code>.`);
+      return;
+    }
+
+    if (cmd === '/removal-workflow') {
+      renderWorkflowPicker({
+        url: '/api/removal-workflows',
+        title: 'Select a removal workflow:',
+        loadingText: 'Loading removal workflows…',
+        failLabel: 'removal workflows',
+        emptyMsg: 'No removal workflows available — add one to the <code>removal/</code> folder.',
+        current: state.currentRemovalWorkflow || DEFAULT_REMOVAL_WORKFLOW,
+        setMsg: 'Removal workflow set to',
+        onSelect: wf => { state.currentRemovalWorkflow = wf; },
+      });
       return;
     }
 
