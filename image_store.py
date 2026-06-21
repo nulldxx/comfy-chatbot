@@ -8,7 +8,7 @@ from flask import jsonify
 
 from config import (
     IMAGES_DIR, MASKS_DIR, INPAINT_INPUTS_DIR,
-    IMAGE_EXTS, OUTPUT_VOLUME, OUTPUT_MARKER,
+    IMAGE_EXTS, MEDIA_EXTS, OUTPUT_VOLUME, OUTPUT_MARKER,
 )
 
 # Mask token registry: opaque token → (session_user, Path). Single-use; consumed atomically on /api/inpaint.
@@ -96,10 +96,13 @@ def resolve_input_image(image_url):
 
 
 def select_images(scope, filenames=None):
-    """Resolve an archive/listing scope to a list of image Paths in IMAGES_DIR.
+    """Resolve an archive/listing scope to a list of media Paths in IMAGES_DIR.
 
-    - "all"     -> every image file.
-    - "today"   -> images whose mtime is today (mirrors the /api/images filter).
+    Covers both images and videos (MEDIA_EXTS) so archiving sweeps up generated
+    clips as well as stills.
+
+    - "all"     -> every media file.
+    - "today"   -> media whose mtime is today (mirrors the /api/images filter).
     - "session" -> the supplied filenames, validated like api_delete_image.
     Raises ValueError on an unknown scope or an invalid session filename.
     """
@@ -112,12 +115,12 @@ def select_images(scope, filenames=None):
             if not safe or safe != name:
                 raise ValueError(f"Invalid filename: {name}")
             path = IMAGES_DIR / safe
-            if path.suffix.lower() not in IMAGE_EXTS:
+            if path.suffix.lower() not in MEDIA_EXTS:
                 raise ValueError(f"Invalid filename: {name}")
             if path.is_file():
                 selected.append(path)
         return selected
-    files = [p for p in IMAGES_DIR.iterdir() if p.suffix.lower() in IMAGE_EXTS]
+    files = [p for p in IMAGES_DIR.iterdir() if p.suffix.lower() in MEDIA_EXTS]
     if scope == "today":
         today = datetime.now().date()
         files = [

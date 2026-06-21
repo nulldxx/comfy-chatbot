@@ -152,9 +152,9 @@ const SLASH_COMMANDS = [
   { cmd: '/addserver',  desc: 'add a server  (name host:port:os)',  args: ' ' },
   { cmd: '/alias-create', desc: 'create or update a prompt text alias  (<from> <to>)', args: ' ' },
   { cmd: '/alias-list',   desc: 'list all defined prompt text aliases',                args: ''  },
-  { cmd: '/archive-all',     desc: 'archive every image to the encrypted volume (optional folder name)',     args: ' ' },
-  { cmd: '/archive-session', desc: 'archive all images from this session (optional folder name)',            args: ' ' },
-  { cmd: '/archive-today',   desc: 'archive images generated today (optional folder name)',                  args: ' ' },
+  { cmd: '/archive-all',     desc: 'archive every image and video to the encrypted volume (optional folder name)', args: ' ' },
+  { cmd: '/archive-session', desc: 'archive all images and videos from this session (optional folder name)',       args: ' ' },
+  { cmd: '/archive-today',   desc: 'archive images and videos generated today (optional folder name)',             args: ' ' },
   { cmd: '/clear',       desc: 'clear visible chat (keeps settings, prompt history & session images)',  args: ''  },
   { cmd: '/session-load',    desc: 'load a previously saved session',                args: ''  },
   { cmd: '/session-new',    desc: 'start a new session (resets all settings)',       args: '' },
@@ -1553,9 +1553,9 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-session</code> — delete all images from this session (chat + output folder)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-today</code> — delete every image generated today (asks y/n first)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-all</code> — delete every image in the output folder (asks y/n first)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-session [name]</code> — copy this session's images into the encrypted volume, then remove the originals (optional folder name, e.g. <code>/archive-session man walking on beach</code>)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-today [name]</code> — archive images generated today into the encrypted volume (optional folder name)</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all [name]</code> — archive every image in the output folder into the encrypted volume (asks y/n first; optional folder name)
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-session [name]</code> — copy this session's images and videos into the encrypted volume, then remove the originals (optional folder name, e.g. <code>/archive-session man walking on beach</code>)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-today [name]</code> — archive images and videos generated today into the encrypted volume (optional folder name)</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all [name]</code> — archive every image and video in the output folder into the encrypted volume (asks y/n first; optional folder name)
           <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the visible chat while keeping settings, prompt history (up-arrow recall) and session images (<code>/review-session</code>)</div>
@@ -2893,10 +2893,49 @@ function runImage2Image(prompt, image, imgWrap) {
 function runImage2Video(prompt, image) {
   iterationsFromSequence = false;
   sendBtn.disabled = true;
+  // If an end frame has been designated (🎞️) and it isn't the source image itself,
+  // pass it as the <INPUT_LAST_FRAME> so the workflow interpolates start → end.
+  const lastFrame = (lastFrameUrl && lastFrameUrl !== image) ? lastFrameUrl : null;
   return runGeneration(prompt, '', null, {
-    image2video: { image, workflow: currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW },
+    image2video: { image, lastFrame, workflow: currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW },
   })
     .finally(() => { sendBtn.disabled = false; });
+}
+
+// The image currently designated as the image2video end frame (<INPUT_LAST_FRAME>).
+// There is a single last-frame slot, so this is one global selection; clicking the
+// 🎞️ button on an image toggles it. null = no end frame (plain single-image i2v).
+let lastFrameUrl = null;
+
+function lastFrameButtonTitle(url) {
+  return url === lastFrameUrl
+    ? 'This image is the image2video end frame — click to unset'
+    : 'Use this image as the image2video end frame (last frame)';
+}
+
+// Sync every 🎞️ button on the page to the current lastFrameUrl selection, so the
+// designated end frame stays highlighted no matter which image it sits on.
+function refreshLastFrameButtons() {
+  document.querySelectorAll('.img-lastframe').forEach(b => {
+    b.classList.toggle('active', lastFrameUrl !== null && b.dataset.url === lastFrameUrl);
+    b.title = lastFrameButtonTitle(b.dataset.url);
+  });
+}
+
+// Build the 🎞️ toggle that designates an image as the image2video end frame.
+function makeLastFrameButton(url, extraClass) {
+  const btn = document.createElement('button');
+  btn.className = 'img-lastframe' + (extraClass ? ' ' + extraClass : '');
+  btn.dataset.url = url;
+  btn.innerHTML = '&#127902;&#xFE0E;';   // 🎞 film frames
+  btn.title = lastFrameButtonTitle(url);
+  if (url === lastFrameUrl) btn.classList.add('active');
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    lastFrameUrl = (lastFrameUrl === url) ? null : url;
+    refreshLastFrameButtons();
+  });
+  return btn;
 }
 
 // Opens a full-screen mask editor over `imageUrl`. The user paints a translucent
@@ -3985,6 +4024,8 @@ function appendChatImage(container, url) {
     openVideoMetaEditor(url, wrap);
   });
 
+  const lastframe = makeLastFrameButton(url);
+
   wrap.appendChild(img);
   wrap.appendChild(del);
   wrap.appendChild(face);
@@ -3993,6 +4034,7 @@ function appendChatImage(container, url) {
   wrap.appendChild(i2i);
   wrap.appendChild(inpaintBtn);
   wrap.appendChild(i2v);
+  wrap.appendChild(lastframe);
   wrap.appendChild(editMeta);
 
   // Re-run inpaint: only present once this image has an associated mask (i.e.
@@ -4696,6 +4738,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(upscale     ? { denoise: currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: currentDenoise.image2image } : {}),
       ...(image2video ? { duration: currentVideoSettings.duration, frames: currentVideoSettings.frames, fps: currentVideoSettings.fps } : {}),
+      ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
       ...(inpaint     ? { denoise: inpaint.denoise != null ? inpaint.denoise : currentDenoise.inpaint } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),

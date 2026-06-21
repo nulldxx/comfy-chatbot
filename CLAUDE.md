@@ -159,6 +159,7 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 | `<LORA_1_NAME>` | Filename of the first LoRA (e.g. `my_lora.safetensors`), sourced from `<lora:name:strength>` tags in the prompt |
 | `<INPUT_IMAGE>` | Base64-encoded source image for img2img, face-detailer, and inpainting workflows |
 | `<INPUT_MASK>` | Base64-encoded B&W mask PNG for inpainting (white = area to repaint), uploaded separately via `/api/upload-mask` |
+| `<INPUT_LAST_FRAME>` | Source image for the optional end frame in first-frame/last-frame image2video. When no end frame is designated it falls back to `<INPUT_IMAGE>` and the guide is bypassed (see below) |
 
 ### Numeric placeholders (replaced as bare JSON numbers, not quoted strings)
 
@@ -176,6 +177,13 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 - LoRA slots with no corresponding `<lora:...>` tag in the prompt are filled with a sentinel value and then the entire LoRA node is removed from the workflow graph, with its model/clip outputs rewired to bypass it (`strip_lora_nodes()` in `workflow.py`).
 - The pattern for matching lora tags in user input is `<lora:name:strength>` (case-insensitive); strength is optional and defaults to `1.0`.
 
+### First-frame / last-frame detail (image2video)
+
+- The LTX 2.3 image2video template optionally accepts a second image, `<INPUT_LAST_FRAME>`, so the model interpolates from the source (first) frame to a designated end frame, instead of only conditioning on the first frame.
+- A boolean placeholder, `<LAST_FRAME_BYPASS>` (a bare JSON `true`/`false`, fed to a `PrimitiveBoolean` node), toggles the end-frame guide. The UI designates the end frame with the 🎞️ button on an image (`makeLastFrameButton` / global `lastFrameUrl` in `chat.js`); `/api/image2video` accepts a `last_frame` image URL.
+- When **no** end frame is supplied, `run_generation` fills `<INPUT_LAST_FRAME>` with the same uploaded name as `<INPUT_IMAGE>` and sets `<LAST_FRAME_BYPASS>` to `true`, so the guide is skipped and the workflow behaves exactly like the original single-image image2video. When one **is** supplied, the bypass is `false` and the second image drives the end frame.
+- The end-frame guide node itself is wired in the ComfyUI editor and consumes the `Load Last Frame` (node `270`) and `Bypass last frame guide` (node `320:325`) inputs the app provides.
+
 ### Video settings detail
 
 - `<DURATION>`, `<FRAMES>` and `<FPS>` are interdependent: `frames = duration × fps`. The `/video-settings` UI keeps them consistent — you lock one value (only one at a time) and editing either of the other two re-derives the third. The math lives in `utils.js` (`clampVideo` / `recomputeVideo`) and is unit-tested.
@@ -184,7 +192,7 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 
 ### Validation
 
-`fill_placeholders_for_validation()` substitutes dummy values (`1.0` for float slots, `1` for the integer video slots, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.
+`fill_placeholders_for_validation()` substitutes dummy values (`1.0` for float slots, `1` for the integer video slots, `false` for the `<LAST_FRAME_BYPASS>` boolean slot, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.
 
 ## Live Configuration (Host Machine)
 

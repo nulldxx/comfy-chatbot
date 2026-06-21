@@ -164,6 +164,27 @@ class TestArchive(unittest.TestCase):
         self.assertEqual(mount_req["volume"], "/host/archive.img")
         self.assertEqual(mount_req["password"], "s3cret")
 
+    def test_archive_all_includes_videos(self):
+        self._auth()
+        self._make_image("a.png")
+        self._make_image("clip.mp4")
+        self._make_image("clip.webm")
+        resp = self.client.post("/api/archive", json={"scope": "all"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["archived"], 3)
+        self.assertEqual(os.listdir(self.images_dir), [])
+        self.assertEqual(self._staged_files(), ["a.png", "clip.mp4", "clip.webm"])
+
+    def test_archive_session_accepts_video(self):
+        self._auth()
+        self._make_image("clip.mp4")
+        resp = self.client.post(
+            "/api/archive", json={"scope": "session", "filenames": ["clip.mp4"]}
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["archived"], 1)
+        self.assertEqual(self._staged_files(), ["clip.mp4"])
+
     def test_archive_today_only(self):
         self._auth()
         self._make_image("today.png")

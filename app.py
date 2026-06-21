@@ -837,6 +837,16 @@ def api_image2video():
     if err:
         return err
 
+    # Optional end frame for first-frame/last-frame interpolation. When present the
+    # i2v template's <INPUT_LAST_FRAME> guide is enabled; when absent the run is a
+    # plain single-image image2video (see run_generation).
+    last_frame_url = (data.get("last_frame") or "").strip()
+    last_frame_path = None
+    if last_frame_url:
+        _, last_frame_path, err = resolve_input_image(last_frame_url)
+        if err:
+            return err
+
     available = list_image2video_workflows()
     workflow_name, err = resolve_workflow(
         data.get("workflow") or COMFY_IMAGE2VIDEO_WORKFLOW, available, "image2video"
@@ -861,6 +871,7 @@ def api_image2video():
     job_id = start_generation_job(
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
+        input_last_frame=last_frame_path,
         duration=duration, frames=frames, fps=fps,
     )
     return jsonify({"job_id": job_id})

@@ -253,6 +253,30 @@ header a:hover { color: #a78bfa; }
   .img-i2v { opacity: 0.6; }
 }
 
+/* Film-frames toggle that designates an image as the image2video end frame
+   (<INPUT_LAST_FRAME>), sitting 5px to the right of the centred video icon
+   (anchored by its left edge so it ignores its own width). When active it stays
+   highlighted and fully visible even without hover, so the chosen end frame is
+   obvious at a glance. */
+.img-lastframe {
+  position: absolute; top: 8px; left: calc(50% + 20px);
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 5px 8px; font-size: 0.85rem;
+  cursor: pointer; line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.img-wrap:hover .img-lastframe { opacity: 1; }
+.img-lastframe:hover { border-color: #facc15; color: #facc15; }
+.img-lastframe.active {
+  opacity: 1; border-color: #facc15; color: #facc15;
+  background: rgba(250,204,21,0.18);
+}
+@media (hover: none) {
+  .img-lastframe { opacity: 0.6; }
+}
+
 /* Pencil that opens the metadata editor, sitting 5px to the left of the
    centred video icon (anchored by its right edge so it ignores its own width). */
 .img-edit-meta {

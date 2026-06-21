@@ -37,6 +37,12 @@ class TestApplyPlaceholders(unittest.TestCase):
         result = apply_placeholders("<UNKNOWN>", {"OTHER": "val"})
         self.assertEqual(result, "<UNKNOWN>")
 
+    def test_bare_boolean_slot(self):
+        # The runtime fills <LAST_FRAME_BYPASS> with the strings "true"/"false" so
+        # the unquoted slot becomes a real JSON boolean, not a quoted string.
+        result = apply_placeholders('"value": <LAST_FRAME_BYPASS>', {"LAST_FRAME_BYPASS": "true"})
+        self.assertEqual(json.loads("{" + result + "}")["value"], True)
+
     def test_empty_mapping(self):
         result = apply_placeholders("no change", {})
         self.assertEqual(result, "no change")
@@ -226,6 +232,13 @@ class TestFillPlaceholdersForValidation(unittest.TestCase):
         self.assertEqual(parsed["duration"], 1)
         self.assertEqual(parsed["frames"], 1)
         self.assertEqual(parsed["fps"], 1)
+
+    def test_fills_last_frame_bypass_as_bare_boolean(self):
+        # <LAST_FRAME_BYPASS> is an unquoted boolean slot (image2video), so it must
+        # parse as a JSON bool rather than the quoted "placeholder" string.
+        template = '{"value": <LAST_FRAME_BYPASS>}'
+        parsed = json.loads(fill_placeholders_for_validation(template))
+        self.assertIs(parsed["value"], False)
 
     def test_result_is_parseable(self):
         # Numeric slots (<LORA_N_STRENGTH>, <DENOISE>) appear unquoted in workflow JSON;

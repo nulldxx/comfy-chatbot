@@ -86,7 +86,8 @@ def cancel_auto_purge(server_address):
 
 def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
                    width=None, height=None, steps=None, denoise=None, workflow_dir=None,
-                   input_image=None, input_mask=None, preserve_mtime_from=None,
+                   input_image=None, input_mask=None, input_last_frame=None,
+                   preserve_mtime_from=None,
                    cleanup_input_image=False, duration=None, frames=None, fps=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
@@ -163,6 +164,22 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
                     input_mask.unlink()
                 except OSError:
                     pass
+
+        # First-frame/last-frame conditioning (image2video). The template carries an
+        # optional <INPUT_LAST_FRAME> LoadImage and a <LAST_FRAME_BYPASS> boolean that
+        # disables the end-frame guide node. When a last frame is supplied we upload it
+        # and switch the guide on; when it isn't, we reuse the first frame as a harmless
+        # stand-in and leave the guide bypassed, so the workflow behaves exactly like the
+        # single-image image2video it is today.
+        if "<INPUT_LAST_FRAME>" in template:
+            if input_last_frame is not None:
+                send("progress", message="Uploading last frame to ComfyUI...")
+                mapping["INPUT_LAST_FRAME"] = server.upload_image(input_last_frame)
+                mapping["LAST_FRAME_BYPASS"] = "false"
+            else:
+                # No end frame designated: stand in the first frame and bypass the guide.
+                mapping["INPUT_LAST_FRAME"] = mapping.get("INPUT_IMAGE", "")
+                mapping["LAST_FRAME_BYPASS"] = "true"
 
         filled = apply_placeholders(template, mapping)
 

@@ -98,5 +98,6 @@ def fill_placeholders_for_validation(text):
     text = re.sub(r"<LORA_\d+_STRENGTH>", "1.0", text)   # unquoted numeric slots
     text = re.sub(r"<DENOISE>", "1.0", text)              # unquoted numeric slot
     text = re.sub(r"<(?:DURATION|FRAMES|FPS)>", "1", text)  # unquoted numeric video slots
+    text = re.sub(r"<LAST_FRAME_BYPASS>", "false", text)  # unquoted boolean slot (image2video)
     text = re.sub(r"<[A-Z0-9_]+>", "placeholder", text)   # all remaining string slots
     return text

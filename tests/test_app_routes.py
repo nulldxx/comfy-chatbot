@@ -706,6 +706,34 @@ class TestImage2VideoSettings(_AppFixture):
         )
         self.assertEqual(resp.status_code, 200)
 
+    def test_no_last_frame_forwards_none(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertIsNone(kwargs["input_last_frame"])
+
+    def test_last_frame_resolved_and_forwarded(self):
+        self._make_image("end.png")
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid",
+                  "last_frame": "/images/end.png"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertEqual(Path(kwargs["input_last_frame"]).name, "end.png")
+
+    def test_missing_last_frame_returns_404(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid",
+                  "last_frame": "/images/nope.png"},
+        )
+        self.assertEqual(resp.status_code, 404)
+
 
 class TestSequenceRoutes(_AppFixture):
     """/api/sequence and /api/video-sequence start a cancellable Grok job and
