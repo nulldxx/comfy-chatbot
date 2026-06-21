@@ -963,91 +963,115 @@ export function makeCommandHandler(deps) {
     addMessage('user', escapeHtml(raw), raw);
 
     if (cmd === '/help') {
+      const filter   = raw.slice('/help'.length).trim();
+      const filterLc = filter.toLowerCase();
+
+      const helpEntries = [
+        { sig: '/addserver <name> <host:port:os>', desc: 'add a server', notes: 'OS types: <code>unix</code> (Linux/macOS) &nbsp;·&nbsp; <code>windows</code> (Windows path separators)<br>e.g. <code>/addserver mordor mordor:8000:windows</code><br>e.g. <code>/addserver mybox 192.168.1.50:8188:unix</code>' },
+        { sig: '/alias-create <word> <expansion>', desc: 'create or update a text alias; typing the word in a prompt and pressing space expands it immediately', notes: 'e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code> &nbsp;·&nbsp; quotes are optional' },
+        { sig: '/alias-list', desc: 'list all defined aliases' },
+        { sig: '/archive-all [name]', desc: 'archive every image and video in the output folder into the encrypted volume (asks y/n first; optional folder name)', notes: 'needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server' },
+        { sig: '/archive-session [name]', desc: 'copy this session\'s images and videos into the encrypted volume, then remove the originals (optional folder name, e.g. <code>/archive-session man walking on beach</code>)' },
+        { sig: '/archive-today [name]', desc: 'archive images and videos generated today into the encrypted volume (optional folder name)' },
+        { sig: '/clear', desc: 'clear the visible chat while keeping settings, prompt history (up-arrow recall) and session images (<code>/review-session</code>)' },
+        { sig: '/delete', desc: 'delete the last image' },
+        { sig: '/delete-all', desc: 'delete every image in the output folder (asks y/n first)' },
+        { sig: '/delete-session', desc: 'delete all images from this session (chat + output folder)' },
+        { sig: '/delete-today', desc: 'delete every image generated today (asks y/n first)' },
+        { sig: '/face-detail [N]', desc: 'run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image\'s prompt' },
+        { sig: '/face-detail-prompt <prompt>', desc: 'set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image\'s own prompt (needs a <code>&lt;lora:…&gt;</code> tag)' },
+        { sig: '/face-detail-prompt-reset', desc: 'clear that override so the face icons derive a prompt from each image again' },
+        { sig: '/face-detail-session', desc: 'face-detail every image from this session, one after another' },
+        { sig: '/face-detail-workflow', desc: 'choose which face-detailer workflow the face icons use' },
+        { sig: '/help', desc: 'show this message' },
+        { sig: '/image2image [N]', desc: 're-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set' },
+        { sig: '/image2image-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)' },
+        { sig: '/image2image-replacement-reset', desc: 'clear all image2image replacements' },
+        { sig: '/image2image-set-prompt <prompt>', desc: 'override prompt used by <code>/image2image</code> and the 🎨 button instead of each image\'s original prompt (handy after a <code>/review</code>); no args shows it' },
+        { sig: '/image2image-set-prompt-reset', desc: 'clear the override prompt' },
+        { sig: '/image2image-workflow', desc: 'choose which image2image workflow <code>/image2image</code> uses' },
+        { sig: '/image2video [N]', desc: 'run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set' },
+        { sig: '/image2video-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/image2video</code> runs with no override (no args lists them)' },
+        { sig: '/image2video-replacement-reset', desc: 'clear all image2video replacements' },
+        { sig: '/image2video-set-prompt <prompt>', desc: 'override prompt used by <code>/image2video</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
+        { sig: '/image2video-set-prompt-reset', desc: 'clear the override prompt' },
+        { sig: '/image2video-workflow', desc: 'choose which image2video workflow <code>/image2video</code> uses' },
+        { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },
+        { sig: '/iterations <n>', desc: 'generate n images per prompt (default 1)' },
+        { sig: '/jobs', desc: 'grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)' },
+        { sig: '/lora', desc: 'fuzzy-find a LoRA to insert (works anywhere in a prompt)' },
+        { sig: '/multi-prompt', desc: 'generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)' },
+        { sig: '/purge', desc: 'free GPU memory on the active ComfyUI server' },
+        { sig: '/review <n>', desc: 'grid of the last N images, oldest first' },
+        { sig: '/review-all', desc: 'grid of every image, oldest first (tap to view, trash to delete)' },
+        { sig: '/review-session', desc: 'grid of this session\'s images' },
+        { sig: '/review-today', desc: 'grid of today\'s images, oldest first' },
+        { sig: '/sequence <master prompt>', desc: 'ask Grok to expand a master prompt into a sequence of prompts, then generate an image for each one after another', notes: 'count comes from <code>/iterations</code> (or 15 if iterations is 1) &nbsp;·&nbsp; needs <code>XAI_API_KEY</code> set on the server' },
+        { sig: '/sequence-replacement <from> <to>', desc: 'find→replace applied to each Grok prompt (no args lists them)' },
+        { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
+        { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
+        { sig: '/server', desc: 'choose a ComfyUI server' },
+        { sig: '/session-load', desc: 'pick and restore a previously saved session' },
+        { sig: '/session-new', desc: 'start a completely new session, resetting all settings to defaults' },
+        { sig: '/session-save <name>', desc: 'save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete' },
+        { sig: '/session-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
+        { sig: '/slideshow <n>', desc: 'browse the last N images, oldest first' },
+        { sig: '/slideshow-all', desc: 'browse every image, oldest first' },
+        { sig: '/slideshow-reverse', desc: 'browse every image, newest first' },
+        { sig: '/slideshow-session', desc: 'browse this session\'s images', notes: '← → keys on desktop &nbsp;·&nbsp; Del deletes the current image &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s' },
+        { sig: '/slideshow-today', desc: 'browse today\'s images, oldest first' },
+        { sig: '/splice-session', desc: 'drag this session\'s videos into order, then press ✓ to join them into one clip' },
+        { sig: '/upscale [N]', desc: 'run an upscaler workflow over the last N generated images (default 1, no prompt needed)' },
+        { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video' },
+        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
+        { sig: '/workflow', desc: 'choose an image generation workflow template' },
+        { sig: '/workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
+      ];
+
+      function hlHtml(html, term) {
+        if (!term) return html;
+        const esc = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(esc, 'gi');
+        return html.replace(/(<[^>]*>)|([^<]+)/g, (_m, tag, text) =>
+          tag ? tag : text.replace(re, t => `<span style="color:#ef4444;font-weight:bold">${t}</span>`)
+        );
+      }
+
+      function stripTags(html) {
+        return (html || '').replace(/<[^>]*>/g, ' ').replace(/&[^;]+;/g, ' ');
+      }
+
+      const matched = helpEntries.filter(e => {
+        if (!filterLc) return true;
+        return (e.sig + ' ' + stripTags(e.desc) + ' ' + stripTags(e.notes || '')).toLowerCase().includes(filterLc);
+      });
+
+      const rows = matched.map(e => {
+        const sigHtml  = hlHtml(escapeHtml(e.sig), filter);
+        const descHtml = hlHtml(e.desc, filter);
+        const inner = e.notes
+          ? `<code>${sigHtml}</code> — ${descHtml}<div style="margin-top:2px;color:#475569;font-size:0.78rem">${hlHtml(e.notes, filter)}</div>`
+          : `<code>${sigHtml}</code> — ${descHtml}`;
+        return `<div style="font-size:0.85rem;color:#94a3b8">${inner}</div>`;
+      }).join('\n          ');
+
+      const title = filter
+        ? `<strong>Commands matching "${escapeHtml(filter)}"</strong> <span style="font-size:0.8rem;color:#64748b">(${matched.length} of ${helpEntries.length})</span>`
+        : '<strong>Available commands</strong>';
+
+      const body = matched.length
+        ? rows
+        : `<div style="color:#64748b;font-size:0.85rem">No commands matched "${escapeHtml(filter)}"</div>`;
+
       addMessage('bot', `
-        <strong>Available commands</strong>
+        ${title}
         <div class="sel-list" style="margin-top:10px;gap:4px">
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/addserver &lt;name&gt; &lt;host:port:os&gt;</code> — add a server
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">
-              OS types: <code>unix</code> (Linux/macOS) &nbsp;·&nbsp; <code>windows</code> (Windows path separators)<br>
-              e.g. <code>/addserver mordor mordor:8000:windows</code><br>
-              e.g. <code>/addserver mybox 192.168.1.50:8188:unix</code>
-            </div>
-          </div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/alias-create &lt;word&gt; &lt;expansion&gt;</code> — create or update a text alias; typing the word in a prompt and pressing space expands it immediately
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code> &nbsp;·&nbsp; quotes are optional</div>
-          </div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/alias-list</code> — list all defined aliases</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-all [name]</code> — archive every image and video in the output folder into the encrypted volume (asks y/n first; optional folder name)
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server</div>
-          </div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-session [name]</code> — copy this session's images and videos into the encrypted volume, then remove the originals (optional folder name, e.g. <code>/archive-session man walking on beach</code>)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/archive-today [name]</code> — archive images and videos generated today into the encrypted volume (optional folder name)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the visible chat while keeping settings, prompt history (up-arrow recall) and session images (<code>/review-session</code>)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/delete</code> — delete the last image</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-all</code> — delete every image in the output folder (asks y/n first)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-session</code> — delete all images from this session (chat + output folder)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/delete-today</code> — delete every image generated today (asks y/n first)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail [N]</code> — run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image's prompt</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt &lt;prompt&gt;</code> — set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image's own prompt (needs a <code>&lt;lora:…&gt;</code> tag)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt-reset</code> — clear that override so the face icons derive a prompt from each image again</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-session</code> — face-detail every image from this session, one after another</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/help</code> — show this message</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image [N]</code> — re-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement-reset</code> — clear all image2image replacements</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2image</code> and the 🎨 button instead of each image's original prompt (handy after a <code>/review</code>); no args shows it</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-set-prompt-reset</code> — clear the override prompt</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-workflow</code> — choose which image2image workflow <code>/image2image</code> uses</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video [N]</code> — run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to the original prompt when <code>/image2video</code> runs with no override (no args lists them)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-replacement-reset</code> — clear all image2video replacements</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2video</code> and the 🎬 button instead of each image's original prompt; no args shows it</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt-reset</code> — clear the override prompt</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-workflow</code> — choose which image2video workflow <code>/image2video</code> uses</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image-settings</code> — set resolution &amp; generation steps for image generation
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video</div>
-          </div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/iterations &lt;n&gt;</code> — generate n images per prompt (default 1)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/jobs</code> — grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/multi-prompt</code> — generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/review &lt;n&gt;</code> — grid of the last N images, oldest first</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/review-all</code> — grid of every image, oldest first (tap to view, trash to delete)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/review-session</code> — grid of this session's images</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/review-today</code> — grid of today's images, oldest first</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence &lt;master prompt&gt;</code> — ask Grok to expand a master prompt into a sequence of prompts, then generate an image for each one after another
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">count comes from <code>/iterations</code> (or 15 if iterations is 1) &nbsp;·&nbsp; needs <code>XAI_API_KEY</code> set on the server</div>
-          </div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to each Grok prompt (no args lists them)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-replacement-reset</code> — clear all sequence replacements</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/sequence-review</code> — show the last sequence's prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/server</code> — choose a ComfyUI server</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/session-load</code> — pick and restore a previously saved session</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/session-new</code> — start a completely new session, resetting all settings to defaults</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/session-save &lt;name&gt;</code> — save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/session-summary</code> — show a summary of all active settings (server, workflow, resolution, replacements, etc.)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow &lt;n&gt;</code> — browse the last N images, oldest first</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-all</code> — browse every image, oldest first</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-reverse</code> — browse every image, newest first</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-session</code> — browse this session's images
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">← → keys on desktop &nbsp;·&nbsp; Del deletes the current image &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s</div>
-          </div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-today</code> — browse today's images, oldest first</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/splice-session</code> — drag this session's videos into order, then press ✓ to join them into one clip</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale [N]</code> — run an upscaler workflow over the last N generated images (default 1, no prompt needed)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/video-sequence &lt;master prompt&gt;</code> — like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/video-settings</code> — set video duration, frames, fps, resolution &amp; audio for image2video
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound</div>
-          </div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose an image generation workflow template</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several image generation workflows, then run the prompt against each one</div>
+          ${body}
         </div>
-        <div style="margin-top:10px;font-size:0.8rem;color:#475569">
+        ${!filter ? `<div style="margin-top:10px;font-size:0.8rem;color:#475569">
           Include LoRAs in any prompt with <code>&lt;lora:name:strength&gt;</code>,
           or type <code>/lora</code> while writing a prompt to search for one
-        </div>
+        </div>` : ''}
       `);
       return;
     }

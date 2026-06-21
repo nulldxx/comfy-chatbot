@@ -20,7 +20,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/face-detail-prompt-reset',     desc: 'clear the override; derive prompts again',                                           args: ''  },
   { cmd: '/face-detail-session',          desc: 'face-detail every image from this session',                                          args: ''  },
   { cmd: '/face-detail-workflow',         desc: 'choose a face-detailer workflow',                                                    args: ''  },
-  { cmd: '/help',                         desc: 'show available commands',                                                            args: ''  },
+  { cmd: '/help',                         desc: 'show available commands; add a word to filter (e.g. /help prompt)',                args: '[filter]'  },
   { cmd: '/image-settings',               desc: 'set image resolution & generation steps (presets, flip, use workflow default)',     args: ''  },
   { cmd: '/image2image',                  desc: 'image2image the last N images (default 1)',                                          args: ' ' },
   { cmd: '/image2image-replacement',      desc: 'add a find→replace for prompt-less /image2image',                                    args: ' ' },
