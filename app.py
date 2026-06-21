@@ -48,8 +48,6 @@ from persistence import (
     delete_session, list_sessions, load_aliases, load_session,
     save_aliases, save_session, slugify,
 )
-from workflow import fill_placeholders_for_validation
-
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
@@ -199,34 +197,6 @@ def api_inpainting_workflows():
 @login_required
 def api_image2video_workflows():
     return jsonify(list_image2video_workflows())
-
-
-@app.route("/api/upload-workflow", methods=["POST"])
-@login_required
-def api_upload_workflow():
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-    f = request.files["file"]
-    if not f.filename:
-        return jsonify({"error": "No file selected"}), 400
-    if not f.filename.lower().endswith(".json"):
-        return jsonify({"error": "File must be a .json workflow"}), 400
-
-    content = f.read()
-    try:
-        json.loads(fill_placeholders_for_validation(content.decode("utf-8")))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        return jsonify({"error": f"Invalid workflow file: {e}"}), 400
-
-    filename = secure_filename(f.filename)
-    dest = COMFY_GENERATION_DIR / filename
-    try:
-        COMFY_GENERATION_DIR.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(content)
-    except OSError as e:
-        return jsonify({"error": f"Could not save file: {e}"}), 500
-
-    return jsonify({"name": dest.stem})
 
 
 # ---------------------------------------------------------------------------

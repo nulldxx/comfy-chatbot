@@ -50,42 +50,6 @@ header a:hover { color: #a78bfa; }
 }
 .sel-del-btn:hover:not(:disabled) { border-color: #ef4444; color: #ef4444; background: #1a0808; }
 
-/* Upload drop zone */
-.upload-zone {
-  display: block;
-  margin-top: 10px;
-  border: 1px dashed #475569;
-  border-radius: 8px;
-  padding: 14px 16px;
-  text-align: center;
-  color: #64748b;
-  font-size: 0.82rem;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
-  line-height: 1.5;
-}
-.upload-zone:hover, .upload-zone.drag-over {
-  border-color: #7c3aed;
-  color: #a78bfa;
-  background: rgba(124,58,237,0.06);
-}
-.upload-zone input[type=file] { display: none; }
-.upload-btn {
-  display: inline-block;
-  margin-top: 8px;
-  background: #1e293b;
-  border: 1px solid #475569;
-  border-radius: 6px;
-  color: #94a3b8;
-  padding: 5px 14px;
-  font-size: 0.82rem;
-  pointer-events: none;
-}
-.upload-zone:hover .upload-btn, .upload-zone.drag-over .upload-btn {
-  border-color: #7c3aed;
-  color: #a78bfa;
-}
-
 #messages {
   flex: 1;
   overflow-y: auto;

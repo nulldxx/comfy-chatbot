@@ -246,30 +246,6 @@ function showSessionSummary() {
   scrollBottom();
 }
 
-function doUpload(file, bubble) {
-  if (!file.name.toLowerCase().endsWith('.json')) {
-    bubble.innerHTML = '<span style="color:#f87171">⚠ Please choose a <code>.json</code> file.</span>';
-    return;
-  }
-  bubble.innerHTML = '<div class="status-text">Uploading…</div><div class="dots"><span></span><span></span><span></span></div>';
-  scrollBottom();
-
-  const fd = new FormData();
-  fd.append('file', file);
-
-  fetch('/api/upload-workflow', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(data => {
-      if (data.error) throw new Error(data.error);
-      bubble.innerHTML = `Workflow <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> uploaded successfully. Use <code>/workflow</code> to select it.`;
-      scrollBottom();
-    })
-    .catch(err => {
-      bubble.innerHTML = `<span style="color:#f87171">⚠ Upload failed: ${escapeHtml(err.message)}</span>`;
-      scrollBottom();
-    });
-}
-
 // ---------------------------------------------------------------------------
 // /jobs — server-side generation job tracker
 // ---------------------------------------------------------------------------
@@ -841,7 +817,7 @@ export function makeCommandHandler(deps) {
       const bubble = addMessage('bot', '<div class="status-text">Loading workflows…</div>').parentElement.querySelector('.bubble');
       fetch('/api/workflows').then(r => r.json()).then(workflows => {
         if (!workflows.length) {
-          bubble.innerHTML = 'No workflows available — upload one with <code>/upload</code>.';
+          bubble.innerHTML = 'No workflows available.';
           return;
         }
         let html = `<strong>Run against which workflows?</strong>
@@ -1061,7 +1037,6 @@ export function makeCommandHandler(deps) {
           </div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-today</code> — browse today's images, oldest first</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/splice-session</code> — drag this session's videos into order, then press ✓ to join them into one clip</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale [N]</code> — run an upscaler workflow over the last N generated images (default 1, no prompt needed)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/video-sequence &lt;master prompt&gt;</code> — like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/video-settings</code> — set video duration, frames, fps, resolution &amp; audio for image2video
@@ -1130,36 +1105,6 @@ export function makeCommandHandler(deps) {
         setMsg: 'Face-detailer workflow set to',
         onSelect: wf => { state.currentFaceWorkflow = wf; },
       });
-      return;
-    }
-
-    if (cmd === '/upload') {
-      const bubble = addMessage('bot', `
-        <div><strong>Upload a workflow</strong></div>
-        <label class="upload-zone" id="upload-zone">
-          <input type="file" accept=".json" id="upload-input">
-          <div>Drag &amp; drop a <code>.json</code> file here</div>
-          <span class="upload-btn">Browse…</span>
-        </label>
-      `).parentElement.querySelector('.bubble');
-
-      const zone  = bubble.querySelector('#upload-zone');
-      const input = bubble.querySelector('#upload-input');
-
-      zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
-      zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-      zone.addEventListener('drop', e => {
-        e.preventDefault();
-        zone.classList.remove('drag-over');
-        const file = e.dataTransfer.files[0];
-        if (file) doUpload(file, bubble);
-      });
-
-      input.addEventListener('change', () => {
-        if (input.files[0]) doUpload(input.files[0], bubble);
-      });
-
-      scrollBottom();
       return;
     }
 

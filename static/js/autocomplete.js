@@ -61,7 +61,6 @@ export const SLASH_COMMANDS = [
   { cmd: '/slideshow-session',            desc: 'browse this session\'s images',                                                      args: ''  },
   { cmd: '/slideshow-today',              desc: 'browse today\'s images, oldest first',                                               args: ''  },
   { cmd: '/splice-session',               desc: 'drag to reorder this session\'s videos, then ✓ to join them into one',               args: ''  },
-  { cmd: '/upload',                       desc: 'upload a new workflow JSON file',                                                    args: ''  },
   { cmd: '/upscale',                      desc: 'upscale the last N images (default 1, no prompt)',                                   args: ' ' },
   { cmd: '/video-sequence',               desc: 'like /sequence, plus per-shot action & audio for video (Grok)',                      args: ' ' },
   { cmd: '/video-settings',               desc: 'set video duration, frames, fps, resolution & audio (lock one, the others follow)',  args: ''  },

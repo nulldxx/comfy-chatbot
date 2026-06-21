@@ -1,6 +1,6 @@
 """Tests for app.py routes not covered by other test files.
 
-Covers: catalogue endpoints, image management, session/alias CRUD, upload
+Covers: catalogue endpoints, image management, session/alias CRUD, upload-mask
 endpoints, and generation-route validation (with start_generation_job mocked
 so no ComfyUI connection is needed).
 """
@@ -177,50 +177,6 @@ class TestAddServer(_AppFixture):
         self.assertTrue(servers_file.is_file())
         data = json.loads(servers_file.read_text())
         self.assertEqual(data["servers"][0]["name"], "srv")
-
-
-class TestUploadWorkflow(_AppFixture):
-    def setUp(self):
-        super().setUp()
-        self.wf_dir = Path(self.tmp) / "workflows" / "generation"
-        self.wf_dir.mkdir(parents=True)
-        self._wf_patcher = patch.object(app_module, "COMFY_GENERATION_DIR", self.wf_dir)
-        self._wf_patcher.start()
-
-    def tearDown(self):
-        self._wf_patcher.stop()
-        super().tearDown()
-
-    def test_valid_workflow_saved(self):
-        content = json.dumps({"1": {"inputs": {"prompt": "<PROMPT>"}}}).encode()
-        resp = self.client.post(
-            "/api/upload-workflow",
-            data={"file": (io.BytesIO(content), "my_workflow.json")},
-            content_type="multipart/form-data",
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.get_json()["name"], "my_workflow")
-        self.assertTrue((self.wf_dir / "my_workflow.json").is_file())
-
-    def test_no_file_returns_400(self):
-        resp = self.client.post("/api/upload-workflow", data={})
-        self.assertEqual(resp.status_code, 400)
-
-    def test_non_json_file_returns_400(self):
-        resp = self.client.post(
-            "/api/upload-workflow",
-            data={"file": (io.BytesIO(b"data"), "image.png")},
-            content_type="multipart/form-data",
-        )
-        self.assertEqual(resp.status_code, 400)
-
-    def test_invalid_json_content_returns_400(self):
-        resp = self.client.post(
-            "/api/upload-workflow",
-            data={"file": (io.BytesIO(b"not json"), "wf.json")},
-            content_type="multipart/form-data",
-        )
-        self.assertEqual(resp.status_code, 400)
 
 
 # ---------------------------------------------------------------------------
