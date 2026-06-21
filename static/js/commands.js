@@ -1021,6 +1021,7 @@ export function makeCommandHandler(deps) {
         { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },
         { sig: '/iterations <n>', desc: 'generate n images per prompt (default 1)' },
         { sig: '/jobs', desc: 'grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)' },
+        { sig: '/last-sent', desc: 'show the last workflow submitted to ComfyUI with all replacements applied — downloadable as JSON' },
         { sig: '/lora', desc: 'fuzzy-find a LoRA to insert (works anywhere in a prompt)' },
         { sig: '/multi-prompt', desc: 'generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)' },
         { sig: '/purge', desc: 'free GPU memory on the active ComfyUI server' },
@@ -1300,6 +1301,38 @@ export function makeCommandHandler(deps) {
     if (cmd === '/jobs') {
       const bubble = addMessage('bot', '<div class="status-text">Loading jobs…</div>');
       renderJobsGrid(bubble, deps);
+      return;
+    }
+
+    if (cmd === '/last-sent') {
+      const bubble = addMessage('bot', '<div class="status-text">Fetching last-sent workflow…</div>').parentElement.querySelector('.bubble');
+      fetch('/api/last-sent-workflow')
+        .then(r => r.json())
+        .then(data => {
+          if (data.error) throw new Error(data.error);
+          const ts = data.submitted_at ? new Date(data.submitted_at * 1000).toLocaleString() : 'unknown';
+          const nodeCount = Object.keys(data.workflow || {}).length;
+          const pretty = JSON.stringify(data.workflow, null, 2);
+          const blob = new Blob([pretty], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const filename = (data.workflow_name || 'workflow').replace(/\.json$/, '') + '_sent.json';
+          bubble.innerHTML = `
+            <div style="margin-bottom:8px">
+              <strong>Last-sent workflow</strong>
+              <span style="color:#475569;font-size:0.8rem;margin-left:8px">${escapeHtml(data.workflow_name || '?')} · ${nodeCount} node(s) · ${escapeHtml(ts)}</span>
+            </div>
+            <a href="${escapeHtml(url)}" download="${escapeHtml(filename)}"
+               style="display:inline-block;margin-bottom:10px;padding:4px 12px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#a78bfa;font-size:0.82rem;text-decoration:none">
+              ⬇ Download ${escapeHtml(filename)}
+            </a>
+            <pre style="background:#0f172a;border:1px solid #1e293b;border-radius:4px;padding:8px;font-size:0.72rem;color:#94a3b8;max-height:320px;overflow:auto;white-space:pre;margin:0">${escapeHtml(pretty.slice(0, 8000))}${pretty.length > 8000 ? '\n… (truncated — download for full JSON)' : ''}</pre>
+          `;
+          scrollBottom();
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
       return;
     }
 

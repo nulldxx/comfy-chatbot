@@ -36,8 +36,8 @@ from config import (
     VIDEO_EXTS,
 )
 from generation_service import (
-    cancel_auto_purge, jobs, jobs_lock, run_generation, start_generation_job,
-    start_sequence_job,
+    cancel_auto_purge, get_last_sent_workflow, jobs, jobs_lock,
+    run_generation, start_generation_job, start_sequence_job,
 )
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
@@ -1408,6 +1408,25 @@ def api_alias_delete(alias_from):
     except OSError as e:
         return jsonify({"error": f"Could not save aliases: {e}"}), 500
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Last-sent workflow
+# ---------------------------------------------------------------------------
+
+@app.route("/api/last-sent-workflow")
+@login_required
+def api_last_sent_workflow():
+    """Return the last workflow submitted to ComfyUI with all replacements applied."""
+    record = get_last_sent_workflow()
+    if record is None:
+        return jsonify({"error": "No workflow has been submitted yet"}), 404
+    return jsonify({
+        "workflow": record["workflow"],
+        "workflow_name": record["workflow_name"],
+        "server": record["server"],
+        "submitted_at": record["submitted_at"],
+    })
 
 
 # ---------------------------------------------------------------------------

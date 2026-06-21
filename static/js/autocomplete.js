@@ -39,6 +39,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/removal-workflow',             desc: 'choose an object-removal workflow',                                                   args: ''  },
   { cmd: '/iterations',                   desc: 'set images generated per prompt',                                                    args: ' ' },
   { cmd: '/jobs',                         desc: 'show the last 10 server-side jobs (status, cancel, pull asset into chat)',           args: ''  },
+  { cmd: '/last-sent',                    desc: 'show the last workflow sent to ComfyUI with all replacements (downloadable JSON)',     args: ''  },
   { cmd: '/lora',                         desc: 'fuzzy-find a LoRA to insert',                                                        args: ' ' },
   { cmd: '/multi-prompt',                 desc: 'generate images for multiple prompts (one per line)',                                args: '\n' },
   { cmd: '/purge',                        desc: 'free GPU memory on active server',                                                   args: ''  },

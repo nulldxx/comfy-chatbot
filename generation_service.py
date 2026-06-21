@@ -39,6 +39,18 @@ from workflow import (
 jobs: dict = {}
 jobs_lock = threading.Lock()
 
+# The last workflow submitted to ComfyUI, stored after all placeholder
+# substitution, LoRA stripping, resolution/steps overrides, and seed
+# randomisation — i.e. exactly what was sent to the server.
+_last_sent: dict | None = None
+_last_sent_lock = threading.Lock()
+
+
+def get_last_sent_workflow() -> dict | None:
+    """Return a copy of the last submitted workflow record, or None."""
+    with _last_sent_lock:
+        return dict(_last_sent) if _last_sent is not None else None
+
 # Cap how long a single ComfyUI poll loop will wait for completion. Long video
 # renders can easily exceed 10 minutes, so we use 4 hours instead of the old
 # 600s cap — cancellation via cancel_event keeps the loop responsive regardless.
@@ -355,6 +367,15 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
 
         if cancel_event.is_set():
             raise JobCancelled()
+
+        global _last_sent
+        with _last_sent_lock:
+            _last_sent = {
+                "workflow": workflow,
+                "workflow_name": workflow_name,
+                "server": server_address,
+                "submitted_at": time.time(),
+            }
 
         send("progress", message=f"Submitting to {server_address}...")
         prompt_id = server.submit_workflow(workflow)
