@@ -1560,7 +1560,7 @@ function handleSlashCommand(raw) {
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/clear</code> — clear the visible chat while keeping settings, prompt history (up-arrow recall) and session images (<code>/review-session</code>)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-new</code> — start a completely new session, resetting all settings to defaults</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/session-save &lt;name&gt;</code> — save the current session (chat history, images, settings) to disk; omit the name to pick an existing session to overwrite or delete</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/session-save &lt;name&gt;</code> — save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-load</code> — pick and restore a previously saved session</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/session-summary</code> — show a summary of all active settings (server, workflow, resolution, replacements, etc.)</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/review &lt;n&gt;</code> — grid of the last N images, oldest first</div>
@@ -2109,6 +2109,7 @@ function handleSlashCommand(raw) {
       imagePrompts: Object.assign({}, imagePrompts),
       imageVideoMeta: Object.assign({}, imageVideoMeta),
       lastSequence,
+      promptHistory: history.slice(),
       messages: captureSessionMessages(),
     });
 
@@ -4467,6 +4468,8 @@ function restoreSession(data) {
   Object.assign(imagePrompts, data.imagePrompts || {});
   Object.assign(imageVideoMeta, data.imageVideoMeta || {});
   lastSequence = data.lastSequence || null;
+  // Restore up/down recall history (prompts, sequences and slash commands).
+  for (const entry of (data.promptHistory || [])) history.push(entry);
 
   const validImages = new Set(data.sessionImages || []);
   for (const msg of (data.messages || [])) {
@@ -4509,6 +4512,9 @@ function sendMessage() {
   if (raw.startsWith('/')) {
     inputEl.value = '';
     inputEl.style.height = 'auto';
+    // Slash commands (including /sequence) join the up/down recall history, just
+    // like plain prompts. Skip duplicates of the most recent entry.
+    if (history[0] !== raw) history.unshift(raw);
     historyIdx = -1;
     savedDraft = '';
     handleSlashCommand(raw);
