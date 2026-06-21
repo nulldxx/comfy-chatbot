@@ -189,10 +189,7 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
     removalMode = active;
     if (removeToolBtn) removeToolBtn.classList.toggle('is-active', active);
     applyBtn.textContent = active ? 'Apply Removal' : 'Apply Inpaint';
-    promptInput.placeholder = active
-      ? 'Background hint (optional)…'
-      : 'Describe what to inpaint…';
-    promptLabel.textContent = active ? 'Hint (optional):' : 'Prompt:';
+    promptRow.style.display = active ? 'none' : '';
     promptInput.classList.remove('mask-editor-prompt-invalid');
   }
 
