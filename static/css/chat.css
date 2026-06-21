@@ -310,6 +310,52 @@ header a:hover { color: #a78bfa; }
   .img-reinpaint { opacity: 0.6; }
 }
 
+/* Image2image dialog overlay (floats inside .img-wrap) */
+.img-i2i-dialog {
+  position: absolute; inset: 0; z-index: 20;
+  background: rgba(0,0,0,0.75);
+  border-radius: inherit;
+  display: flex; align-items: center; justify-content: center;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.img-i2i-dialog-card {
+  background: #0f172a; border: 1px solid #475569;
+  border-radius: 10px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  width: 100%; max-width: 380px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.img-i2i-dialog-title {
+  color: #f1f5f9; font-size: 0.9rem; font-weight: 600; margin: 0;
+}
+.img-i2i-dialog-label { color: #94a3b8; font-size: 0.8rem; margin-bottom: 2px; display: block; }
+.img-i2i-dialog-prompt {
+  background: rgba(15,23,42,0.85); border: 1px solid #475569;
+  color: #f1f5f9; border-radius: 8px;
+  padding: 8px 12px; font-size: 0.85rem;
+  resize: vertical; min-height: 64px; width: 100%; box-sizing: border-box;
+  font-family: inherit;
+}
+.img-i2i-dialog-prompt:focus { outline: none; border-color: #fb923c; }
+.img-i2i-dialog-denoise-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.img-i2i-dialog-slider { flex: 1; accent-color: #fb923c; cursor: pointer; }
+.img-i2i-dialog-denoise-val { color: #f1f5f9; font-size: 0.85rem; min-width: 3ch; text-align: right; }
+.img-i2i-dialog-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.img-i2i-dialog-btn {
+  background: rgba(15,23,42,0.85); border: 1px solid #475569;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 7px 16px; font-size: 0.85rem; cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.img-i2i-dialog-btn:hover { border-color: #94a3b8; color: #f1f5f9; }
+.img-i2i-dialog-btn-ok { border-color: #fb923c; color: #fb923c; }
+.img-i2i-dialog-btn-ok:hover { border-color: #f97316; color: #f97316; }
+
 /* Mask editor overlay */
 #mask-editor-overlay {
   position: fixed; inset: 0;

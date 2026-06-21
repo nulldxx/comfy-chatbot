@@ -309,6 +309,87 @@ function openVideoMetaEditor(url, wrap) {
 }
 
 // ---------------------------------------------------------------------------
+// Image2image pre-run dialog
+// ---------------------------------------------------------------------------
+
+function showI2IDialog(wrap, defaultPrompt, defaultDenoise) {
+  return new Promise((resolve, reject) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'img-i2i-dialog';
+
+    const card = document.createElement('div');
+    card.className = 'img-i2i-dialog-card';
+
+    const title = document.createElement('div');
+    title.className = 'img-i2i-dialog-title';
+    title.textContent = 'Image to image';
+
+    const promptLabel = document.createElement('label');
+    promptLabel.className = 'img-i2i-dialog-label';
+    promptLabel.textContent = 'Prompt';
+
+    const promptEl = document.createElement('textarea');
+    promptEl.className = 'img-i2i-dialog-prompt';
+    promptEl.value = defaultPrompt;
+
+    const denoiseLabel = document.createElement('label');
+    denoiseLabel.className = 'img-i2i-dialog-label';
+    denoiseLabel.textContent = 'Denoise';
+
+    const denoiseRow = document.createElement('div');
+    denoiseRow.className = 'img-i2i-dialog-denoise-row';
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'img-i2i-dialog-slider';
+    slider.min = '0'; slider.max = '1'; slider.step = '0.01';
+    slider.value = String(defaultDenoise);
+
+    const denoiseVal = document.createElement('span');
+    denoiseVal.className = 'img-i2i-dialog-denoise-val';
+    denoiseVal.textContent = defaultDenoise.toFixed(2);
+
+    slider.addEventListener('input', () => {
+      denoiseVal.textContent = parseFloat(slider.value).toFixed(2);
+    });
+
+    denoiseRow.append(slider, denoiseVal);
+
+    const actions = document.createElement('div');
+    actions.className = 'img-i2i-dialog-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'img-i2i-dialog-btn';
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+
+    const okBtn = document.createElement('button');
+    okBtn.className = 'img-i2i-dialog-btn img-i2i-dialog-btn-ok';
+    okBtn.type = 'button';
+    okBtn.textContent = 'OK';
+
+    const dismiss = () => overlay.remove();
+
+    cancelBtn.addEventListener('click', () => { dismiss(); reject(); });
+    okBtn.addEventListener('click', () => {
+      dismiss();
+      resolve({ prompt: promptEl.value.trim(), denoise: parseFloat(slider.value) });
+    });
+    promptEl.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { dismiss(); reject(); }
+    });
+
+    actions.append(cancelBtn, okBtn);
+    card.append(title, promptLabel, promptEl, denoiseLabel, denoiseRow, actions);
+    overlay.appendChild(card);
+    wrap.appendChild(overlay);
+
+    promptEl.focus();
+    promptEl.setSelectionRange(promptEl.value.length, promptEl.value.length);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Runner functions (face-detail, upscale, image2image, image2video, inpaint, do-over)
 // ---------------------------------------------------------------------------
 
@@ -332,11 +413,11 @@ function runUpscale(image, imgWrap) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
-function runImage2Image(prompt, image, imgWrap) {
+function runImage2Image(prompt, image, imgWrap, denoiseOverride) {
   state.iterationsFromSequence = false;
   sendBtn.disabled = true;
   return runGeneration(prompt, '', null, {
-    image2image: { image, workflow: state.currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW },
+    image2image: { image, workflow: state.currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW, denoiseOverride },
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
@@ -527,20 +608,24 @@ function appendChatImage(container, url) {
   i2i.addEventListener('click', e => {
     e.stopPropagation();
     if (i2i.disabled || sendBtn.disabled) return;
-    let prompt;
+    let defaultPrompt;
     if (state.image2imageOverridePrompt) {
-      prompt = state.image2imageOverridePrompt;
+      defaultPrompt = state.image2imageOverridePrompt;
     } else {
       const orig = state.imagePrompts[url];
       if (!orig) {
         addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
         return;
       }
-      prompt = applyReplacements(orig, state.image2imageReplacements);
+      defaultPrompt = applyReplacements(orig, state.image2imageReplacements);
     }
-    i2i.disabled = true;
-    addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
-    runImage2Image(prompt, url, wrap).finally(() => { i2i.disabled = false; });
+    showI2IDialog(wrap, defaultPrompt, state.currentDenoise.image2image)
+      .then(({ prompt, denoise }) => {
+        i2i.disabled = true;
+        addMessage('user', 'Image2image: ' + escapeHtml(prompt), prompt);
+        runImage2Image(prompt, url, wrap, denoise).finally(() => { i2i.disabled = false; });
+      })
+      .catch(() => {}); // cancelled
   });
 
   const inpaintBtn = document.createElement('button');
@@ -921,7 +1006,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(removal ? { mask: removal.mask } : {}),
       ...(face        ? { denoise: state.currentDenoise.face } : {}),
       ...(upscale     ? { denoise: state.currentDenoise.upscale } : {}),
-      ...(image2image ? { denoise: state.currentDenoise.image2image } : {}),
+      ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
       ...(inpaint ? { denoise: inpaint.denoise != null ? inpaint.denoise : state.currentDenoise.inpaint } : {}),
