@@ -63,7 +63,7 @@ export function applyReplacements(prompt, replacements) {
 
 // Move the item at index `from` to index `to`, returning a new array (the
 // input is left untouched). Out-of-range indices and from===to yield a shallow
-// copy unchanged. Powers drag-to-reorder in the /composite-videos-session grid.
+// copy unchanged. Powers drag-to-reorder in the /splice-session grid.
 export function reorderList(arr, from, to) {
   const out = arr.slice();
   if (from === to) return out;

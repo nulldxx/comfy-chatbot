@@ -455,7 +455,7 @@ def _probe_video_info(path):
 def api_composite_videos():
     """Concatenate several session videos into one, in the given order.
 
-    Powers /composite-videos-session: the browser sends an ordered list of
+    Powers /splice-session: the browser sends an ordered list of
     /images/ video URLs; ffmpeg concatenates them (re-encoding to the first
     clip's resolution so clips of differing sizes still join cleanly) and the
     result is written to IMAGES_DIR and dropped at the bottom of the chat.

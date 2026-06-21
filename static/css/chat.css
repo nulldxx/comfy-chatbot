@@ -608,7 +608,7 @@ header a:hover { color: #a78bfa; }
   .review-i2v { opacity: 0.6; }
 }
 
-/* /composite-videos-session: drag-to-reorder grid of session videos + a ✓ button. */
+/* /splice-session: drag-to-reorder grid of session videos + a ✓ button. */
 .composite-hint { font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px; }
 .composite-grid {
   display: grid;

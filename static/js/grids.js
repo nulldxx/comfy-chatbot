@@ -81,7 +81,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     const isVideo = isVideoUrl(url);
     const media = createMediaElement(url);
     if (isVideo) {
-      // Match the /composite-videos-session preview: show the first frame so the
+      // Match the /splice-session preview: show the first frame so the
       // cell isn't a blank black square, and start muted so native controls play
       // without surprising the user.
       media.muted = true;
@@ -235,7 +235,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
   scrollBottom();
 }
 
-// Renders a draggable grid of videos for /composite-videos-session.
+// Renders a draggable grid of videos for /splice-session.
 // The ✓ button calls compositeVideos(orderedUrls) which is injected from chat.js.
 export function renderCompositeGrid(bubble, urls, { compositeVideos }) {
   bubble.innerHTML = '';
