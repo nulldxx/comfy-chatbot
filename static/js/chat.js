@@ -460,7 +460,7 @@ function appendChatImage(container, url) {
     if (face.disabled || sendBtn.disabled) return;
     const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]);
     if (!prompt) {
-      addMessage('bot', '<span style="color:#f87171">No LoRA in this image's prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
+      addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
       return;
     }
     face.disabled = true;
