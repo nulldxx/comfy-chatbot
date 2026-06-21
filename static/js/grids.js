@@ -80,7 +80,15 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
 
     const isVideo = isVideoUrl(url);
     const media = createMediaElement(url);
-    if (!isVideo) media.addEventListener('click', () => openLightbox(url));
+    if (isVideo) {
+      // Match the /composite-videos-session preview: show the first frame so the
+      // cell isn't a blank black square, and start muted so native controls play
+      // without surprising the user.
+      media.muted = true;
+      media.preload = 'metadata';
+    } else {
+      media.addEventListener('click', () => openLightbox(url));
+    }
 
     const del = document.createElement('button');
     del.className = 'img-del review-del';
