@@ -137,7 +137,7 @@ export const VIDEO_LIMITS = {
   duration: { min: 0.1, max: 60 },
   frames:   { min: 1,   max: 1000 },
   fps:      { min: 1,   max: 60 },
-  // Video resolution is kept distinct from /resolution (which targets stills):
+  // Video resolution is kept distinct from /image-settings (which targets stills):
   // video models have very different size constraints. Dimensions are snapped to
   // a multiple of 16 (see clampVideo) since most video models require it.
   width:    { min: 64,  max: 2048 },

@@ -957,7 +957,7 @@ def api_sequence():
     the client watches /api/progress/<job_id> for the result and can cancel it
     via /api/cancel/<job_id>, exactly like a ComfyUI generation. The returned
     prompts are then fed back through /api/generate one after another (the same
-    flow as /multi).
+    flow as /multi-prompt).
     """
     data = request.get_json(force=True)
     try:

@@ -436,11 +436,11 @@ export function makeCommandHandler(deps) {
       runInpaint:     deps.runInpaint,
     };
 
-    if (cmd === '/multi') {
-      const lines = raw.slice('/multi'.length).split('\n').map(l => l.trim()).filter(Boolean);
+    if (cmd === '/multi-prompt') {
+      const lines = raw.slice('/multi-prompt'.length).split('\n').map(l => l.trim()).filter(Boolean);
       if (!lines.length) {
         addMessage('user', escapeHtml(raw), null);
-        addMessage('bot', '<span style="color:#f87171">⚠ Paste line-separated prompts after <code>/multi</code> (use Shift+Enter between lines)</span>');
+        addMessage('bot', '<span style="color:#f87171">⚠ Paste line-separated prompts after <code>/multi-prompt</code> (use Shift+Enter between lines)</span>');
         return;
       }
       state.iterationsFromSequence = false;
@@ -992,8 +992,10 @@ export function makeCommandHandler(deps) {
           <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-prompt-reset</code> — clear that override so the face icons derive a prompt from each image again</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-session</code> — face-detail every image from this session, one after another</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/generation-steps &lt;n&gt;</code> — override the steps field in image generation workflows (e.g. <code>/generation-steps 20</code>); does not affect face-detail, upscale, image2image or image2video workflows; <code>/generation-steps reset</code> restores the workflow default</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/help</code> — show this message</div>
+          <div style="font-size:0.85rem;color:#94a3b8"><code>/image-settings</code> — set resolution &amp; generation steps for image generation
+            <div style="margin-top:2px;color:#475569;font-size:0.78rem">resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video</div>
+          </div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image [N]</code> — re-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement-reset</code> — clear all image2image replacements</div>
@@ -1009,11 +1011,8 @@ export function makeCommandHandler(deps) {
           <div style="font-size:0.85rem;color:#94a3b8"><code>/iterations &lt;n&gt;</code> — generate n images per prompt (default 1)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/jobs</code> — grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/multi</code> — generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)</div>
+          <div style="font-size:0.85rem;color:#94a3b8"><code>/multi-prompt</code> — generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/resolution &lt;WxH&gt;</code> — set output resolution for image generation, e.g. <code>/resolution 640x480</code> or <code>/resolution phone</code>
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem"><code>phone</code> (or <code>iphone</code>) measures this device's viewport &nbsp;·&nbsp; presets: ipad, hd, fhd, square &nbsp;·&nbsp; <code>/resolution flip</code> swaps W/H &nbsp;·&nbsp; <code>/resolution reset</code> restores workflow default</div>
-          </div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/review &lt;n&gt;</code> — grid of the last N images, oldest first</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/review-all</code> — grid of every image, oldest first (tap to view, trash to delete)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/review-session</code> — grid of this session's images</div>
@@ -1040,7 +1039,7 @@ export function makeCommandHandler(deps) {
           <div style="font-size:0.85rem;color:#94a3b8"><code>/upscale [N]</code> — run an upscaler workflow over the last N generated images (default 1, no prompt needed)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/video-sequence &lt;master prompt&gt;</code> — like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/video-settings</code> — set video duration, frames, fps, resolution &amp; audio for image2video
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/resolution</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound</div>
+            <div style="margin-top:2px;color:#475569;font-size:0.78rem">lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound</div>
           </div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow</code> — choose an image generation workflow template</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/workflow-iterate &lt;prompt&gt;</code> — tick several image generation workflows, then run the prompt against each one</div>
@@ -1630,76 +1629,179 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/resolution') {
-      const arg = (parts[1] || '').toLowerCase();
-      if (!arg) {
-        const cur = state.currentResolution
-          ? `<strong style="color:#a78bfa">${state.currentResolution.width}×${state.currentResolution.height}</strong>`
-          : 'workflow default';
-        addMessage('bot', `Current resolution: ${cur}<br>
-          Usage: <code>/resolution &lt;WxH&gt;</code> — e.g. <code>/resolution 640x480</code><br>
-          <code>16:9</code> — aspect ratio (shorter side 768px) &nbsp;·&nbsp; <code>phone</code> — measures this device's viewport (alias: <code>iphone</code>) &nbsp;·&nbsp; presets: ${Object.keys(RESOLUTION_PRESETS).map(k => `<code>${k}</code>`).join(', ')}<br>
-          <code>/resolution flip</code> — swap width and height &nbsp;·&nbsp; <code>/resolution reset</code> — restore workflow default`);
-        return;
-      }
-      if (arg === 'reset') {
-        state.currentResolution = null;
-        addMessage('bot', 'Resolution reset to workflow default.');
-        return;
-      }
-      if (arg === 'flip') {
-        if (!state.currentResolution) {
-          addMessage('bot', '<span style="color:#f87171">⚠ No resolution set — use <code>/resolution &lt;WxH&gt;</code> or a preset first.</span>');
-          return;
-        }
-        const { width: w, height: h } = state.currentResolution;
-        state.currentResolution = { width: h, height: w };
-        addMessage('bot', `Resolution flipped to <strong style="color:#a78bfa">${h}×${w}</strong>.`);
-        return;
-      }
-      if (arg === 'phone' || arg === 'iphone') {
+    if (cmd === '/image-settings') {
+      addMessage('user', escapeHtml(raw), raw);
+      const DEFAULT_RES = { width: 1365, height: 768 };
+      const work = {
+        width:  state.currentResolution ? state.currentResolution.width  : DEFAULT_RES.width,
+        height: state.currentResolution ? state.currentResolution.height : DEFAULT_RES.height,
+        useDefaultRes: !state.currentResolution,
+        steps: state.currentGenerationSteps !== null ? state.currentGenerationSteps : 20,
+        useDefaultSteps: state.currentGenerationSteps === null,
+      };
+
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
+
+      const resRow = document.createElement('div');
+      resRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;flex-wrap:wrap';
+      const resLbl = document.createElement('span');
+      resLbl.textContent = 'Resolution:';
+      resLbl.style.cssText = 'min-width:92px;color:#94a3b8';
+      const mkDim = key => {
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.style.cssText = 'width:62px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+        inp.addEventListener('change', () => {
+          const v = parseInt(inp.value, 10);
+          if (!isNaN(v)) work[key] = Math.min(8192, Math.max(64, v));
+          inp.value = String(work[key]);
+          work.useDefaultRes = false;
+          defaultResBox.checked = false;
+        });
+        return inp;
+      };
+      const widthInp  = mkDim('width');
+      const heightInp = mkDim('height');
+      const times = document.createElement('span');
+      times.textContent = '×';
+      times.style.color = '#475569';
+      const flipBtn = document.createElement('button');
+      flipBtn.textContent = '⇄';
+      flipBtn.className = 'sel-btn';
+      flipBtn.title = 'Swap width and height';
+      flipBtn.style.cssText = 'flex:none;width:30px;padding:2px 0;font-size:0.95rem;line-height:1';
+      const refreshRes = () => { widthInp.value = String(work.width); heightInp.value = String(work.height); };
+      flipBtn.addEventListener('click', () => {
+        [work.width, work.height] = [work.height, work.width];
+        work.useDefaultRes = false;
+        defaultResBox.checked = false;
+        refreshRes();
+      });
+      resRow.appendChild(resLbl); resRow.appendChild(widthInp); resRow.appendChild(times);
+      resRow.appendChild(heightInp); resRow.appendChild(flipBtn);
+      wrap.appendChild(resRow);
+
+      const presetRow = document.createElement('div');
+      presetRow.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.8rem;flex-wrap:wrap;padding-left:100px';
+      const setRes = (w, h) => {
+        work.width = w; work.height = h;
+        work.useDefaultRes = false;
+        defaultResBox.checked = false;
+        refreshRes();
+      };
+      const mkPreset = (label, onClick) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.className = 'sel-btn';
+        b.style.cssText = 'flex:none;padding:2px 8px;font-size:0.78rem;color:#94a3b8';
+        b.addEventListener('click', onClick);
+        return b;
+      };
+      Object.entries(RESOLUTION_PRESETS).forEach(([key, p]) => {
+        presetRow.appendChild(mkPreset(key, () => setRes(p.width, p.height)));
+      });
+      presetRow.appendChild(mkPreset('phone', () => {
         const dpr  = window.devicePixelRatio || 1;
         const snap = v => Math.round(v / 8) * 8;
         const physW = snap(window.screen.width  * dpr);
         const physH = snap(window.screen.height * dpr);
-        const w = Math.min(physW, physH), h = Math.max(physW, physH);
-        state.currentResolution = { width: w, height: h };
-        addMessage('bot', `Resolution set to <strong style="color:#a78bfa">${w}×${h}</strong> (this device's screen in portrait, ${dpr}× DPR).`);
-        return;
-      }
-      const preset = RESOLUTION_PRESETS[arg];
-      if (preset) {
-        state.currentResolution = { width: preset.width, height: preset.height };
-        addMessage('bot', `Resolution set to ${preset.label}.`);
-        return;
-      }
-      const ar = arg.match(/^(\d+):(\d+)$/);
-      if (ar) {
-        const a = parseInt(ar[1], 10), b = parseInt(ar[2], 10);
-        if (a < 1 || b < 1) {
-          addMessage('bot', '<span style="color:#f87171">⚠ Aspect ratio parts must be positive (e.g. <code>16:9</code>).</span>');
-          return;
-        }
-        const base = 768;
-        const w = a >= b ? Math.round(base * a / b) : base;
-        const h = a >= b ? base : Math.round(base * b / a);
-        state.currentResolution = { width: w, height: h };
-        addMessage('bot', `Resolution set to <strong style="color:#a78bfa">${w}×${h}</strong> (${a}:${b} aspect ratio).`);
-        return;
-      }
-      const m = arg.match(/^(\d+)[x×*](\d+)$/);
-      if (!m) {
-        addMessage('bot', `<span style="color:#f87171">⚠ Unrecognised resolution <code>${escapeHtml(arg)}</code>.<br>
-          Use <code>WxH</code> (e.g. <code>640x480</code>) or a preset: ${Object.keys(RESOLUTION_PRESETS).map(k => `<code>${k}</code>`).join(', ')}.</span>`);
-        return;
-      }
-      const w = parseInt(m[1], 10), h = parseInt(m[2], 10);
-      if (w < 64 || h < 64 || w > 8192 || h > 8192) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Resolution must be between 64 and 8192 in each dimension.</span>');
-        return;
-      }
-      state.currentResolution = { width: w, height: h };
-      addMessage('bot', `Resolution set to <strong style="color:#a78bfa">${w}×${h}</strong>.`);
+        setRes(Math.min(physW, physH), Math.max(physW, physH));
+      }));
+      wrap.appendChild(presetRow);
+
+      const defaultResRow = document.createElement('label');
+      defaultResRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:#cbd5e1;cursor:pointer;padding-left:100px';
+      const defaultResBox = document.createElement('input');
+      defaultResBox.type = 'checkbox';
+      defaultResBox.checked = work.useDefaultRes;
+      defaultResBox.style.cssText = 'width:14px;height:14px;accent-color:#f472b6;cursor:pointer';
+      defaultResBox.addEventListener('change', () => { work.useDefaultRes = defaultResBox.checked; });
+      const defaultResLbl = document.createElement('span');
+      defaultResLbl.innerHTML = 'Use workflow default <span style="color:#475569">— ignore the resolution above</span>';
+      defaultResRow.appendChild(defaultResBox); defaultResRow.appendChild(defaultResLbl);
+      wrap.appendChild(defaultResRow);
+
+      const stepsRow = document.createElement('div');
+      stepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;margin-top:4px';
+      const stepsLbl = document.createElement('span');
+      stepsLbl.textContent = 'Steps:';
+      stepsLbl.style.cssText = 'min-width:92px;color:#94a3b8';
+      const stepsSlider = document.createElement('input');
+      stepsSlider.type = 'range';
+      stepsSlider.min = '1'; stepsSlider.max = '100'; stepsSlider.step = '1';
+      stepsSlider.value = String(work.steps);
+      stepsSlider.style.cssText = 'width:130px;accent-color:#f472b6;cursor:pointer';
+      const stepsInp = document.createElement('input');
+      stepsInp.type = 'text';
+      stepsInp.value = String(work.steps);
+      stepsInp.style.cssText = 'width:52px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+      const onStepsEdit = v => {
+        const n = parseInt(v, 10);
+        if (isNaN(n)) { stepsInp.value = String(work.steps); return; }
+        work.steps = Math.min(200, Math.max(1, n));
+        stepsInp.value = String(work.steps);
+        stepsSlider.value = String(Math.min(100, work.steps));
+        work.useDefaultSteps = false;
+        defaultStepsBox.checked = false;
+      };
+      stepsSlider.addEventListener('input', () => onStepsEdit(stepsSlider.value));
+      stepsInp.addEventListener('change', () => onStepsEdit(stepsInp.value));
+      stepsRow.appendChild(stepsLbl); stepsRow.appendChild(stepsSlider); stepsRow.appendChild(stepsInp);
+      wrap.appendChild(stepsRow);
+
+      const defaultStepsRow = document.createElement('label');
+      defaultStepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:#cbd5e1;cursor:pointer;padding-left:100px';
+      const defaultStepsBox = document.createElement('input');
+      defaultStepsBox.type = 'checkbox';
+      defaultStepsBox.checked = work.useDefaultSteps;
+      defaultStepsBox.style.cssText = 'width:14px;height:14px;accent-color:#f472b6;cursor:pointer';
+      defaultStepsBox.addEventListener('change', () => { work.useDefaultSteps = defaultStepsBox.checked; });
+      const defaultStepsLbl = document.createElement('span');
+      defaultStepsLbl.innerHTML = 'Use workflow default <span style="color:#475569">— does not affect face-detail, upscale, image2image or image2video</span>';
+      defaultStepsRow.appendChild(defaultStepsBox); defaultStepsRow.appendChild(defaultStepsLbl);
+      wrap.appendChild(defaultStepsRow);
+
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
+      const applyBtn = document.createElement('button');
+      applyBtn.textContent = 'Apply';
+      applyBtn.className = 'sel-btn';
+      applyBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem';
+      const resetBtn = document.createElement('button');
+      resetBtn.textContent = 'Reset to defaults';
+      resetBtn.className = 'sel-btn';
+      resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+      applyBtn.addEventListener('click', () => {
+        state.currentResolution = work.useDefaultRes ? null : { width: work.width, height: work.height };
+        state.currentGenerationSteps = work.useDefaultSteps ? null : work.steps;
+        const resTxt = state.currentResolution
+          ? `<strong style="color:#a78bfa">${state.currentResolution.width}×${state.currentResolution.height}</strong>`
+          : '<span style="color:#475569">workflow default</span>';
+        const stepsTxt = state.currentGenerationSteps !== null
+          ? `<strong style="color:#a78bfa">${state.currentGenerationSteps}</strong>`
+          : '<span style="color:#475569">workflow default</span>';
+        addMessage('bot', `Image settings set — Resolution ${resTxt} · Steps ${stepsTxt}`);
+        scrollBottom();
+      });
+      resetBtn.addEventListener('click', () => {
+        work.width = DEFAULT_RES.width; work.height = DEFAULT_RES.height;
+        work.useDefaultRes = false;
+        work.steps = 20; work.useDefaultSteps = true;
+        defaultResBox.checked = false;
+        defaultStepsBox.checked = true;
+        stepsSlider.value = String(work.steps);
+        stepsInp.value = String(work.steps);
+        refreshRes();
+      });
+      btnRow.appendChild(applyBtn);
+      btnRow.appendChild(resetBtn);
+      wrap.appendChild(btnRow);
+
+      refreshRes();
+      const bubble = addMessage('bot', '<strong>Image settings</strong> <span style="color:#475569">(image generation)</span>').parentElement.querySelector('.bubble');
+      bubble.appendChild(wrap);
+      scrollBottom();
       return;
     }
 
@@ -1716,29 +1818,6 @@ export function makeCommandHandler(deps) {
       state.iterations = n;
       state.iterationsFromSequence = false;
       addMessage('bot', `Each prompt will now generate <strong style="color:#a78bfa">${state.iterations}</strong> image(s)${n > 1 ? ', one after another' : ''}.`);
-      return;
-    }
-
-    if (cmd === '/generation-steps') {
-      if (!parts[1] || parts[1].toLowerCase() === 'reset') {
-        if (parts[1] && parts[1].toLowerCase() === 'reset') {
-          state.currentGenerationSteps = null;
-          addMessage('bot', 'Generation steps reset to workflow default.');
-        } else {
-          const cur = state.currentGenerationSteps !== null
-            ? `<strong style="color:#a78bfa">${state.currentGenerationSteps}</strong>`
-            : 'workflow default';
-          addMessage('bot', `Current generation steps: ${cur}<br>Usage: <code>/generation-steps &lt;n&gt;</code> — e.g. <code>/generation-steps 20</code><br><code>/generation-steps reset</code> — restore workflow default`);
-        }
-        return;
-      }
-      const n = parseInt(parts[1], 10);
-      if (isNaN(n) || n < 1 || n > 200) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Steps must be a number between 1 and 200.</span>');
-        return;
-      }
-      state.currentGenerationSteps = n;
-      addMessage('bot', `Generation steps set to <strong style="color:#a78bfa">${n}</strong>. Applies to image generation workflows only, not face-detail, upscale, image2image or image2video.`);
       return;
     }
 
