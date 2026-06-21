@@ -725,7 +725,8 @@ header a:hover { color: #a78bfa; }
   position: relative; overflow: hidden; border-radius: 8px;
   touch-action: pan-y; user-select: none;
 }
-.ss-image {
+.ss-image,
+.ss-video {
   display: block; width: 100%; max-width: 480px;
   border-radius: 8px; margin-top: 0;
   -webkit-user-drag: none; pointer-events: none;
@@ -791,7 +792,8 @@ header a:hover { color: #a78bfa; }
   flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
   width: 100%;
 }
-.slideshow.ss-fs .ss-image {
+.slideshow.ss-fs .ss-image,
+.slideshow.ss-fs .ss-video {
   position: absolute; inset: 0;
   width: 100%; height: 100%; max-width: none; max-height: none;
   object-fit: contain;

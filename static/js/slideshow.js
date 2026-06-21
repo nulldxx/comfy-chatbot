@@ -1,6 +1,9 @@
 import { state } from './state.js';
 import { scrollBottom } from './dom.js';
 import { openLightbox, enterFauxFs, exitFauxFs } from './lightbox.js';
+import { isVideoUrl } from './utils.js';
+
+const IMAGE_HOLD_MS = 3000;
 
 export function createSlideshow(bubble, images) {
   let idx = 0;
@@ -9,7 +12,10 @@ export function createSlideshow(bubble, images) {
 
   bubble.innerHTML = `
     <div class="slideshow">
-      <div class="ss-img-wrap"><img class="ss-image" src="" alt="Generated image"></div>
+      <div class="ss-img-wrap">
+        <img class="ss-image" src="" alt="Generated image">
+        <video class="ss-video" playsinline preload="metadata" style="display:none"></video>
+      </div>
       <div class="ss-controls">
         <button class="ss-btn ss-prev">&#8249;</button>
         <button class="ss-btn ss-pause" title="Pause">&#9646;&#9646;</button>
@@ -22,10 +28,21 @@ export function createSlideshow(bubble, images) {
     </div>`;
 
   const img      = bubble.querySelector('.ss-image');
+  const video    = bubble.querySelector('.ss-video');
   const counter  = bubble.querySelector('.ss-counter');
   const bar      = bubble.querySelector('.ss-bar');
   const wrap     = bubble.querySelector('.ss-img-wrap');
   const pauseBtn = bubble.querySelector('.ss-pause');
+
+  // Tap-to-toggle works without native controls and avoids tangling with the
+  // wrap's click/swipe handlers below.
+  video.muted = true;
+  video.loop = false;
+  video.controls = false;
+
+  function setBarDuration(ms) {
+    bar.style.animationDuration = `${Math.max(50, ms)}ms`;
+  }
 
   function restartBar() {
     bar.style.animation = 'none';
@@ -33,15 +50,71 @@ export function createSlideshow(bubble, images) {
     bar.style.animation = paused ? 'none' : '';
   }
 
+  let videoMetaHandler = null;
+  let videoEndedHandler = null;
+
+  function detachVideoHandlers() {
+    if (videoMetaHandler) {
+      video.removeEventListener('loadedmetadata', videoMetaHandler);
+      videoMetaHandler = null;
+    }
+    if (videoEndedHandler) {
+      video.removeEventListener('ended', videoEndedHandler);
+      videoEndedHandler = null;
+    }
+  }
+
+  function stopVideo() {
+    detachVideoHandlers();
+    if (!video.paused) video.pause();
+    // Drop the src so the decoder releases the file and the element doesn't
+    // keep buffering off-screen while the next slide is showing.
+    video.removeAttribute('src');
+    video.load();
+  }
+
   function show(i) {
     idx = ((i % images.length) + images.length) % images.length;
-    img.src = images[idx];
+    const url = images[idx];
     counter.textContent = `${idx + 1} / ${images.length}`;
-    restartBar();
     clearTimeout(timer);
-    if (!paused) timer = setTimeout(() => show(idx + 1), 3000);
+
+    if (isVideoUrl(url)) {
+      detachVideoHandlers();
+      img.removeAttribute('src');
+      img.style.display = 'none';
+      video.style.display = '';
+      video.src = url;
+      // Start the bar with a placeholder duration; refine once we know the
+      // clip length so the bar tracks playback.
+      setBarDuration(IMAGE_HOLD_MS);
+      restartBar();
+      videoMetaHandler = () => {
+        if (Number.isFinite(video.duration) && video.duration > 0) {
+          setBarDuration(video.duration * 1000);
+          restartBar();
+        }
+      };
+      videoEndedHandler = () => { if (!paused) show(idx + 1); };
+      video.addEventListener('loadedmetadata', videoMetaHandler);
+      video.addEventListener('ended', videoEndedHandler);
+      if (!paused) {
+        const p = video.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      }
+    } else {
+      stopVideo();
+      video.style.display = 'none';
+      img.style.display = '';
+      img.src = url;
+      setBarDuration(IMAGE_HOLD_MS);
+      restartBar();
+      if (!paused) timer = setTimeout(() => show(idx + 1), IMAGE_HOLD_MS);
+    }
     scrollBottom();
   }
+
+  function currentUrl() { return images[idx]; }
 
   function navigate(dir) { show(idx + dir); }
 
@@ -56,6 +129,7 @@ export function createSlideshow(bubble, images) {
         images.splice(idx, 1);
         if (!images.length) {
           clearTimeout(timer);
+          stopVideo();
           if (isFsActive()) fsBtn.click();
           bubble.innerHTML = 'All images deleted.';
           if (state.activeSlideshowCtrl === ctrl) state.activeSlideshowCtrl = null;
@@ -66,7 +140,7 @@ export function createSlideshow(bubble, images) {
       .catch(err => {
         counter.textContent = '⚠ ' + err.message;
         clearTimeout(timer);
-        if (!paused) timer = setTimeout(() => show(idx + 1), 3000);
+        if (!paused) timer = setTimeout(() => show(idx + 1), IMAGE_HOLD_MS);
       })
       .finally(() => { deleting = false; });
   }
@@ -75,12 +149,19 @@ export function createSlideshow(bubble, images) {
     paused = !paused;
     pauseBtn.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
     pauseBtn.title     = paused ? 'Play' : 'Pause';
+    const showingVideo = isVideoUrl(currentUrl());
     if (paused) {
       clearTimeout(timer);
       bar.style.animationPlayState = 'paused';
+      if (showingVideo && !video.paused) video.pause();
     } else {
       bar.style.animationPlayState = 'running';
-      timer = setTimeout(() => show(idx + 1), 3000);
+      if (showingVideo) {
+        const p = video.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } else {
+        timer = setTimeout(() => show(idx + 1), IMAGE_HOLD_MS);
+      }
     }
   }
 
@@ -133,11 +214,27 @@ export function createSlideshow(bubble, images) {
     const dy = e.changedTouches[0].clientY - touchStartY;
     suppressClick = true;
     if (Math.abs(dx) > 40) { navigate(dx < 0 ? 1 : -1); }
-    else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) { openLightbox(img.src); }
+    else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      const url = currentUrl();
+      if (!isVideoUrl(url)) openLightbox(url);
+    }
   });
   wrap.addEventListener('click', () => {
     if (suppressClick) { suppressClick = false; return; }
-    openLightbox(img.src);
+    const url = currentUrl();
+    if (isVideoUrl(url)) {
+      // Tap a video to toggle play/pause without leaving the slideshow — the
+      // lightbox can't render videos, so opening it would just show a broken
+      // image icon.
+      if (video.paused) {
+        const p = video.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } else {
+        video.pause();
+      }
+    } else {
+      openLightbox(url);
+    }
   });
 
   show(0);
