@@ -175,6 +175,31 @@ export function tryExpandAlias() {
 export function getAcState() { return { acFocused, acMode, acMatches }; }
 export function setAcFocused(v) { acFocused = v; }
 
+// Tab completion: if an item is focused select it; otherwise complete to the
+// longest common prefix of all matches. Only add the args suffix (e.g. a
+// trailing space) when the prefix uniquely identifies a single command.
+export function tabCompleteSlashAc() {
+  if (acMode === 'lora' || acFocused >= 0) {
+    selectSlashAcItem(acFocused >= 0 ? acFocused : 0);
+    return;
+  }
+  if (acMatches.length === 1) {
+    selectSlashAcItem(0);
+    return;
+  }
+  // Multiple matches: fill in the longest common prefix, no args suffix.
+  const cmds = acMatches.map(c => c.cmd);
+  let prefix = cmds[0];
+  for (let i = 1; i < cmds.length; i++) {
+    while (!cmds[i].startsWith(prefix)) prefix = prefix.slice(0, -1);
+  }
+  inputEl.value = prefix;
+  inputEl.focus();
+  updateSlashAc();
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
+}
+
 slashAcEl.addEventListener('click', e => {
   const item = e.target.closest('.slash-ac-item');
   if (item) selectSlashAcItem(parseInt(item.dataset.idx, 10));

@@ -12,7 +12,7 @@ import {
 import { openLightbox, closeLightbox } from './lightbox.js';
 import {
   updateSlashAc, hideSlashAc, selectSlashAcItem, tryExpandAlias,
-  renderSlashAc, getAcState, setAcFocused,
+  renderSlashAc, getAcState, setAcFocused, tabCompleteSlashAc,
 } from './autocomplete.js';
 import { openMaskEditor, buildComparisonSlider } from './editors.js';
 import { makeCommandHandler } from './commands.js';
@@ -77,7 +77,7 @@ inputEl.addEventListener('keydown', e => {
     if (e.key === 'Escape') { e.preventDefault(); hideSlashAc(); return; }
     if (e.key === 'Tab') {
       e.preventDefault();
-      selectSlashAcItem(acFocused >= 0 ? acFocused : 0);
+      tabCompleteSlashAc();
       return;
     }
     if (e.key === 'ArrowDown') {
