@@ -1,6 +1,5 @@
 import base64
 import json
-import queue
 import shutil
 import subprocess
 import threading
@@ -1062,16 +1061,36 @@ def api_progress(job_id):
     if not job:
         return jsonify({"error": "Job not found"}), 404
 
+    channel = job["channel"]
+
     def event_stream():
-        q = job["queue"]
+        # Replay everything emitted so far. A returning client (browser dropped
+        # the original SSE, phone lost signal, etc.) gets the full history
+        # including the terminal done/error/cancelled event and its asset URLs.
+        cached = channel.snapshot()
+        for msg in cached:
+            yield f"data: {msg}\n\n"
+        idx = len(cached)
+
+        # If the job already finished before we arrived, stop after replay.
+        with jobs_lock:
+            status = (jobs.get(job_id) or {}).get("status")
+        if status in ("done", "error", "cancelled"):
+            return
+
+        # Stream further events, sending a keep-alive ping every 25s.
         while True:
-            try:
-                msg = q.get(timeout=25)
-                yield f"data: {msg}\n\n"
-                parsed = json.loads(msg)
-                if parsed.get("type") in ("done", "error", "cancelled"):
+            new_events, closed = channel.next_after(idx, timeout=25)
+            if new_events:
+                for msg in new_events:
+                    yield f"data: {msg}\n\n"
+                idx += len(new_events)
+                last = json.loads(new_events[-1])
+                if last.get("type") in ("done", "error", "cancelled"):
                     break
-            except queue.Empty:
+            else:
+                if closed:
+                    break
                 yield f"data: {json.dumps({'type': 'ping'})}\n\n"
 
     return Response(
@@ -1079,6 +1098,51 @@ def api_progress(job_id):
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/api/jobs")
+@login_required
+def api_jobs():
+    """Return the last 10 ComfyUI generation jobs the server is/was running.
+
+    Grok prompt-sequence jobs (kind == "sequence") are excluded — they're not
+    long-running enough to need a recovery UI and the user didn't ask for them.
+    Newest first.
+    """
+    with jobs_lock:
+        items = []
+        for job_id, rec in jobs.items():
+            if rec.get("kind") not in ("image", "video"):
+                continue
+            items.append({
+                "job_id": job_id,
+                "status": rec.get("status"),
+                "kind": rec.get("kind"),
+                "workflow_name": rec.get("workflow_name"),
+                "summary": rec.get("summary"),
+                "prompt": rec.get("prompt"),
+                "started_at": rec.get("started_at"),
+                "finished_at": rec.get("finished_at"),
+                "assets": list(rec.get("assets") or rec.get("images") or []),
+                "error": rec.get("error"),
+                "server": rec.get("server"),
+            })
+    items.sort(key=lambda r: r.get("started_at") or 0, reverse=True)
+    return jsonify(items[:10])
+
+
+@app.route("/api/jobs/<job_id>", methods=["DELETE"])
+@login_required
+def api_dismiss_job(job_id):
+    """Remove a finished job from the tracked list. Does not delete its asset."""
+    with jobs_lock:
+        rec = jobs.get(job_id)
+        if not rec:
+            return jsonify({"error": "Job not found"}), 404
+        if rec.get("status") not in ("done", "error", "cancelled"):
+            return jsonify({"error": "Job is still running"}), 409
+        jobs.pop(job_id, None)
+    return jsonify({"dismissed": job_id})
 
 
 @app.route("/api/purge", methods=["POST"])

@@ -41,6 +41,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/denoise', desc: 'set denoise defaults for face-detail, image2image, inpainting, upscale', args: '' },
   { cmd: '/generation-steps', desc: 'override steps for generation workflows (e.g. 20)', args: ' ' },
   { cmd: '/iterations', desc: 'set images generated per prompt',    args: ' ' },
+  { cmd: '/jobs',       desc: 'show the last 10 server-side generation jobs (status, cancel, pull asset into chat)', args: '' },
   { cmd: '/composite-videos-session', desc: 'drag to reorder this session\'s videos, then ✓ to join them into one', args: '' },
   { cmd: '/lora',       desc: 'fuzzy-find a LoRA to insert',        args: ' ' },
   { cmd: '/multi',      desc: 'generate images for multiple prompts (one per line)', args: '\n' },

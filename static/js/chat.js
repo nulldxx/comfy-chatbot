@@ -1085,4 +1085,5 @@ const { handleSlashCommand } = makeCommandHandler({
   updateHeaderStatus,
   compositeVideos,
   runSequenceJob,
+  appendChatImage,
 });

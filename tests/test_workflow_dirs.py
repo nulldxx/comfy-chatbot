@@ -1,6 +1,5 @@
 import os
 import sys
-import queue
 import threading
 import tempfile
 import unittest
@@ -34,11 +33,19 @@ class TestRunGenerationTraversalGuard(unittest.TestCase):
         job_id = "test-job"
         generation_service.jobs[job_id] = {
             "status": "pending",
-            "queue": queue.Queue(),
+            "channel": generation_service._JobChannel(),
             "images": [],
+            "assets": [],
             "cancel": threading.Event(),
             "server": "127.0.0.1:8000",
             "prompt_id": None,
+            "kind": "image",
+            "workflow_name": workflow_name,
+            "prompt": "a cat",
+            "summary": "test",
+            "started_at": 0.0,
+            "finished_at": None,
+            "error": None,
         }
         generation_service.run_generation(
             job_id, "a cat", [], "127.0.0.1:8000", "unix", workflow_name,

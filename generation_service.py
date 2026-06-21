@@ -1,8 +1,8 @@
 import os
 import re
 import json
+import time
 import uuid
-import queue
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -20,9 +20,132 @@ from workflow import (
     apply_resolution, apply_steps, apply_denoise,
 )
 
-# In-memory job tracking
+# In-memory job tracking. Each job record carries:
+#   status:          "pending" | "running" | "done" | "error" | "cancelled"
+#   kind:            "image" | "video" | "sequence"
+#   workflow_name:   filename of the workflow template (None for sequence jobs)
+#   prompt:          user prompt (empty string for upscale/sequence)
+#   summary:         short human label for /jobs cards
+#   server:          ComfyUI server address (None for sequence jobs)
+#   prompt_id:       ComfyUI prompt id once submitted (None otherwise)
+#   started_at:      unix time when the job was created
+#   finished_at:     unix time of terminal status (None while running)
+#   images / assets: list of /images/... URLs produced (assets is the canonical name)
+#   error:           string when status == "error"
+#   cancel:          threading.Event the client can set via /api/cancel
+#   events:          append-only list of JSON-encoded SSE messages (replay log)
+#   cond:            threading.Condition used to notify SSE watchers of new events
+#   session:         requests.Session for in-flight Grok calls (sequence jobs only)
 jobs: dict = {}
 jobs_lock = threading.Lock()
+
+# Cap how long a single ComfyUI poll loop will wait for completion. Long video
+# renders can easily exceed 10 minutes, so we use 4 hours instead of the old
+# 600s cap — cancellation via cancel_event keeps the loop responsive regardless.
+COMFY_POLL_TIMEOUT_SECONDS = 4 * 60 * 60
+
+# Eviction bounds for the jobs dict (see _evict_old_jobs). Terminal jobs older
+# than the keep window are dropped; we always keep up to MAX_TERMINAL_JOBS most
+# recent terminal jobs even if older than the window. Non-terminal jobs are
+# never evicted automatically.
+MAX_TERMINAL_JOBS = 50
+TERMINAL_JOB_KEEP_SECONDS = 24 * 60 * 60
+TERMINAL_STATUSES = ("done", "error", "cancelled")
+
+
+class _JobChannel:
+    """Append-only event log with a Condition for reattachable SSE streams.
+
+    Replaces the per-job queue.Queue. send() appends the encoded event to the
+    log and notifies all waiters; a new SSE connection can replay every event
+    emitted so far and then block on next_after() for further events. This lets
+    a returning client (whose browser dropped the original SSE) still see the
+    terminal done/error/cancelled message — and the resulting asset URLs.
+    """
+
+    def __init__(self):
+        self.events: list[str] = []
+        self.cond = threading.Condition()
+        self.closed = False
+
+    def send(self, encoded: str):
+        with self.cond:
+            self.events.append(encoded)
+            self.cond.notify_all()
+
+    def close(self):
+        with self.cond:
+            self.closed = True
+            self.cond.notify_all()
+
+    def snapshot(self) -> list[str]:
+        with self.cond:
+            return list(self.events)
+
+    def next_after(self, index: int, timeout: float):
+        """Return (new_events_list, closed_flag) for events past ``index``.
+
+        Blocks up to ``timeout`` seconds for at least one new event. Returns an
+        empty list and the current closed flag on timeout — the caller treats
+        that as a keep-alive opportunity.
+        """
+        with self.cond:
+            if len(self.events) <= index and not self.closed:
+                self.cond.wait(timeout=timeout)
+            return list(self.events[index:]), self.closed
+
+
+def _evict_old_jobs_locked():
+    """Trim the jobs dict. Caller must hold jobs_lock.
+
+    - Drops terminal jobs older than TERMINAL_JOB_KEEP_SECONDS.
+    - If more than MAX_TERMINAL_JOBS terminal jobs remain, drops the oldest
+      ones until the cap is met.
+    - Never touches non-terminal jobs (pending/running) — they're live.
+    """
+    now = time.time()
+    terminal = [
+        (jid, rec) for jid, rec in jobs.items()
+        if rec.get("status") in TERMINAL_STATUSES
+    ]
+    for jid, rec in terminal:
+        finished = rec.get("finished_at") or rec.get("started_at") or now
+        if now - finished > TERMINAL_JOB_KEEP_SECONDS:
+            jobs.pop(jid, None)
+
+    terminal = [
+        (jid, rec) for jid, rec in jobs.items()
+        if rec.get("status") in TERMINAL_STATUSES
+    ]
+    if len(terminal) > MAX_TERMINAL_JOBS:
+        terminal.sort(key=lambda kv: kv[1].get("finished_at") or kv[1].get("started_at") or 0)
+        for jid, _ in terminal[: len(terminal) - MAX_TERMINAL_JOBS]:
+            jobs.pop(jid, None)
+
+
+def _mark_terminal_locked(job_id: str, status: str, **extra):
+    """Set terminal status + finished_at on a job. Caller must hold jobs_lock."""
+    rec = jobs.get(job_id)
+    if not rec:
+        return
+    rec["status"] = status
+    rec["finished_at"] = time.time()
+    for k, v in extra.items():
+        rec[k] = v
+
+
+def _build_summary(workflow_name: str | None, prompt: str, kind: str) -> str:
+    """Short human-facing label for /jobs cards. Workflow basename + prompt prefix."""
+    base = ""
+    if workflow_name:
+        base = Path(workflow_name).stem
+    prompt_clean = (prompt or "").strip().replace("\n", " ")
+    if len(prompt_clean) > 60:
+        prompt_clean = prompt_clean[:57] + "…"
+    label = base or kind
+    if prompt_clean:
+        return f"{label} · {prompt_clean}"
+    return label
 
 # Auto-purge: free GPU memory on a ComfyUI server after a period of idleness.
 # Runs server-side so it fires even if the user closes their browser.
@@ -91,15 +214,16 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
                    cleanup_input_image=False, duration=None, frames=None, fps=None,
                    video_width=None, video_height=None):
     with jobs_lock:
-        q = jobs[job_id]["queue"]
+        channel = jobs[job_id]["channel"]
         cancel_event = jobs[job_id]["cancel"]
+        jobs[job_id]["status"] = "running"
 
     def send(msg_type, **kwargs):
-        q.put(json.dumps({"type": msg_type, **kwargs}))
+        channel.send(json.dumps({"type": msg_type, **kwargs}))
 
     def progress(msg_str):
         if msg_str == ".":
-            q.put(json.dumps({"type": "tick"}))
+            channel.send(json.dumps({"type": "tick"}))
         else:
             send("progress", message=msg_str)
 
@@ -244,7 +368,7 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
             jobs[job_id]["prompt_id"] = prompt_id
         send("progress", message=f"Queued (ID: {prompt_id[:8]}…) — generating")
 
-        prompt_data = server.poll_status(prompt_id, 600, progress, cancel_event=cancel_event)
+        prompt_data = server.poll_status(prompt_id, COMFY_POLL_TIMEOUT_SECONDS, progress, cancel_event=cancel_event)
         send("progress", message="Downloading images...")
 
         images = server.get_output_images(prompt_data)
@@ -283,39 +407,56 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
                         pass
 
         with jobs_lock:
-            jobs[job_id]["status"] = "done"
-            jobs[job_id]["images"] = image_urls
+            _mark_terminal_locked(job_id, "done", images=image_urls, assets=image_urls)
 
         send("done", images=image_urls)
 
     except JobCancelled:
         with jobs_lock:
-            jobs[job_id]["status"] = "cancelled"
+            _mark_terminal_locked(job_id, "cancelled")
         send("cancelled", message="Cancelled")
     except Exception as e:
         with jobs_lock:
-            jobs[job_id]["status"] = "error"
+            _mark_terminal_locked(job_id, "error", error=str(e))
         send("error", message=str(e))
     finally:
+        channel.close()
         purge_generation_finished(server_address)
 
 
 def start_generation_job(prompt, loras, server_address, server_os, workflow_name, **kwargs):
     """Create a tracked job and spawn its generation thread; return the job_id.
 
-    Extra kwargs (width/height, workflow_dir, input_image) are forwarded to
-    run_generation.
+    Extra kwargs (width/height, workflow_dir, input_image, etc.) are forwarded to
+    run_generation. We also use them to classify the job (image vs video) for the
+    /jobs view: presence of any video setting (duration/frames/fps/video_width/
+    video_height) means the workflow is an image2video run.
     """
     job_id = str(uuid.uuid4())
+    is_video = any(
+        kwargs.get(k) is not None
+        for k in ("duration", "frames", "fps", "video_width", "video_height")
+    )
+    kind = "video" if is_video else "image"
+    summary = _build_summary(workflow_name, prompt, kind)
     with jobs_lock:
         jobs[job_id] = {
             "status": "pending",
-            "queue": queue.Queue(),
+            "channel": _JobChannel(),
             "images": [],
+            "assets": [],
             "cancel": threading.Event(),
             "server": server_address,
             "prompt_id": None,
+            "kind": kind,
+            "workflow_name": workflow_name,
+            "prompt": prompt,
+            "summary": summary,
+            "started_at": time.time(),
+            "finished_at": None,
+            "error": None,
         }
+        _evict_old_jobs_locked()
 
     t = threading.Thread(
         target=run_generation,
@@ -359,12 +500,13 @@ def case_preserving_replace(text, src, dst):
 
 def run_sequence(job_id, master, count, replacements, video):
     with jobs_lock:
-        q = jobs[job_id]["queue"]
+        channel = jobs[job_id]["channel"]
         cancel_event = jobs[job_id]["cancel"]
         session = jobs[job_id]["session"]
+        jobs[job_id]["status"] = "running"
 
     def send(msg_type, **kwargs):
-        q.put(json.dumps({"type": msg_type, **kwargs}))
+        channel.send(json.dumps({"type": msg_type, **kwargs}))
 
     try:
         if cancel_event.is_set():
@@ -398,29 +540,30 @@ def run_sequence(job_id, master, count, replacements, video):
                 out.append(p)
 
         with jobs_lock:
-            jobs[job_id]["status"] = "done"
+            _mark_terminal_locked(job_id, "done")
         send("done", prompts=out, video=video)
 
     except JobCancelled:
         with jobs_lock:
-            jobs[job_id]["status"] = "cancelled"
+            _mark_terminal_locked(job_id, "cancelled")
         send("cancelled", message="Cancelled")
     except GrokError as e:
         # A cancel closes the session, which surfaces as a GrokError from the
         # aborted request — report it as a cancellation, not an error.
         if cancel_event.is_set():
             with jobs_lock:
-                jobs[job_id]["status"] = "cancelled"
+                _mark_terminal_locked(job_id, "cancelled")
             send("cancelled", message="Cancelled")
         else:
             with jobs_lock:
-                jobs[job_id]["status"] = "error"
+                _mark_terminal_locked(job_id, "error", error=str(e))
             send("error", message=str(e))
     except Exception as e:
         with jobs_lock:
-            jobs[job_id]["status"] = "error"
+            _mark_terminal_locked(job_id, "error", error=str(e))
         send("error", message=str(e))
     finally:
+        channel.close()
         try:
             session.close()
         except Exception:
@@ -430,16 +573,26 @@ def run_sequence(job_id, master, count, replacements, video):
 def start_sequence_job(master, count, replacements, video):
     """Create a tracked Grok prompt-sequence job; return its job_id."""
     job_id = str(uuid.uuid4())
+    summary = _build_summary(None, master, "video-sequence" if video else "sequence")
     with jobs_lock:
         jobs[job_id] = {
             "status": "pending",
-            "queue": queue.Queue(),
+            "channel": _JobChannel(),
             "images": [],
+            "assets": [],
             "cancel": threading.Event(),
             "server": None,
             "prompt_id": None,
             "session": requests.Session(),
+            "kind": "sequence",
+            "workflow_name": None,
+            "prompt": master,
+            "summary": summary,
+            "started_at": time.time(),
+            "finished_at": None,
+            "error": None,
         }
+        _evict_old_jobs_locked()
 
     t = threading.Thread(
         target=run_sequence,

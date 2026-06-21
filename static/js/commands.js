@@ -270,6 +270,182 @@ function doUpload(file, bubble) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// /jobs — server-side generation job tracker
+// ---------------------------------------------------------------------------
+//
+// Generation threads run independently of the SSE connection that streams their
+// progress; if the browser disconnects (phone loses signal, tab closed) the
+// thread keeps running and writes the asset into IMAGES_DIR, but the user has
+// no obvious way to find it later. /jobs hits GET /api/jobs (last 10 ComfyUI
+// jobs newest-first) and renders a card for each with status, asset preview,
+// and buttons to cancel/dismiss the job or pull a completed asset back into
+// the current chat as a normal bot message.
+
+const JOB_STATUS_LABELS = {
+  pending:   { label: 'Queued',      color: '#94a3b8' },
+  running:   { label: 'In progress', color: '#38bdf8' },
+  done:      { label: 'Done',        color: '#22c55e' },
+  error:     { label: 'Failed',      color: '#f87171' },
+  cancelled: { label: 'Cancelled',   color: '#94a3b8' },
+};
+
+function _fmtRelative(ts) {
+  if (!ts) return '';
+  const diff = (Date.now() / 1000) - ts;
+  if (diff < 60) return `${Math.max(0, Math.round(diff))}s ago`;
+  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+  return `${Math.round(diff / 86400)}d ago`;
+}
+
+function _isJobActive(job) {
+  return job.status === 'pending' || job.status === 'running';
+}
+
+function renderJobsGrid(bubble, deps) {
+  let refreshTimer = null;
+
+  function stopAutoRefresh() {
+    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+  }
+
+  function scheduleAutoRefresh(jobs) {
+    stopAutoRefresh();
+    if (jobs.some(_isJobActive)) {
+      refreshTimer = setTimeout(load, 5000);
+    }
+  }
+
+  function load() {
+    fetch('/api/jobs')
+      .then(r => r.json())
+      .then(jobs => {
+        if (!Array.isArray(jobs)) throw new Error('Unexpected response');
+        if (!jobs.length) {
+          bubble.innerHTML = 'No tracked jobs — generate something first!';
+          return;
+        }
+        bubble.innerHTML = '';
+        const grid = document.createElement('div');
+        grid.className = 'jobs-grid';
+        jobs.forEach(job => grid.appendChild(buildJobCard(job)));
+        bubble.appendChild(grid);
+        scheduleAutoRefresh(jobs);
+        scrollBottom();
+      })
+      .catch(err => {
+        stopAutoRefresh();
+        bubble.innerHTML = `<span style="color:#f87171">⚠ Failed to load jobs: ${escapeHtml(err.message || err)}</span>`;
+      });
+  }
+
+  function buildJobCard(job) {
+    const card = document.createElement('div');
+    card.className = 'job-card';
+
+    const statusInfo = JOB_STATUS_LABELS[job.status] || { label: job.status, color: '#94a3b8' };
+    const headerHtml = `
+      <div class="job-card-header">
+        <span class="job-status-badge" style="background:${statusInfo.color}1f;color:${statusInfo.color};border:1px solid ${statusInfo.color}55">
+          ${escapeHtml(statusInfo.label)}
+        </span>
+        <span class="job-card-kind" style="color:#94a3b8;font-size:0.78rem">${escapeHtml(job.kind || '')}</span>
+        <span class="job-card-time" style="color:#475569;font-size:0.75rem;margin-left:auto">${escapeHtml(_fmtRelative(job.started_at))}</span>
+      </div>
+    `;
+
+    let previewHtml = '';
+    const firstAsset = (job.assets || [])[0];
+    if (firstAsset) {
+      if (isVideoUrl(firstAsset)) {
+        previewHtml = `<video class="job-card-preview" src="${escapeHtml(firstAsset)}" muted preload="metadata" playsinline></video>`;
+      } else {
+        previewHtml = `<img class="job-card-preview" src="${escapeHtml(firstAsset)}" alt="">`;
+      }
+    } else {
+      previewHtml = `<div class="job-card-preview job-card-preview-empty"><div class="dots"><span></span><span></span><span></span></div></div>`;
+    }
+
+    const promptText = (job.summary || job.prompt || '(no prompt)');
+    const truncated = promptText.length > 120 ? promptText.slice(0, 117) + '…' : promptText;
+    const assetsHtml = (job.assets || []).length
+      ? `<div class="job-card-assets">${(job.assets || []).map(a => `<code>${escapeHtml(a)}</code>`).join('<br>')}</div>`
+      : '';
+    const errorHtml = job.error
+      ? `<div class="job-card-error" style="color:#f87171;font-size:0.78rem;margin-top:4px">⚠ ${escapeHtml(job.error)}</div>`
+      : '';
+
+    card.innerHTML = `
+      ${headerHtml}
+      ${previewHtml}
+      <div class="job-card-summary" style="font-size:0.82rem;color:#cbd5e1;margin-top:6px">${escapeHtml(truncated)}</div>
+      ${assetsHtml}
+      ${errorHtml}
+      <div class="job-card-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
+    `;
+
+    const actions = card.querySelector('.job-card-actions');
+
+    if (_isJobActive(job)) {
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'sel-btn';
+      cancelBtn.textContent = '✕ Cancel';
+      cancelBtn.addEventListener('click', () => {
+        cancelBtn.disabled = true;
+        fetch('/api/cancel/' + encodeURIComponent(job.job_id), { method: 'POST' })
+          .finally(() => setTimeout(load, 500));
+      });
+      actions.appendChild(cancelBtn);
+    } else {
+      const dismissBtn = document.createElement('button');
+      dismissBtn.className = 'sel-btn';
+      dismissBtn.textContent = '✕ Dismiss';
+      dismissBtn.title = 'Remove from this list (does not delete the asset)';
+      dismissBtn.addEventListener('click', () => {
+        dismissBtn.disabled = true;
+        fetch('/api/jobs/' + encodeURIComponent(job.job_id), { method: 'DELETE' })
+          .finally(load);
+      });
+      actions.appendChild(dismissBtn);
+    }
+
+    if (job.status === 'done' && (job.assets || []).length) {
+      const pullBtn = document.createElement('button');
+      pullBtn.className = 'sel-btn';
+      pullBtn.textContent = '⬇ Pull into chat';
+      pullBtn.title = 'Insert the asset(s) as a new bot message in this chat';
+      pullBtn.addEventListener('click', () => {
+        pullBtn.disabled = true;
+        pullAssetsIntoChat(job, deps);
+      });
+      actions.appendChild(pullBtn);
+    }
+
+    return card;
+  }
+
+  function pullAssetsIntoChat(job, deps) {
+    const promptLine = job.prompt
+      ? `<div style="color:#94a3b8;font-size:0.85rem;margin-bottom:6px">From job: <code>${escapeHtml(job.summary || job.prompt)}</code></div>`
+      : '';
+    const wrap = addMessage('bot', promptLine || '<div style="color:#94a3b8;font-size:0.85rem;margin-bottom:6px">Pulled in from /jobs</div>');
+    (job.assets || []).forEach(url => {
+      if (job.prompt) state.imagePrompts[url] = job.prompt;
+      // Avoid double-adding if the user is pulling the same asset twice.
+      if (state.sessionImages.indexOf(url) === -1) {
+        state.sessionImages.push(url);
+      }
+      if (typeof deps.appendChatImage === 'function') {
+        deps.appendChatImage(wrap, url);
+      }
+    });
+    scrollBottom();
+  }
+
+  load();
+}
+
 export function makeCommandHandler(deps) {
   function handleSlashCommand(raw) {
     const parts = raw.trim().split(/\s+/);
@@ -881,6 +1057,7 @@ export function makeCommandHandler(deps) {
           <div style="font-size:0.85rem;color:#94a3b8"><code>/review-all</code> — grid of every image, oldest first (tap to view, trash to delete)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/review-today</code> — grid of today's images, oldest first</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/review-session</code> — grid of this session's images</div>
+          <div style="font-size:0.85rem;color:#94a3b8"><code>/jobs</code> — grid of the last 10 server-side generation jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/composite-videos-session</code> — drag this session's videos into order, then press ✓ to join them into one clip</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow &lt;n&gt;</code> — browse the last N images, oldest first</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/slideshow-all</code> — browse every image, oldest first</div>
@@ -1124,6 +1301,12 @@ export function makeCommandHandler(deps) {
           renderReviewGrid(bubble, images.slice().reverse(), gridRunners);
         })
         .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
+      return;
+    }
+
+    if (cmd === '/jobs') {
+      const bubble = addMessage('bot', '<div class="status-text">Loading jobs…</div>');
+      renderJobsGrid(bubble, deps);
       return;
     }
 
