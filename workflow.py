@@ -85,14 +85,6 @@ def apply_steps(workflow, steps):
             inputs["steps"] = steps
 
 
-def apply_denoise(workflow, denoise):
-    """Set denoise on every KSampler node that exposes it as an input."""
-    for node in workflow.values():
-        inputs = node.get("inputs", {})
-        if "denoise" in inputs:
-            inputs["denoise"] = float(denoise)
-
-
 def fill_placeholders_for_validation(text):
     """Replace template tokens with dummy values so the file parses as JSON."""
     text = re.sub(r"<LORA_\d+_STRENGTH>", "1.0", text)   # unquoted numeric slots

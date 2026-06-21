@@ -17,7 +17,7 @@ from workflow import (
     LORA_PLACEHOLDER_RE,
     apply_placeholders, find_placeholders, fill_lora_sentinels,
     strip_lora_nodes, randomize_seeds, lora_path_for_os,
-    apply_resolution, apply_steps, apply_denoise,
+    apply_resolution, apply_steps,
 )
 
 # In-memory job tracking. Each job record carries:
@@ -249,8 +249,6 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if loras:
             names = ", ".join(f"{n} ({s})" for n, s in loras)
             send("progress", message=f"LoRAs: {names}")
-        # Fill the <DENOISE> placeholder for templates that use it. apply_denoise()
-        # below additionally covers templates with a literal denoise value.
         if denoise is not None:
             mapping["DENOISE"] = denoise
 
@@ -351,10 +349,6 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         if steps is not None:
             apply_steps(workflow, steps)
             send("progress", message=f"Steps set to {steps}")
-
-        if denoise is not None:
-            apply_denoise(workflow, denoise)
-            send("progress", message=f"Denoise set to {denoise}")
 
         if randomize_seeds(workflow):
             send("progress", message="Randomized seed values")

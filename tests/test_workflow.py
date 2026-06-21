@@ -7,7 +7,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from workflow import (
     apply_placeholders,
-    apply_denoise,
     apply_resolution,
     apply_steps,
     fill_lora_sentinels,
@@ -192,23 +191,6 @@ class TestApplySteps(unittest.TestCase):
         wf = {"1": {"inputs": {"other": 5}}}
         apply_steps(wf, 30)
         self.assertNotIn("steps", wf["1"]["inputs"])
-
-
-class TestApplyDenoise(unittest.TestCase):
-    def test_sets_denoise(self):
-        wf = {"1": {"inputs": {"denoise": 1.0}}}
-        apply_denoise(wf, "0.75")
-        self.assertAlmostEqual(wf["1"]["inputs"]["denoise"], 0.75)
-
-    def test_converts_string_to_float(self):
-        wf = {"1": {"inputs": {"denoise": 1.0}}}
-        apply_denoise(wf, "0.5")
-        self.assertIsInstance(wf["1"]["inputs"]["denoise"], float)
-
-    def test_skips_nodes_without_denoise(self):
-        wf = {"1": {"inputs": {"steps": 20}}}
-        apply_denoise(wf, "0.5")
-        self.assertNotIn("denoise", wf["1"]["inputs"])
 
 
 class TestFillPlaceholdersForValidation(unittest.TestCase):
