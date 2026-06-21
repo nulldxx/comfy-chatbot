@@ -993,9 +993,6 @@ export function makeCommandHandler(deps) {
           <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-session</code> — face-detail every image from this session, one after another</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/face-detail-workflow</code> — choose which face-detailer workflow the face icons use</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/help</code> — show this message</div>
-          <div style="font-size:0.85rem;color:#94a3b8"><code>/image-settings</code> — set resolution &amp; generation steps for image generation
-            <div style="margin-top:2px;color:#475569;font-size:0.78rem">resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video</div>
-          </div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image [N]</code> — re-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement &lt;from&gt; &lt;to&gt;</code> — find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2image-replacement-reset</code> — clear all image2image replacements</div>
@@ -1008,6 +1005,9 @@ export function makeCommandHandler(deps) {
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2video</code> and the 🎬 button instead of each image's original prompt; no args shows it</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt-reset</code> — clear the override prompt</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-workflow</code> — choose which image2video workflow <code>/image2video</code> uses</div>
+          <div style="font-size:0.85rem;color:#94a3b8"><code>/image-settings</code> — set resolution &amp; generation steps for image generation
+            <div style="margin-top:2px;color:#475569;font-size:0.78rem">resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video</div>
+          </div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/iterations &lt;n&gt;</code> — generate n images per prompt (default 1)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/jobs</code> — grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)</div>
           <div style="font-size:0.85rem;color:#94a3b8"><code>/lora</code> — fuzzy-find a LoRA to insert (works anywhere in a prompt)</div>
