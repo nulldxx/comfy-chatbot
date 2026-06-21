@@ -389,6 +389,7 @@ header a:hover { color: #a78bfa; }
   background: transparent; border: 1px solid transparent;
   border-radius: 6px; padding: 4px 8px;
   font-size: 1.1rem; line-height: 1; cursor: pointer;
+  color: #f1f5f9;
   transition: border-color 0.15s, background 0.15s;
 }
 .mask-editor-tool:hover { border-color: #94a3b8; }
