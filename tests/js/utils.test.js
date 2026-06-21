@@ -360,6 +360,17 @@ describe('clampVideo', () => {
     expect(clampVideo('fps', 0)).toBe(1);
     expect(clampVideo('frames', 99999)).toBe(1000);
   });
+
+  test('snaps video width/height to a multiple of 16', () => {
+    expect(clampVideo('width', 1280)).toBe(1280);   // already a multiple of 16
+    expect(clampVideo('width', 1290)).toBe(1296);   // rounds up to nearest 16
+    expect(clampVideo('height', 727)).toBe(720);    // rounds down to nearest 16
+  });
+
+  test('clamps video width/height to range and stays a multiple of 16', () => {
+    expect(clampVideo('width', 5000)).toBe(2048);   // max, multiple of 16
+    expect(clampVideo('height', 1)).toBe(64);       // min, multiple of 16
+  });
 });
 
 describe('recomputeVideo', () => {

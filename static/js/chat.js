@@ -207,7 +207,7 @@ const SLASH_COMMANDS = [
   { cmd: '/slideshow-session', desc: 'browse this session\'s images',          args: '' },
   { cmd: '/slideshow-today',   desc: 'browse today\'s images, oldest first',   args: '' },
   { cmd: '/upload',     desc: 'upload a new workflow JSON file',    args: ''  },
-  { cmd: '/video-settings', desc: 'set video duration, frames, fps & audio (lock one, the others follow)', args: '' },
+  { cmd: '/video-settings', desc: 'set video duration, frames, fps, resolution & audio (lock one, the others follow)', args: '' },
   { cmd: '/upscale',    desc: 'upscale the last N images (default 1, no prompt)', args: ' ' },
   { cmd: '/workflow',   desc: 'choose a workflow template',         args: ''  },
   { cmd: '/workflow-iterate', desc: 'run a prompt against several workflows', args: ' ' },
@@ -891,6 +891,7 @@ function showSessionSummary() {
     value: `<span style="color:#a78bfa">${fmtDuration(vs.duration)}s</span> · ` +
            `<span style="color:#a78bfa">${vs.frames}</span> frames · ` +
            `<span style="color:#a78bfa">${vs.fps}</span> fps · ` +
+           `<span style="color:#a78bfa">${vs.width}×${vs.height}</span> · ` +
            `audio <span style="color:#a78bfa">${vs.audio !== false ? 'on' : 'off'}</span> ` +
            `<span style="color:#475569">(🔒 ${videoLock})</span>`,
   });
@@ -1545,8 +1546,8 @@ function handleSlashCommand(raw) {
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt &lt;prompt&gt;</code> — override prompt used by <code>/image2video</code> and the 🎬 button instead of each image's original prompt; no args shows it</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-set-prompt-reset</code> — clear the override prompt</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/image2video-workflow</code> — choose which image2video workflow <code>/image2video</code> uses</div>
-        <div style="font-size:0.85rem;color:#94a3b8"><code>/video-settings</code> — set video duration, frames, fps &amp; audio for image2video
-          <div style="margin-top:2px;color:#475569;font-size:0.78rem">lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound</div>
+        <div style="font-size:0.85rem;color:#94a3b8"><code>/video-settings</code> — set video duration, frames, fps, resolution &amp; audio for image2video
+          <div style="margin-top:2px;color:#475569;font-size:0.78rem">lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/resolution</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound</div>
         </div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/upload</code> — upload a new workflow JSON file</div>
         <div style="font-size:0.85rem;color:#94a3b8"><code>/purge</code> — free GPU memory on the active ComfyUI server</div>
@@ -2464,6 +2465,43 @@ function handleSlashCommand(raw) {
       wrap.appendChild(row);
     });
 
+    // Video resolution — kept distinct from /resolution (which targets stills),
+    // since video models have very different size constraints. Width/height are
+    // independent of the duration/frames/fps lock system; each is snapped to a
+    // multiple of 16 by clampVideo. Fills <VIDEO_WIDTH>/<VIDEO_HEIGHT>.
+    const resRow = document.createElement('div');
+    resRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1';
+    const resLbl = document.createElement('span');
+    resLbl.textContent = 'Resolution:';
+    resLbl.style.cssText = 'min-width:92px;color:#94a3b8';
+    const mkDim = key => {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.style.cssText = 'width:58px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+      inp.addEventListener('change', () => {
+        const v = parseFloat(inp.value);
+        if (!isNaN(v)) work[key] = clampVideo(key, v);
+        inp.value = String(work[key]);
+      });
+      return inp;
+    };
+    const widthInp  = mkDim('width');
+    const heightInp = mkDim('height');
+    const times = document.createElement('span');
+    times.textContent = '×';
+    times.style.color = '#475569';
+    const flipBtn = document.createElement('button');
+    flipBtn.textContent = '⇄';
+    flipBtn.className = 'sel-btn';
+    flipBtn.title = 'Swap width and height';
+    flipBtn.style.cssText = 'flex:none;width:30px;padding:2px 0;font-size:0.95rem;line-height:1';
+    const refreshRes = () => { widthInp.value = String(work.width); heightInp.value = String(work.height); };
+    flipBtn.addEventListener('click', () => { [work.width, work.height] = [work.height, work.width]; refreshRes(); });
+    resRow.appendChild(resLbl); resRow.appendChild(widthInp); resRow.appendChild(times);
+    resRow.appendChild(heightInp); resRow.appendChild(flipBtn);
+    wrap.appendChild(resRow);
+    refreshRes();
+
     // Audio toggle — when off, the "Audio: …" cue that /video-sequence folds into
     // a video prompt (buildVideoPrompt) is dropped. Useful for image2video
     // workflows that don't generate audio (e.g. the Wan template), so the model
@@ -2498,13 +2536,14 @@ function handleSlashCommand(raw) {
     applyBtn.addEventListener('click', () => {
       currentVideoSettings = { ...work };
       videoLock = lockSel;
-      addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> · Audio <strong style="color:#a78bfa">${work.audio !== false ? 'on' : 'off'}</strong> <span style="color:#475569">(🔒 ${lockSel})</span>`);
+      addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> · Resolution <strong style="color:#a78bfa">${work.width}×${work.height}</strong> · Audio <strong style="color:#a78bfa">${work.audio !== false ? 'on' : 'off'}</strong> <span style="color:#475569">(🔒 ${lockSel})</span>`);
       scrollBottom();
     });
     resetBtn.addEventListener('click', () => {
       Object.assign(work, DEFAULT_VIDEO_SETTINGS);
       lockSel = 'fps';
       audioBox.checked = work.audio !== false;
+      refreshRes();
       refresh();
     });
     btnRow.appendChild(applyBtn);
@@ -4755,7 +4794,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(face        ? { denoise: currentDenoise.face } : {}),
       ...(upscale     ? { denoise: currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: currentDenoise.image2image } : {}),
-      ...(image2video ? { duration: currentVideoSettings.duration, frames: currentVideoSettings.frames, fps: currentVideoSettings.fps } : {}),
+      ...(image2video ? { duration: currentVideoSettings.duration, frames: currentVideoSettings.frames, fps: currentVideoSettings.fps, video_width: currentVideoSettings.width, video_height: currentVideoSettings.height } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
       ...(inpaint     ? { denoise: inpaint.denoise != null ? inpaint.denoise : currentDenoise.inpaint } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),

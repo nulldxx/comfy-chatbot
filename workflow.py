@@ -97,7 +97,7 @@ def fill_placeholders_for_validation(text):
     """Replace template tokens with dummy values so the file parses as JSON."""
     text = re.sub(r"<LORA_\d+_STRENGTH>", "1.0", text)   # unquoted numeric slots
     text = re.sub(r"<DENOISE>", "1.0", text)              # unquoted numeric slot
-    text = re.sub(r"<(?:DURATION|FRAMES|FPS)>", "1", text)  # unquoted numeric video slots
+    text = re.sub(r"<(?:DURATION|FRAMES|FPS|VIDEO_WIDTH|VIDEO_HEIGHT)>", "1", text)  # unquoted numeric video slots
     text = re.sub(r"<LAST_FRAME_STRENGTH>", "1.0", text)  # unquoted float slot (image2video guide)
     text = re.sub(r"<[A-Z0-9_]+>", "placeholder", text)   # all remaining string slots
     return text

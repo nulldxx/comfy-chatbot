@@ -132,11 +132,16 @@ export function i2vTooltip(meta) {
 // derived value and may round by a frame at the extremes.
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_VIDEO_SETTINGS = { duration: 5, frames: 125, fps: 25, audio: true };
+export const DEFAULT_VIDEO_SETTINGS = { duration: 5, frames: 125, fps: 25, audio: true, width: 1280, height: 720 };
 export const VIDEO_LIMITS = {
   duration: { min: 0.1, max: 60 },
   frames:   { min: 1,   max: 1000 },
   fps:      { min: 1,   max: 60 },
+  // Video resolution is kept distinct from /resolution (which targets stills):
+  // video models have very different size constraints. Dimensions are snapped to
+  // a multiple of 16 (see clampVideo) since most video models require it.
+  width:    { min: 64,  max: 2048 },
+  height:   { min: 64,  max: 2048 },
 };
 
 export function fmtDuration(d) {
@@ -147,7 +152,13 @@ export function fmtDuration(d) {
 export function clampVideo(key, val) {
   const lim = VIDEO_LIMITS[key];
   let v = Math.min(lim.max, Math.max(lim.min, val));
-  return key === 'duration' ? Math.round(v * 10) / 10 : Math.round(v);
+  if (key === 'duration') return Math.round(v * 10) / 10;
+  if (key === 'width' || key === 'height') {
+    // Snap to a multiple of 16 (most video models require it), then re-clamp.
+    const snapped = Math.round(v / 16) * 16;
+    return Math.min(lim.max, Math.max(lim.min, snapped));
+  }
+  return Math.round(v);
 }
 
 // Re-derive `s` in place so frames = duration × fps holds. `lock` is the value

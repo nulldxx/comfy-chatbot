@@ -88,7 +88,8 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
                    width=None, height=None, steps=None, denoise=None, workflow_dir=None,
                    input_image=None, input_mask=None, input_last_frame=None,
                    preserve_mtime_from=None,
-                   cleanup_input_image=False, duration=None, frames=None, fps=None):
+                   cleanup_input_image=False, duration=None, frames=None, fps=None,
+                   video_width=None, video_height=None):
     with jobs_lock:
         q = jobs[job_id]["queue"]
         cancel_event = jobs[job_id]["cancel"]
@@ -140,6 +141,17 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
             mapping["FPS"] = fps
         if duration is not None or frames is not None or fps is not None:
             send("progress", message=f"Video: {frames} frames @ {fps} fps ({duration}s)")
+
+        # Video resolution placeholders (<VIDEO_WIDTH>/<VIDEO_HEIGHT>). Kept distinct
+        # from the image-resolution path (apply_resolution / currentResolution) since
+        # video models have very different size constraints. These are bare numeric
+        # slots set via /video-settings.
+        if video_width is not None:
+            mapping["VIDEO_WIDTH"] = video_width
+        if video_height is not None:
+            mapping["VIDEO_HEIGHT"] = video_height
+        if video_width is not None and video_height is not None:
+            send("progress", message=f"Video resolution {video_width}×{video_height}")
 
         if input_image is not None:
             send("progress", message="Uploading source image to ComfyUI...")

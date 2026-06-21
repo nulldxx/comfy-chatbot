@@ -170,6 +170,8 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 | `<DURATION>` | Video duration in seconds (float); image2video workflows. Set via `/video-settings` |
 | `<FRAMES>` | Video frame count (int); image2video workflows. Set via `/video-settings` |
 | `<FPS>` | Video frames per second (int); image2video workflows. Set via `/video-settings` |
+| `<VIDEO_WIDTH>` | Video output width in px (int); image2video workflows. Set via `/video-settings`, kept distinct from the still-image `/resolution` |
+| `<VIDEO_HEIGHT>` | Video output height in px (int); image2video workflows. Set via `/video-settings`, kept distinct from the still-image `/resolution` |
 
 ### LoRA handling detail
 
@@ -191,6 +193,7 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 - Output is driven by `<FRAMES>` and `<FPS>` (both integers, fed to `PrimitiveInt` nodes); `<DURATION>` is the human-facing value and may round by a frame at the extremes.
 - In the LTXV image2video template, the latent length math node consumes the Frames primitive as `frames + 1` (the extra conditioning frame), the Frame Rate primitive feeds the conditioning/audio/CreateVideo nodes, and the Duration primitive is informational.
 - The Wan 2.2 14B image2video template (`image2video/wan22_14B_i2v.json`) uses the same placeholders. Its `<FPS>`/`<DURATION>` feed `PrimitiveFloat` nodes (not `PrimitiveInt`) — injecting a bare integer is still valid JSON. Length is driven by a `<FRAMES>` `PrimitiveInt` (node `129:164`) through a `Math Expression (length)` node (`129:163`) as `frames + 1`, mirroring LTXV; the FPS primitive also feeds `CreateVideo`, and the Duration primitive is informational. This template has **no** audio nodes.
+- **Video resolution**: `/video-settings` also sets `<VIDEO_WIDTH>`/`<VIDEO_HEIGHT>` (stored on `currentVideoSettings.width`/`.height`, default `1280×720`), sent to `/api/image2video` as `video_width`/`video_height`. This is deliberately **separate** from `/resolution` (which targets stills and flows through `apply_resolution`/`currentResolution`) because video models have very different size constraints. Dimensions are clamped to 64–2048 and snapped to a multiple of 16 (`clampVideo` in `utils.js`). In templates they replace the width/height primitives directly: the Wan templates' `WanImageToVideo` width/height (node `129:98`), and the LTX template's separate `Width`/`Height` `PrimitiveInt` nodes (`320:312`/`320:299`). The Wan and image-resolution paths don't collide because image2video never sends the still `width`/`height`, so `apply_resolution` isn't called for it.
 - **Audio toggle**: `/video-settings` has an Audio checkbox stored on `currentVideoSettings.audio` (default `true`). It is purely client-side — when off, `buildVideoPrompt()` (`utils.js`) drops the `Audio: <audio>` segment that `/video-sequence` folds into a video prompt, so audio-less workflows (e.g. the Wan template) aren't fed audio cues they ignore. It does not alter the workflow graph; audio-capable workflows still generate their own audio track regardless.
 
 ### Validation
