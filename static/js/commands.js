@@ -2576,10 +2576,10 @@ export function makeCommandHandler(deps) {
         cloneBtn.innerHTML = '&#128203;&#xFE0E;';
         cloneBtn.addEventListener('click', e => {
           e.stopPropagation();
-          if (row.querySelector('.clone-input-row')) return;
+          if (row.nextElementSibling?.classList.contains('clone-input-row')) return;
           const inputRow = document.createElement('div');
           inputRow.className = 'clone-input-row';
-          inputRow.style.cssText = 'display:flex;gap:6px;margin-top:6px;width:100%';
+          inputRow.style.cssText = 'display:flex;gap:6px;padding:4px 6px;align-items:center';
           const inp = document.createElement('input');
           inp.type = 'text';
           inp.placeholder = 'New macro name…';
@@ -2643,7 +2643,7 @@ export function makeCommandHandler(deps) {
           inputRow.appendChild(inp);
           inputRow.appendChild(okBtn);
           inputRow.appendChild(cancelClone);
-          row.appendChild(inputRow);
+          row.insertAdjacentElement('afterend', inputRow);
           inp.select();
           scrollBottom();
         });
