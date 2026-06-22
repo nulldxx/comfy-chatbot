@@ -616,7 +616,7 @@ export function makeCommandHandler(deps) {
       }
       state.iterationsFromSequence = false;
       sendBtn.disabled = true;
-      (async () => {
+      return (async () => {
         for (const prompt of lines) {
           const expanded = expandAliases(prompt, state.ALIASES);
           addMessage('user', escapeHtml(expanded), expanded);
@@ -625,7 +625,6 @@ export function makeCommandHandler(deps) {
         }
         sendBtn.disabled = false;
       })();
-      return;
     }
 
     if (cmd === '/sequence') {
@@ -642,7 +641,7 @@ export function makeCommandHandler(deps) {
         <div class="status-text">Asking Grok for ${count} prompt(s)…</div>
         <div class="dots"><span></span><span></span><span></span></div>
       `);
-      (async () => {
+      return (async () => {
         const result = await deps.runSequenceJob('/api/sequence', master, count, statusBubble);
         if (!result) { sendBtn.disabled = false; return; }
         const prompts = result.prompts || [];
@@ -656,7 +655,6 @@ export function makeCommandHandler(deps) {
         }
         sendBtn.disabled = false;
       })();
-      return;
     }
 
     if (cmd === '/video-sequence') {
@@ -673,7 +671,7 @@ export function makeCommandHandler(deps) {
         <div class="status-text">Asking Grok for ${count} video shot(s)…</div>
         <div class="dots"><span></span><span></span><span></span></div>
       `);
-      (async () => {
+      return (async () => {
         const result = await deps.runSequenceJob('/api/video-sequence', master, count, statusBubble);
         if (!result) { sendBtn.disabled = false; return; }
         const shots = result.prompts || [];
@@ -694,7 +692,6 @@ export function makeCommandHandler(deps) {
         }
         sendBtn.disabled = false;
       })();
-      return;
     }
 
     if (cmd === '/sequence-review') {
@@ -935,7 +932,7 @@ export function makeCommandHandler(deps) {
           return deps.runImage2Video(prompt, img);
         });
       });
-      return;
+      return i2vChain;
     }
 
     if (cmd === '/inpaint-workflow') {
@@ -1045,7 +1042,7 @@ export function makeCommandHandler(deps) {
           return deps.runImage2Image(prompt, img);
         });
       });
-      return;
+      return i2iChain;
     }
 
     if (cmd === '/workflow-iterate') {
@@ -1148,7 +1145,7 @@ export function makeCommandHandler(deps) {
       const upscaleTargets = state.sessionImages.slice(-upscaleN);
       let upscaleChain = Promise.resolve();
       upscaleTargets.forEach(img => { upscaleChain = upscaleChain.then(() => deps.runUpscale(img)); });
-      return;
+      return upscaleChain;
     }
 
     if (cmd === '/face-detail-session') {
@@ -1163,14 +1160,14 @@ export function makeCommandHandler(deps) {
         fdSessionChain = fdSessionChain.then(() => {
           const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]);
           if (!prompt) {
-            addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
+            addMessage(‘bot’, ‘<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>’);
             return;
           }
-          addMessage('user', 'Face detail: ' + escapeHtml(prompt));
+          addMessage(‘user’, ‘Face detail: ‘ + escapeHtml(prompt));
           return deps.runFaceDetail(prompt, img);
         });
       });
-      return;
+      return fdSessionChain;
     }
 
     if (cmd === '/face-detail') {
@@ -1191,14 +1188,14 @@ export function makeCommandHandler(deps) {
         fdChain = fdChain.then(() => {
           const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]);
           if (!prompt) {
-            addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
+            addMessage(‘bot’, ‘<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>’);
             return;
           }
-          addMessage('user', 'Face detail: ' + escapeHtml(prompt));
+          addMessage(‘user’, ‘Face detail: ‘ + escapeHtml(prompt));
           return deps.runFaceDetail(prompt, img);
         });
       });
-      return;
+      return fdChain;
     }
 
     addMessage('user', escapeHtml(raw), raw);

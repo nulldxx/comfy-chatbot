@@ -866,7 +866,7 @@ function sendMessage() {
     (async () => {
       for (const step of macroSteps) {
         if (step.startsWith('/')) {
-          handleSlashCommand(step);
+          await handleSlashCommand(step);
         } else {
           const prompt = expandAliases(step, state.ALIASES);
           addMessage('user', escapeHtml(prompt), prompt);
