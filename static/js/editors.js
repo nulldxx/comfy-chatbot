@@ -884,3 +884,429 @@ export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComp
   container.appendChild(actions);
   return container;
 }
+
+// ---------------------------------------------------------------------------
+// openCropEditor — interactive crop dialog
+// ---------------------------------------------------------------------------
+// Returns a Promise that resolves with a base64 PNG string (no data: prefix)
+// of the cropped region, or rejects with { cancelled: true } on dismiss.
+
+export function openCropEditor(imageUrl) {
+  return new Promise((resolve, reject) => {
+    const HANDLE_SIZE = 9;
+    const PRESETS = [
+      { label: 'Free',  ratio: null },
+      { label: '1:1',   ratio: 1 },
+      { label: '16:9',  ratio: 16 / 9 },
+      { label: '4:3',   ratio: 4 / 3 },
+      { label: '3:2',   ratio: 3 / 2 },
+      { label: '9:16',  ratio: 9 / 16 },
+      { label: '2:3',   ratio: 2 / 3 },
+    ];
+    let lockedRatio = null;
+
+    // crop rect in canvas-display-pixel coords (not image pixels)
+    let crop = { x: 0, y: 0, w: 0, h: 0 };
+    // image rect within the canvas (letterboxed)
+    let imgRect = { x: 0, y: 0, w: 0, h: 0 };
+
+    // -----------------------------------------------------------------------
+    // DOM
+    // -----------------------------------------------------------------------
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:fixed;inset:0;z-index:1000;
+      background:rgba(0,0,0,0.88);
+      display:flex;flex-direction:column;
+      font-family:inherit;
+    `;
+
+    // Header
+    const header = document.createElement('div');
+    header.style.cssText = `
+      display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+      padding:10px 14px 8px;border-bottom:1px solid #1e293b;flex-shrink:0;
+    `;
+
+    const presetBtns = [];
+    PRESETS.forEach(p => {
+      const btn = document.createElement('button');
+      btn.textContent = p.label;
+      btn.style.cssText = `
+        background:rgba(15,23,42,0.9);border:1px solid #334155;
+        color:#cbd5e1;border-radius:6px;padding:4px 10px;
+        font-size:0.8rem;cursor:pointer;transition:border-color 0.15s,color 0.15s;
+      `;
+      btn.addEventListener('mouseenter', () => { btn.style.borderColor = '#67e8f9'; btn.style.color = '#67e8f9'; });
+      btn.addEventListener('mouseleave', () => {
+        if (lockedRatio !== p.ratio) { btn.style.borderColor = '#334155'; btn.style.color = '#cbd5e1'; }
+      });
+      btn.addEventListener('click', () => {
+        lockedRatio = p.ratio;
+        presetBtns.forEach((b, i) => {
+          const active = PRESETS[i].ratio === lockedRatio;
+          b.style.borderColor = active ? '#67e8f9' : '#334155';
+          b.style.color = active ? '#67e8f9' : '#cbd5e1';
+          b.style.background = active ? 'rgba(103,232,249,0.12)' : 'rgba(15,23,42,0.9)';
+        });
+        if (lockedRatio !== null) applyRatio(lockedRatio);
+        repaint();
+      });
+      presetBtns.push(btn);
+      header.appendChild(btn);
+    });
+    // mark Free as active initially
+    presetBtns[0].style.borderColor = '#67e8f9';
+    presetBtns[0].style.color = '#67e8f9';
+    presetBtns[0].style.background = 'rgba(103,232,249,0.12)';
+
+    const dimDisplay = document.createElement('span');
+    dimDisplay.style.cssText = 'color:#94a3b8;font-size:0.8rem;margin-left:auto;white-space:nowrap;';
+    header.appendChild(dimDisplay);
+
+    // Canvas
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'flex:1;min-height:0;cursor:crosshair;touch-action:none;';
+    const ctx = canvas.getContext('2d');
+
+    // Footer
+    const footer = document.createElement('div');
+    footer.style.cssText = `
+      display:flex;justify-content:flex-end;gap:10px;
+      padding:10px 14px;border-top:1px solid #1e293b;flex-shrink:0;
+    `;
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = `
+      background:rgba(15,23,42,0.9);border:1px solid #334155;
+      color:#94a3b8;border-radius:8px;padding:7px 18px;
+      font-size:0.9rem;cursor:pointer;
+    `;
+    const applyBtn = document.createElement('button');
+    applyBtn.textContent = 'Apply Crop';
+    applyBtn.style.cssText = `
+      background:rgba(103,232,249,0.15);border:1px solid #67e8f9;
+      color:#67e8f9;border-radius:8px;padding:7px 18px;
+      font-size:0.9rem;cursor:pointer;font-weight:600;
+    `;
+    footer.appendChild(cancelBtn);
+    footer.appendChild(applyBtn);
+
+    overlay.appendChild(header);
+    overlay.appendChild(canvas);
+    overlay.appendChild(footer);
+    document.body.appendChild(overlay);
+
+    // -----------------------------------------------------------------------
+    // Image load
+    // -----------------------------------------------------------------------
+    const img = new Image();
+    img.onload = () => {
+      sizeCanvas();
+      initCrop();
+      repaint();
+    };
+    img.src = imageUrl;
+
+    // -----------------------------------------------------------------------
+    // Layout helpers
+    // -----------------------------------------------------------------------
+    function sizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      computeImgRect(rect.width, rect.height);
+    }
+
+    function computeImgRect(cw, ch) {
+      const iw = img.naturalWidth, ih = img.naturalHeight;
+      const scale = Math.min(cw / iw, ch / ih);
+      const w = iw * scale, h = ih * scale;
+      imgRect = { x: (cw - w) / 2, y: (ch - h) / 2, w, h };
+    }
+
+    function initCrop() {
+      // Start with full image selected
+      crop = { x: imgRect.x, y: imgRect.y, w: imgRect.w, h: imgRect.h };
+      updateDimDisplay();
+    }
+
+    function applyRatio(ratio) {
+      // Maximise crop box within imgRect while respecting ratio
+      const maxW = imgRect.w, maxH = imgRect.h;
+      let w, h;
+      if (maxW / maxH > ratio) {
+        h = maxH; w = h * ratio;
+      } else {
+        w = maxW; h = w / ratio;
+      }
+      crop = {
+        x: imgRect.x + (imgRect.w - w) / 2,
+        y: imgRect.y + (imgRect.h - h) / 2,
+        w, h,
+      };
+    }
+
+    function updateDimDisplay() {
+      const sx = img.naturalWidth / imgRect.w;
+      const sy = img.naturalHeight / imgRect.h;
+      const pw = Math.round(crop.w * sx);
+      const ph = Math.round(crop.h * sy);
+      dimDisplay.textContent = `${pw} × ${ph}`;
+    }
+
+    // -----------------------------------------------------------------------
+    // Repaint
+    // -----------------------------------------------------------------------
+    function repaint() {
+      const cw = canvas.width / (window.devicePixelRatio || 1);
+      const ch = canvas.height / (window.devicePixelRatio || 1);
+      ctx.clearRect(0, 0, cw, ch);
+
+      // Image
+      ctx.drawImage(img, imgRect.x, imgRect.y, imgRect.w, imgRect.h);
+
+      // Dark overlay (composited so image shows through crop)
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,1)';
+      ctx.fillRect(crop.x, crop.y, crop.w, crop.h);
+      ctx.restore();
+
+      // Redraw image in crop area (so it appears undarknened)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(crop.x, crop.y, crop.w, crop.h);
+      ctx.clip();
+      ctx.drawImage(img, imgRect.x, imgRect.y, imgRect.w, imgRect.h);
+      ctx.restore();
+
+      // Border
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(crop.x + 0.5, crop.y + 0.5, crop.w - 1, crop.h - 1);
+
+      // Rule-of-thirds grid
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 0.5;
+      for (let i = 1; i < 3; i++) {
+        const x = crop.x + crop.w * i / 3;
+        const y = crop.y + crop.h * i / 3;
+        ctx.beginPath(); ctx.moveTo(x, crop.y); ctx.lineTo(x, crop.y + crop.h); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(crop.x, y); ctx.lineTo(crop.x + crop.w, y); ctx.stroke();
+      }
+
+      // Handles (8 points)
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 1;
+      for (const [hx, hy] of getHandlePoints()) {
+        ctx.fillRect(hx - HANDLE_SIZE / 2, hy - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+        ctx.strokeRect(hx - HANDLE_SIZE / 2 + 0.5, hy - HANDLE_SIZE / 2 + 0.5, HANDLE_SIZE - 1, HANDLE_SIZE - 1);
+      }
+
+      updateDimDisplay();
+    }
+
+    function getHandlePoints() {
+      const { x, y, w, h } = crop;
+      return [
+        [x,       y      ], [x + w/2, y      ], [x + w, y      ],
+        [x,       y + h/2],                      [x + w, y + h/2],
+        [x,       y + h  ], [x + w/2, y + h  ], [x + w, y + h  ],
+      ];
+    }
+
+    // -----------------------------------------------------------------------
+    // Drag interaction
+    // -----------------------------------------------------------------------
+    // Handle index: 0=TL 1=TC 2=TR  3=ML  4=MR  5=BL 6=BC 7=BR  -1=move
+    let dragHandle = null;
+    let dragStart = null;
+    let cropAtDragStart = null;
+
+    function hitHandle(px, py) {
+      const pts = getHandlePoints();
+      const r = HANDLE_SIZE;
+      for (let i = 0; i < pts.length; i++) {
+        const [hx, hy] = pts[i];
+        if (Math.abs(px - hx) <= r && Math.abs(py - hy) <= r) return i;
+      }
+      return null;
+    }
+
+    function insideCrop(px, py) {
+      return px >= crop.x && px <= crop.x + crop.w && py >= crop.y && py <= crop.y + crop.h;
+    }
+
+    function clampCrop(c) {
+      // Clamp to imgRect
+      let { x, y, w, h } = c;
+      const minPx = 8 * (imgRect.w / img.naturalWidth);
+      if (w < minPx) w = minPx;
+      if (h < minPx) h = minPx;
+      if (x < imgRect.x) { w -= (imgRect.x - x); x = imgRect.x; }
+      if (y < imgRect.y) { h -= (imgRect.y - y); y = imgRect.y; }
+      if (x + w > imgRect.x + imgRect.w) w = imgRect.x + imgRect.w - x;
+      if (y + h > imgRect.y + imgRect.h) h = imgRect.y + imgRect.h - y;
+      return { x, y, w, h };
+    }
+
+    function handleCursors() {
+      const cursors = ['nw-resize','n-resize','ne-resize','w-resize','e-resize','sw-resize','s-resize','se-resize'];
+      return cursors;
+    }
+
+    function getPos(e) {
+      const r = canvas.getBoundingClientRect();
+      const src = e.touches ? e.touches[0] : e;
+      return { x: src.clientX - r.left, y: src.clientY - r.top };
+    }
+
+    function onPointerDown(e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      const pos = getPos(e);
+      const hit = hitHandle(pos.x, pos.y);
+      if (hit !== null) {
+        dragHandle = hit;
+      } else if (insideCrop(pos.x, pos.y)) {
+        dragHandle = -1;
+      } else {
+        return;
+      }
+      dragStart = pos;
+      cropAtDragStart = { ...crop };
+    }
+
+    function onPointerMove(e) {
+      if (dragHandle === null) {
+        const pos = getPos(e);
+        const hit = hitHandle(pos.x, pos.y);
+        if (hit !== null) {
+          canvas.style.cursor = handleCursors()[hit];
+        } else if (insideCrop(pos.x, pos.y)) {
+          canvas.style.cursor = 'move';
+        } else {
+          canvas.style.cursor = 'crosshair';
+        }
+        return;
+      }
+      e.preventDefault();
+      const pos = getPos(e);
+      const dx = pos.x - dragStart.x;
+      const dy = pos.y - dragStart.y;
+      const c = { ...cropAtDragStart };
+
+      if (dragHandle === -1) {
+        // Pan
+        c.x += dx; c.y += dy;
+        crop = clampCrop(c);
+      } else {
+        // Resize
+        const handles = [
+          // TL
+          () => { c.x += dx; c.y += dy; c.w -= dx; c.h -= dy; },
+          // TC
+          () => { c.y += dy; c.h -= dy; },
+          // TR
+          () => { c.y += dy; c.w += dx; c.h -= dy; },
+          // ML
+          () => { c.x += dx; c.w -= dx; },
+          // MR
+          () => { c.w += dx; },
+          // BL
+          () => { c.x += dx; c.w -= dx; c.h += dy; },
+          // BC
+          () => { c.h += dy; },
+          // BR
+          () => { c.w += dx; c.h += dy; },
+        ];
+        handles[dragHandle]();
+
+        if (lockedRatio !== null) {
+          // Enforce ratio: decide dominant axis from handle
+          const hEdge = [true, false, true, true, false, true, false, false][dragHandle];  // width-dominant?
+          const isTopEdge = dragHandle <= 2;
+          const isLeftEdge = [true, false, false, true, false, true, false, false][dragHandle];
+          if (hEdge || dragHandle === 0 || dragHandle === 2 || dragHandle === 5 || dragHandle === 7) {
+            const newH = c.w / lockedRatio;
+            if (isTopEdge) { c.y = cropAtDragStart.y + cropAtDragStart.h - newH; }
+            c.h = newH;
+          } else {
+            const newW = c.h * lockedRatio;
+            if (isLeftEdge) { c.x = cropAtDragStart.x + cropAtDragStart.w - newW; }
+            c.w = newW;
+          }
+        }
+
+        crop = clampCrop(c);
+      }
+      repaint();
+    }
+
+    function onPointerUp() {
+      dragHandle = null;
+      dragStart = null;
+      cropAtDragStart = null;
+    }
+
+    canvas.addEventListener('mousedown', onPointerDown);
+    canvas.addEventListener('mousemove', onPointerMove);
+    canvas.addEventListener('mouseup', onPointerUp);
+    canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+    canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+    canvas.addEventListener('touchend', onPointerUp);
+
+    // -----------------------------------------------------------------------
+    // Resize observer
+    // -----------------------------------------------------------------------
+    const ro = new ResizeObserver(() => {
+      sizeCanvas();
+      if (img.complete) repaint();
+    });
+    ro.observe(canvas);
+
+    // -----------------------------------------------------------------------
+    // Actions
+    // -----------------------------------------------------------------------
+    function closeEditor() {
+      ro.disconnect();
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+    }
+
+    cancelBtn.addEventListener('click', () => {
+      closeEditor();
+      reject({ cancelled: true });
+    });
+
+    applyBtn.addEventListener('click', () => {
+      // Crop in image-pixel space
+      const sx = img.naturalWidth / imgRect.w;
+      const sy = img.naturalHeight / imgRect.h;
+      const srcX = Math.round((crop.x - imgRect.x) * sx);
+      const srcY = Math.round((crop.y - imgRect.y) * sy);
+      const srcW = Math.round(crop.w * sx);
+      const srcH = Math.round(crop.h * sy);
+
+      const out = document.createElement('canvas');
+      out.width = srcW;
+      out.height = srcH;
+      const octx = out.getContext('2d');
+      octx.drawImage(img, -srcX, -srcY, img.naturalWidth, img.naturalHeight);
+      const b64 = out.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+      closeEditor();
+      resolve(b64);
+    });
+
+    function onKey(e) {
+      if (e.key === 'Escape') { closeEditor(); reject({ cancelled: true }); }
+    }
+    document.addEventListener('keydown', onKey);
+  });
+}

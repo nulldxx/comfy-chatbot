@@ -14,7 +14,7 @@ import {
   updateSlashAc, hideSlashAc, selectSlashAcItem, tryExpandAlias,
   renderSlashAc, getAcState, setAcFocused, tabCompleteSlashAc,
 } from './autocomplete.js';
-import { openMaskEditor, buildComparisonSlider } from './editors.js';
+import { openMaskEditor, buildComparisonSlider, openCropEditor } from './editors.js';
 import { makeCommandHandler } from './commands.js';
 
 // ---------------------------------------------------------------------------
@@ -659,6 +659,36 @@ function appendChatImage(container, url) {
     openMaskEditor(url, wrap, { onInpaint: runInpaint, onRemove: runRemove });
   });
 
+  const cropBtn = document.createElement('button');
+  cropBtn.className = 'img-crop';
+  cropBtn.title = 'Crop image';
+  cropBtn.innerHTML = '&#9986;&#xFE0E;';
+  cropBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (cropBtn.disabled || sendBtn.disabled) return;
+    cropBtn.disabled = true;
+    openCropEditor(url)
+      .then(b64 => fetch('/api/save-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: b64 }),
+      }).then(r => r.json()))
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        const newUrl = data.url;
+        state.sessionImages.push(newUrl);
+        if (state.imagePrompts[url]) state.imagePrompts[newUrl] = state.imagePrompts[url];
+        const bubble = addMessage('bot', '');
+        bubble.innerHTML = '';
+        appendChatImage(bubble, newUrl);
+      })
+      .catch(err => {
+        if (err && err.cancelled) return;
+        addMessage('bot', `<span style="color:#f87171">Crop failed: ${escapeHtml(err.message)}</span>`);
+      })
+      .finally(() => { cropBtn.disabled = false; });
+  });
+
   const i2v = document.createElement('button');
   i2v.className = 'img-i2v';
   i2v.title = i2vTooltip(state.imageVideoMeta[url]);
@@ -700,6 +730,7 @@ function appendChatImage(container, url) {
   wrap.appendChild(redo);
   wrap.appendChild(i2i);
   wrap.appendChild(inpaintBtn);
+  wrap.appendChild(cropBtn);
   wrap.appendChild(i2v);
   wrap.appendChild(lastframe);
   wrap.appendChild(editMeta);
