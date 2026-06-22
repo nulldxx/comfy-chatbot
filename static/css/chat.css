@@ -496,6 +496,7 @@ header a:hover { color: #a78bfa; }
 }
 .ba-pick-1:hover:not(:disabled) { border-color: #38bdf8; color: #7dd3fc; }
 .ba-pick-2:hover:not(:disabled) { border-color: #34d399; color: #6ee7b7; }
+.ba-pick-both:hover:not(:disabled) { border-color: #fbbf24; color: #fde68a; }
 .ba-pick:disabled { opacity: 0.4; cursor: default; }
 
 /* Selective-composite (🩹) button — paints which parts of image 2 to keep */

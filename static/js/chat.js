@@ -1152,7 +1152,23 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             appendChatImage(tmp, compositeUrl);
             sliderEl.replaceWith(tmp.firstChild);
           } : null;
-          sliderReplace.replaceWith(buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComposite));
+          const onBoth = sliderEl => {
+            state.sessionImages.push(newUrl);
+            if (originPrompt) state.imagePrompts[newUrl] = originPrompt;
+            if (originVideoMeta) state.imageVideoMeta[newUrl] = originVideoMeta;
+            if (inpaint && inpaint.maskB64) {
+              state.imageMasks[newUrl] = { maskB64: inpaint.maskB64, prompt: inpaint.prompt, denoise: inpaint.denoise };
+            }
+            if (removal && removal.maskB64) {
+              state.imageMasks[newUrl] = { maskB64: removal.maskB64, isRemoval: true };
+            }
+            const tmp = document.createElement('div');
+            appendChatImage(tmp, oldUrl);
+            sliderEl.replaceWith(tmp.firstChild);
+            const newBubble = addMessage('bot', '');
+            appendChatImage(newBubble, newUrl);
+          };
+          sliderReplace.replaceWith(buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComposite, onBoth));
           botBubble.parentElement.remove();
           resolve(true);
           return;

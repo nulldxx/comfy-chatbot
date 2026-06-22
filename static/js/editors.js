@@ -629,7 +629,7 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
 // `oldUrl` shows on the left, `newUrl` on the right; dragging the handle wipes
 // between them. onAccept/onReject handle the ✓/✗ buttons. The optional
 // onComposite enables a 🩹 button for selective compositing.
-export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComposite) {
+export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComposite, onBoth) {
   const container = document.createElement('div');
   container.className = 'ba-container';
 
@@ -703,18 +703,29 @@ export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComp
   pick2.title = 'Keep image 2 (edited)';
   pick2.textContent = '2';
 
+  const pickBoth = document.createElement('button');
+  pickBoth.className = 'ba-pick ba-pick-both';
+  pickBoth.title = 'Keep both images';
+  pickBoth.textContent = '1+2';
+
   let settled = false;
   pick1.addEventListener('click', () => {
     if (settled) return;
     settled = true;
-    pick1.disabled = pick2.disabled = true;
+    pick1.disabled = pick2.disabled = pickBoth.disabled = true;
     onReject(container);
   });
   pick2.addEventListener('click', () => {
     if (settled) return;
     settled = true;
-    pick1.disabled = pick2.disabled = true;
+    pick1.disabled = pick2.disabled = pickBoth.disabled = true;
     onAccept(container);
+  });
+  pickBoth.addEventListener('click', () => {
+    if (settled) return;
+    settled = true;
+    pick1.disabled = pick2.disabled = pickBoth.disabled = true;
+    onBoth(container);
   });
 
   const maximizeBtn = document.createElement('button');
@@ -796,19 +807,25 @@ export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComp
     mPick2.textContent = '2';
     mPick2.title = 'Keep image 2 (edited)';
 
+    const mPickBoth = document.createElement('button');
+    mPickBoth.className = 'ba-pick ba-pick-both';
+    mPickBoth.textContent = '1+2';
+    mPickBoth.title = 'Keep both images';
+
     const closeBtn = document.createElement('button');
     closeBtn.className = 'ba-overlay-close';
     closeBtn.textContent = '×';
     closeBtn.title = 'Close';
 
-    if (settled) { mPick1.disabled = mPick2.disabled = true; }
+    if (settled) { mPick1.disabled = mPick2.disabled = mPickBoth.disabled = true; }
 
     const dismiss = () => overlay.remove();
     closeBtn.addEventListener('click', dismiss);
     mPick1.addEventListener('click', () => { dismiss(); pick1.click(); });
     mPick2.addEventListener('click', () => { dismiss(); pick2.click(); });
+    mPickBoth.addEventListener('click', () => { dismiss(); pickBoth.click(); });
 
-    header.append(mPick1, mPick2);
+    header.append(mPick1, mPick2, mPickBoth);
 
     if (onComposite) {
       const mMaskBtn = document.createElement('button');
@@ -822,7 +839,7 @@ export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComp
         openCompositeEditor(oldUrl, newUrl, compositeUrl => {
           if (settled) return;
           settled = true;
-          pick1.disabled = pick2.disabled = true;
+          pick1.disabled = pick2.disabled = pickBoth.disabled = true;
           onComposite(compositeUrl, container);
         });
       });
@@ -842,6 +859,7 @@ export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComp
 
   actions.appendChild(pick1);
   actions.appendChild(pick2);
+  actions.appendChild(pickBoth);
 
   if (onComposite) {
     const maskBtn = document.createElement('button');
@@ -853,7 +871,7 @@ export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComp
       openCompositeEditor(oldUrl, newUrl, compositeUrl => {
         if (settled) return;
         settled = true;
-        pick1.disabled = pick2.disabled = maskBtn.disabled = true;
+        pick1.disabled = pick2.disabled = pickBoth.disabled = maskBtn.disabled = true;
         onComposite(compositeUrl, container);
       });
     });
