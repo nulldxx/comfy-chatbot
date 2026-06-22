@@ -198,6 +198,21 @@ messagesEl.addEventListener('click', e => {
   });
 })();
 
+// ---------------------------------------------------------------------------
+// File-picker attach button (mobile + desktop alternative to drag-and-drop)
+// ---------------------------------------------------------------------------
+
+(function setupAttachButton() {
+  const btn   = document.getElementById('attach-btn');
+  const input = document.getElementById('file-input');
+  btn.addEventListener('click', () => input.click());
+  input.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) importDroppedImage(file);
+    e.target.value = '';  // reset so the same file can be re-selected
+  });
+})();
+
 function importDroppedImage(file) {
   const bubble = addMessage('bot', `<div class="status-text">Importing <code>${escapeHtml(file.name)}</code>…</div>`);
   const fd = new FormData();

@@ -867,6 +867,14 @@ header a:hover { color: #a78bfa; }
 #send-btn:hover    { background: #6d28d9; }
 #send-btn:disabled { background: #374151; cursor: not-allowed; }
 
+#attach-btn {
+  background: #1e293b; color: #94a3b8; border: 1px solid #334155;
+  border-radius: 12px; padding: 0 14px;
+  font-size: 1.1rem; cursor: pointer; height: 44px; flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+#attach-btn:hover { background: #334155; color: #e2e8f0; }
+
 .hint { font-size: 0.72rem; color: #475569; margin-top: 6px; }
 
 #lightbox {
