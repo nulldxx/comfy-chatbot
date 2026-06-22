@@ -2550,6 +2550,84 @@ export function makeCommandHandler(deps) {
           });
         });
 
+        const cloneBtn = document.createElement('button');
+        cloneBtn.className = 'sel-del-btn';
+        cloneBtn.title = 'Clone macro';
+        cloneBtn.innerHTML = '&#128203;&#xFE0E;';
+        cloneBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          if (row.querySelector('.clone-input-row')) return;
+          const inputRow = document.createElement('div');
+          inputRow.className = 'clone-input-row';
+          inputRow.style.cssText = 'display:flex;gap:6px;margin-top:6px;width:100%';
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.placeholder = 'New macro name…';
+          inp.value = name + '-copy';
+          inp.style.cssText = 'flex:1;min-width:0;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:3px 6px;font-size:0.8rem';
+          const okBtn = document.createElement('button');
+          okBtn.className = 'sel-del-btn';
+          okBtn.textContent = 'Clone';
+          okBtn.style.cssText = 'font-size:0.75rem;padding:2px 8px';
+          const cancelClone = document.createElement('button');
+          cancelClone.className = 'sel-del-btn';
+          cancelClone.textContent = 'Cancel';
+          cancelClone.style.cssText = 'font-size:0.75rem;padding:2px 8px';
+          const doClone = () => {
+            const newName = inp.value.trim();
+            if (!newName) { inp.focus(); return; }
+            if (newName === name) {
+              inp.style.borderColor = '#f87171';
+              inp.title = 'Choose a different name';
+              inp.focus();
+              return;
+            }
+            okBtn.disabled = true;
+            cancelClone.disabled = true;
+            const steps = state.MACROS[name] || [];
+            fetch('/api/macros', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: newName, steps }),
+            })
+            .then(parseJsonResponse)
+            .then(data => {
+              if (data.error) throw new Error(data.error);
+              state.MACROS[newName] = steps.slice();
+              inputRow.remove();
+              // Insert a new row for the clone directly after this one
+              const cloneRow = document.createElement('div');
+              cloneRow.className = 'sel-row';
+              const cloneLabel = document.createElement('div');
+              cloneLabel.style.cssText = label.style.cssText;
+              cloneLabel.innerHTML = `<code>#${escapeHtml(newName)}</code> <span style="color:#475569">— ${steps.length} step(s)</span>`;
+              cloneRow.appendChild(cloneLabel);
+              cloneRow.appendChild(cloneBtn.cloneNode(true));
+              row.insertAdjacentElement('afterend', cloneRow);
+              header.textContent = `Macros (${selList.querySelectorAll('.sel-row').length}):`;
+              scrollBottom();
+            })
+            .catch(err => {
+              okBtn.disabled = false;
+              cancelClone.disabled = false;
+              inp.style.borderColor = '#f87171';
+              inp.title = escapeHtml(err.message);
+            });
+          };
+          okBtn.addEventListener('click', e => { e.stopPropagation(); doClone(); });
+          cancelClone.addEventListener('click', e => { e.stopPropagation(); inputRow.remove(); });
+          inp.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); doClone(); }
+            if (e.key === 'Escape') { e.preventDefault(); inputRow.remove(); }
+          });
+          inputRow.appendChild(inp);
+          inputRow.appendChild(okBtn);
+          inputRow.appendChild(cancelClone);
+          row.appendChild(inputRow);
+          inp.select();
+          scrollBottom();
+        });
+
         const delBtn = document.createElement('button');
         delBtn.className = 'sel-del-btn';
         delBtn.title = 'Delete macro';
@@ -2581,6 +2659,7 @@ export function makeCommandHandler(deps) {
 
         row.appendChild(label);
         row.appendChild(editBtn);
+        row.appendChild(cloneBtn);
         row.appendChild(delBtn);
         selList.appendChild(row);
       });
