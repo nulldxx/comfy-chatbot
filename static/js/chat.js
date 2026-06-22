@@ -864,6 +864,10 @@ function sendMessage() {
       addMessage('bot', `<span style="color:#f87171">⚠ No macro named <code>#${escapeHtml(macroName)}</code> — use <code>/macro-list</code> to see macros or <code>/macro-create ${escapeHtml(macroName)}</code> to create one.</span>`);
       return;
     }
+    if (!macroParam && macroSteps.some(s => /<PARAM>/i.test(s))) {
+      addMessage('bot', `<span style="color:#f87171">⚠ <code>#${escapeHtml(macroName)}</code> requires a parameter — e.g. <code>#${escapeHtml(macroName)} your text here</code></span>`);
+      return;
+    }
     addMessage('user', `#${escapeHtml(macroName)}${macroParam ? ' ' + escapeHtml(macroParam) : ''}`, raw);
     sendBtn.disabled = true;
     (async () => {
