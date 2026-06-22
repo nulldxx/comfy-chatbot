@@ -80,7 +80,7 @@ export function renderSlashAc() {
   slashAcEl.innerHTML = acMatches.map((c, i) =>
     `<div class="slash-ac-item${i === acFocused ? ' ac-focused' : ''}" data-idx="${i}">` +
     (acMode === 'lora'
-      ? `<span class="slash-ac-cmd">${escapeHtml(c.label)}</span>` +
+      ? `<span class="slash-ac-cmd">${escapeHtml(c.name)}</span>` +
         `<span class="slash-ac-desc">${c.triggers ? escapeHtml(c.triggers) : 'strength ' + c.strength}</span>`
       : `<span class="slash-ac-cmd">${c.cmd}</span>` +
         `<span class="slash-ac-desc">${c.desc}</span>`) +
