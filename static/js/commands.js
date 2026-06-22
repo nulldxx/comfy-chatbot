@@ -437,7 +437,7 @@ function renderJobsGrid(bubble, deps) {
   load();
 }
 
-function renderMacroEditor(bubble, name, initialSteps) {
+function renderMacroEditor(bubble, name, initialSteps, onCancel) {
   const steps = [...initialSteps];
 
   const wrap = document.createElement('div');
@@ -577,8 +577,12 @@ function renderMacroEditor(bubble, name, initialSteps) {
   });
 
   cancelBtn.addEventListener('click', () => {
-    bubble.innerHTML = 'Macro creation cancelled.';
-    scrollBottom();
+    if (onCancel) {
+      onCancel();
+    } else {
+      bubble.innerHTML = 'Macro creation cancelled.';
+      scrollBottom();
+    }
   });
 
   btnRow.appendChild(saveBtn);
@@ -2534,6 +2538,21 @@ export function makeCommandHandler(deps) {
         label.style.cssText = 'font-size:0.85rem;color:#94a3b8;flex:1;min-width:0;overflow-wrap:break-word';
         label.innerHTML = `<code>#${escapeHtml(name)}</code> <span style="color:#475569">— ${macroStepList.length} step(s)</span>`;
 
+        const editBtn = document.createElement('button');
+        editBtn.className = 'sel-del-btn';
+        editBtn.title = 'Edit macro';
+        editBtn.innerHTML = '&#9999;&#xFE0E;';
+        editBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          const savedChildren = Array.from(bubble.childNodes).map(n => n.cloneNode(true));
+          bubble.innerHTML = '';
+          renderMacroEditor(bubble, name, state.MACROS[name] || [], () => {
+            bubble.innerHTML = '';
+            savedChildren.forEach(n => bubble.appendChild(n));
+            scrollBottom();
+          });
+        });
+
         const delBtn = document.createElement('button');
         delBtn.className = 'sel-del-btn';
         delBtn.title = 'Delete macro';
@@ -2564,6 +2583,7 @@ export function makeCommandHandler(deps) {
         });
 
         row.appendChild(label);
+        row.appendChild(editBtn);
         row.appendChild(delBtn);
         selList.appendChild(row);
       });
