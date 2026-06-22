@@ -456,6 +456,17 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
   stepsList.className = 'sel-list';
   stepsList.style.cssText = 'gap:4px;margin-top:2px';
 
+  function flushEdits() {
+    stepsList.querySelectorAll('textarea.step-edit').forEach((ta, i) => {
+      if (i < steps.length) steps[i] = ta.value;
+    });
+  }
+
+  function autoResize(ta) {
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+  }
+
   function renderStepsList() {
     stepsList.innerHTML = '';
     if (!steps.length) {
@@ -468,27 +479,34 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
     steps.forEach((step, i) => {
       const row = document.createElement('div');
       row.className = 'sel-row';
+      row.style.alignItems = 'flex-start';
 
       const num = document.createElement('span');
-      num.style.cssText = 'color:#475569;font-size:0.78rem;min-width:18px;flex-shrink:0';
+      num.style.cssText = 'color:#475569;font-size:0.78rem;min-width:18px;flex-shrink:0;padding-top:5px';
       num.textContent = (i + 1) + '.';
 
-      const lbl = document.createElement('div');
-      lbl.style.cssText = 'font-size:0.82rem;color:#cbd5e1;flex:1;min-width:0;overflow-wrap:break-word;font-family:monospace';
-      lbl.textContent = step;
+      const ta = document.createElement('textarea');
+      ta.className = 'step-edit';
+      ta.value = step;
+      ta.rows = 1;
+      ta.style.cssText = 'flex:1;min-width:0;font-size:0.82rem;color:#cbd5e1;font-family:monospace;background:#1e293b;border:1px solid #334155;border-radius:4px;padding:3px 6px;resize:none;overflow:hidden';
+      ta.addEventListener('input', () => autoResize(ta));
+      setTimeout(() => autoResize(ta), 0);
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'sel-del-btn';
       removeBtn.innerHTML = '&#128465;&#xFE0E;';
       removeBtn.title = 'Remove step';
+      removeBtn.style.cssText = 'flex-shrink:0;margin-top:2px';
       removeBtn.addEventListener('click', () => {
+        flushEdits();
         steps.splice(i, 1);
         renderStepsList();
         scrollBottom();
       });
 
       row.appendChild(num);
-      row.appendChild(lbl);
+      row.appendChild(ta);
       row.appendChild(removeBtn);
       stepsList.appendChild(row);
     });
@@ -512,6 +530,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
   function addStep() {
     const val = stepInput.value.trim();
     if (!val) return;
+    flushEdits();
     steps.push(val);
     stepInput.value = '';
     stepInput.style.height = 'auto';
@@ -542,6 +561,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
   cancelBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
 
   saveBtn.addEventListener('click', () => {
+    flushEdits();
     const pendingStep = stepInput.value.trim();
     if (pendingStep) {
       steps.push(pendingStep);
