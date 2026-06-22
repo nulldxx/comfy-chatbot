@@ -49,6 +49,7 @@ export const state = {
 
   // Catalogues (populated via fetch on startup)
   ALIASES:                     {},
+  MACROS:                      {},
   LORAS:                       [],
 
   // Image2video end-frame selection

@@ -38,6 +38,11 @@ fetch('/api/aliases')
   .then(data => { if (data && typeof data === 'object') state.ALIASES = data; })
   .catch(() => {});
 
+fetch('/api/macros')
+  .then(r => r.json())
+  .then(data => { if (data && typeof data === 'object') state.MACROS = data; })
+  .catch(() => {});
+
 // ---------------------------------------------------------------------------
 // Header status
 // ---------------------------------------------------------------------------
@@ -843,6 +848,36 @@ function sendMessage() {
 
   if (!raw && state.history.length) raw = state.history[0];
   if (!raw || sendBtn.disabled) return;
+
+  if (raw.startsWith('#')) {
+    const macroName = raw.slice(1).trim();
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+    if (state.history[0] !== raw) state.history.unshift(raw);
+    state.historyIdx = -1;
+    state.savedDraft = '';
+    const macroSteps = state.MACROS[macroName];
+    if (!macroSteps || !macroSteps.length) {
+      addMessage('bot', `<span style="color:#f87171">⚠ No macro named <code>#${escapeHtml(macroName)}</code> — use <code>/macro-list</code> to see macros or <code>/macro-create ${escapeHtml(macroName)}</code> to create one.</span>`);
+      return;
+    }
+    addMessage('user', `#${escapeHtml(macroName)}`, raw);
+    sendBtn.disabled = true;
+    (async () => {
+      for (const step of macroSteps) {
+        if (step.startsWith('/')) {
+          handleSlashCommand(step);
+        } else {
+          const prompt = expandAliases(step, state.ALIASES);
+          addMessage('user', escapeHtml(prompt), prompt);
+          const ok = await runGeneration(prompt, '');
+          if (!ok) break;
+        }
+      }
+      sendBtn.disabled = false;
+    })();
+    return;
+  }
 
   if (raw.startsWith('/')) {
     inputEl.value = '';

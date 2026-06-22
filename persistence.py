@@ -120,3 +120,25 @@ def load_aliases():
 
 def save_aliases(aliases):
     aliases_file().write_text(json.dumps(aliases, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Macros
+# ---------------------------------------------------------------------------
+
+def macros_file():
+    return IMAGES_DIR / "macros.json"
+
+
+def load_macros():
+    f = macros_file()
+    if not f.is_file():
+        return {}
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return {}
+
+
+def save_macros(macros):
+    macros_file().write_text(json.dumps(macros, indent=2))

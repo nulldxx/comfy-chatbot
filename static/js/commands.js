@@ -245,6 +245,13 @@ function showSessionSummary() {
     rows.push({ label: `Aliases (${aliasKeys.length})`, value: `${preview}${more} — <code>/alias-list</code> to see all` });
   }
 
+  const macroKeys = Object.keys(state.MACROS).sort();
+  if (macroKeys.length) {
+    const preview = macroKeys.slice(0, 3).map(k => `<code>#${escapeHtml(k)}</code>`).join(', ');
+    const more = macroKeys.length > 3 ? ` <span style="color:#475569">+${macroKeys.length - 3} more</span>` : '';
+    rows.push({ label: `Macros (${macroKeys.length})`, value: `${preview}${more} — <code>/macro-list</code> to see all` });
+  }
+
   rows.push({ label: 'Session images', value: `<span style="color:#a78bfa">${state.sessionImages.length}</span>` });
 
   const rowsHtml = rows
@@ -428,6 +435,158 @@ function renderJobsGrid(bubble, deps) {
   }
 
   load();
+}
+
+function renderMacroEditor(bubble, name, initialSteps) {
+  const steps = [...initialSteps];
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+
+  const title = document.createElement('strong');
+  title.innerHTML = `Macro: <code>#${escapeHtml(name)}</code>`;
+  wrap.appendChild(title);
+
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:0.8rem;color:#64748b';
+  hint.textContent = 'Each step is a prompt or a /command, run in order when you type #' + name + '.';
+  wrap.appendChild(hint);
+
+  const stepsList = document.createElement('div');
+  stepsList.className = 'sel-list';
+  stepsList.style.cssText = 'gap:4px;margin-top:2px';
+
+  function renderStepsList() {
+    stepsList.innerHTML = '';
+    if (!steps.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:#475569;font-size:0.82rem;padding:4px 0';
+      empty.textContent = 'No steps yet — add some below.';
+      stepsList.appendChild(empty);
+      return;
+    }
+    steps.forEach((step, i) => {
+      const row = document.createElement('div');
+      row.className = 'sel-row';
+
+      const num = document.createElement('span');
+      num.style.cssText = 'color:#475569;font-size:0.78rem;min-width:18px;flex-shrink:0';
+      num.textContent = (i + 1) + '.';
+
+      const lbl = document.createElement('div');
+      lbl.style.cssText = 'font-size:0.82rem;color:#cbd5e1;flex:1;min-width:0;overflow-wrap:break-word;font-family:monospace';
+      lbl.textContent = step;
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'sel-del-btn';
+      removeBtn.innerHTML = '&#128465;&#xFE0E;';
+      removeBtn.title = 'Remove step';
+      removeBtn.addEventListener('click', () => {
+        steps.splice(i, 1);
+        renderStepsList();
+        scrollBottom();
+      });
+
+      row.appendChild(num);
+      row.appendChild(lbl);
+      row.appendChild(removeBtn);
+      stepsList.appendChild(row);
+    });
+  }
+  renderStepsList();
+  wrap.appendChild(stepsList);
+
+  const addRow = document.createElement('div');
+  addRow.style.cssText = 'display:flex;gap:6px;align-items:flex-end';
+
+  const stepInput = document.createElement('textarea');
+  stepInput.placeholder = 'Type a prompt or /command…';
+  stepInput.rows = 2;
+  stepInput.style.cssText = 'flex:1;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:4px 6px;font-size:0.82rem;resize:vertical;min-height:40px;font-family:inherit';
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'sel-btn';
+  addBtn.textContent = 'Add';
+  addBtn.style.cssText = 'flex:none;padding:4px 12px;font-size:0.82rem;align-self:flex-end';
+
+  function addStep() {
+    const val = stepInput.value.trim();
+    if (!val) return;
+    steps.push(val);
+    stepInput.value = '';
+    stepInput.style.height = 'auto';
+    renderStepsList();
+    scrollBottom();
+  }
+
+  addBtn.addEventListener('click', addStep);
+  stepInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addStep(); }
+  });
+
+  addRow.appendChild(stepInput);
+  addRow.appendChild(addBtn);
+  wrap.appendChild(addRow);
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:2px';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'sel-btn';
+  saveBtn.textContent = 'Save';
+  saveBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'sel-btn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+
+  saveBtn.addEventListener('click', () => {
+    const pendingStep = stepInput.value.trim();
+    if (pendingStep) {
+      steps.push(pendingStep);
+      stepInput.value = '';
+      renderStepsList();
+    }
+    if (!steps.length) {
+      addMessage('bot', '<span style="color:#f87171">⚠ A macro needs at least one step.</span>');
+      scrollBottom();
+      return;
+    }
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+    fetch('/api/macros', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, steps }),
+    })
+    .then(parseJsonResponse)
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      state.MACROS[name] = steps.slice();
+      const verb = data.updated ? 'Updated' : 'Created';
+      bubble.innerHTML = `${verb} macro <code>#${escapeHtml(name)}</code> — ${steps.length} step(s). Type <code>#${escapeHtml(name)}</code> to run it.`;
+      scrollBottom();
+    })
+    .catch(err => {
+      saveBtn.disabled = false;
+      cancelBtn.disabled = false;
+      addMessage('bot', `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`);
+      scrollBottom();
+    });
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    bubble.innerHTML = 'Macro creation cancelled.';
+    scrollBottom();
+  });
+
+  btnRow.appendChild(saveBtn);
+  btnRow.appendChild(cancelBtn);
+  wrap.appendChild(btnRow);
+
+  bubble.appendChild(wrap);
+  scrollBottom();
 }
 
 export function makeCommandHandler(deps) {
@@ -1023,6 +1182,8 @@ export function makeCommandHandler(deps) {
         { sig: '/jobs', desc: 'grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)' },
         { sig: '/last-sent', desc: 'show the last workflow submitted to ComfyUI with all replacements applied — downloadable as JSON' },
         { sig: '/lora', desc: 'fuzzy-find a LoRA to insert (works anywhere in a prompt)' },
+        { sig: '/macro-create <name>', desc: 'open an inline editor to define a named macro — a sequence of prompts and/or /commands run in order', notes: 'invoke the macro later by typing <code>#name</code> — e.g. <code>/macro-create warmup</code> then <code>#warmup</code><br>re-run <code>/macro-create name</code> to edit an existing macro' },
+        { sig: '/macro-list', desc: 'list all defined macros with a delete button for each' },
         { sig: '/multi-prompt', desc: 'generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)' },
         { sig: '/purge', desc: 'free GPU memory on the active ComfyUI server' },
         { sig: '/review <n>', desc: 'grid of the last N images, oldest first' },
@@ -2216,6 +2377,86 @@ export function makeCommandHandler(deps) {
               bubble.innerHTML = 'No aliases defined. Use <code>/alias-create &lt;word&gt; &lt;expansion&gt;</code> to create one.';
             } else {
               header.textContent = `Aliases (${selList.querySelectorAll('.sel-row').length}):`;
+            }
+            scrollBottom();
+          })
+          .catch(err => {
+            delBtn.disabled = false;
+            delBtn.style.opacity = '';
+            addMessage('bot', `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
+            scrollBottom();
+          });
+        });
+
+        row.appendChild(label);
+        row.appendChild(delBtn);
+        selList.appendChild(row);
+      });
+
+      bubble.appendChild(header);
+      bubble.appendChild(selList);
+      scrollBottom();
+      return;
+    }
+
+    if (cmd === '/macro-create') {
+      addMessage('user', escapeHtml(raw), raw);
+      const macroName = parts[1];
+      if (!macroName) {
+        addMessage('bot', 'Usage: <code>/macro-create &lt;name&gt;</code> — opens an editor to define the macro steps.<br>' +
+          'e.g. <code>/macro-create mymacro</code><br>' +
+          'Run the macro later by typing <code>#mymacro</code>.');
+        return;
+      }
+      if (macroName.includes('/')) {
+        addMessage('bot', '<span style="color:#f87171">⚠ Macro name cannot contain slashes.</span>');
+        return;
+      }
+      const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+      renderMacroEditor(bubble, macroName, state.MACROS[macroName] || []);
+      return;
+    }
+
+    if (cmd === '/macro-list') {
+      addMessage('user', escapeHtml(raw), raw);
+      const entries = Object.entries(state.MACROS).sort(([a], [b]) => a.localeCompare(b));
+      if (!entries.length) {
+        addMessage('bot', 'No macros defined. Use <code>/macro-create &lt;name&gt;</code> to create one.');
+        return;
+      }
+      const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+      const header = document.createElement('strong');
+      header.textContent = `Macros (${entries.length}):`;
+      const selList = document.createElement('div');
+      selList.className = 'sel-list';
+      selList.style.cssText = 'margin-top:8px;gap:4px';
+
+      entries.forEach(([name, macroStepList]) => {
+        const row = document.createElement('div');
+        row.className = 'sel-row';
+
+        const label = document.createElement('div');
+        label.style.cssText = 'font-size:0.85rem;color:#94a3b8;flex:1;min-width:0;overflow-wrap:break-word';
+        label.innerHTML = `<code>#${escapeHtml(name)}</code> <span style="color:#475569">— ${macroStepList.length} step(s)</span>`;
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'sel-del-btn';
+        delBtn.title = 'Delete macro';
+        delBtn.innerHTML = '&#128465;&#xFE0E;';
+        delBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          delBtn.disabled = true;
+          delBtn.style.opacity = '0.4';
+          fetch('/api/macros/' + encodeURIComponent(name), { method: 'DELETE' })
+          .then(parseJsonResponse)
+          .then(data => {
+            if (data.error) throw new Error(data.error);
+            delete state.MACROS[name];
+            row.remove();
+            if (!selList.querySelector('.sel-row')) {
+              bubble.innerHTML = 'No macros defined. Use <code>/macro-create &lt;name&gt;</code> to create one.';
+            } else {
+              header.textContent = `Macros (${selList.querySelectorAll('.sel-row').length}):`;
             }
             scrollBottom();
           })

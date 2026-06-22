@@ -46,8 +46,8 @@ from image_store import (
     select_images,
 )
 from persistence import (
-    delete_session, list_sessions, load_aliases, load_session,
-    save_aliases, save_session, slugify,
+    delete_session, list_sessions, load_aliases, load_macros, load_session,
+    save_aliases, save_macros, save_session, slugify,
 )
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -1407,6 +1407,50 @@ def api_alias_delete(alias_from):
         save_aliases(aliases)
     except OSError as e:
         return jsonify({"error": f"Could not save aliases: {e}"}), 500
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Macros
+# ---------------------------------------------------------------------------
+
+@app.route("/api/macros")
+@login_required
+def api_macros():
+    return jsonify(load_macros())
+
+
+@app.route("/api/macros", methods=["POST"])
+@login_required
+def api_macro_create():
+    data = request.json or {}
+    name = (data.get("name") or "").strip()
+    steps = data.get("steps") or []
+    if not name or " " in name or "/" in name:
+        return jsonify({"error": "Macro name cannot be empty or contain spaces/slashes"}), 400
+    if not steps:
+        return jsonify({"error": "Macro must have at least one step"}), 400
+    macros = load_macros()
+    updated = name in macros
+    macros[name] = [s for s in steps if isinstance(s, str) and s.strip()]
+    try:
+        save_macros(macros)
+    except OSError as e:
+        return jsonify({"error": f"Could not save macros: {e}"}), 500
+    return jsonify({"ok": True, "name": name, "updated": updated})
+
+
+@app.route("/api/macros/<macro_name>", methods=["DELETE"])
+@login_required
+def api_macro_delete(macro_name):
+    macros = load_macros()
+    if macro_name not in macros:
+        return jsonify({"error": "Macro not found"}), 404
+    del macros[macro_name]
+    try:
+        save_macros(macros)
+    except OSError as e:
+        return jsonify({"error": f"Could not save macros: {e}"}), 500
     return jsonify({"ok": True})
 
 

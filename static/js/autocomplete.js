@@ -41,6 +41,8 @@ export const SLASH_COMMANDS = [
   { cmd: '/jobs',                         desc: 'show the last 10 server-side jobs (status, cancel, pull asset into chat)',           args: ''  },
   { cmd: '/last-sent',                    desc: 'show the last workflow sent to ComfyUI with all replacements (downloadable JSON)',     args: ''  },
   { cmd: '/lora',                         desc: 'fuzzy-find a LoRA to insert',                                                        args: ' ' },
+  { cmd: '/macro-create',                 desc: 'create or update a macro (name + inline step editor)',                               args: ' ' },
+  { cmd: '/macro-list',                   desc: 'list all defined macros',                                                            args: ''  },
   { cmd: '/multi-prompt',                 desc: 'generate images for multiple prompts (one per line)',                                args: '\n' },
   { cmd: '/purge',                        desc: 'free GPU memory on active server',                                                   args: ''  },
   { cmd: '/review',                       desc: 'grid of the last N images, oldest first',                                            args: ' ' },
@@ -79,7 +81,10 @@ let loraTriggerStart = -1;
 export function renderSlashAc() {
   slashAcEl.innerHTML = acMatches.map((c, i) =>
     `<div class="slash-ac-item${i === acFocused ? ' ac-focused' : ''}" data-idx="${i}">` +
-    (acMode === 'lora'
+    (acMode === 'macro'
+      ? `<span class="slash-ac-cmd">#${escapeHtml(c.name)}</span>` +
+        `<span class="slash-ac-desc">${c.steps.length} step(s)</span>`
+      : acMode === 'lora'
       ? `<span class="slash-ac-cmd">${escapeHtml(c.name)}</span>` +
         `<span class="slash-ac-desc">${c.triggers ? escapeHtml(c.triggers) : 'strength ' + c.strength}</span>`
       : `<span class="slash-ac-cmd">${c.cmd}</span>` +
@@ -120,6 +125,21 @@ export function updateSlashAc() {
 
   acMode = 'cmd';
   const val = inputEl.value;
+
+  if (val.startsWith('#') && !val.includes(' ')) {
+    const query = val.slice(1).toLowerCase();
+    acMode = 'macro';
+    acMatches = Object.entries(state.MACROS)
+      .map(([name, steps]) => ({ name, steps, score: query ? fuzzyScore(query, name) : 0 }))
+      .filter(m => !query || m.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8);
+    if (!acMatches.length) { hideSlashAc(); return; }
+    acFocused = -1;
+    renderSlashAc();
+    return;
+  }
+
   if (!val.startsWith('/') || val.includes(' ')) { hideSlashAc(); return; }
   const typed = val.toLowerCase();
   acMatches = SLASH_COMMANDS.filter(c => c.cmd.startsWith(typed));
@@ -133,6 +153,13 @@ export function updateSlashAc() {
 export function selectSlashAcItem(idx) {
   const c = acMatches[idx];
   if (!c) return;
+  if (acMode === 'macro') {
+    inputEl.value = '#' + c.name;
+    hideSlashAc();
+    inputEl.focus();
+    inputEl.style.height = 'auto';
+    return;
+  }
   if (acMode === 'lora') {
     const suffix = c.triggers ? ' ' + c.triggers : '';
     const tag    = `<lora:${c.name}:${c.strength}>${suffix} `;
@@ -182,7 +209,7 @@ export function setAcFocused(v) { acFocused = v; }
 // longest common prefix of all matches. Only add the args suffix (e.g. a
 // trailing space) when the prefix uniquely identifies a single command.
 export function tabCompleteSlashAc() {
-  if (acMode === 'lora' || acFocused >= 0) {
+  if (acMode === 'lora' || acMode === 'macro' || acFocused >= 0) {
     selectSlashAcItem(acFocused >= 0 ? acFocused : 0);
     return;
   }
