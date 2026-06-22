@@ -1160,10 +1160,10 @@ export function makeCommandHandler(deps) {
         fdSessionChain = fdSessionChain.then(() => {
           const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]);
           if (!prompt) {
-            addMessage(‘bot’, ‘<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>’);
+            addMessage('bot', '<span style="color:#f87171">No LoRA in this image\'s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
             return;
           }
-          addMessage(‘user’, ‘Face detail: ‘ + escapeHtml(prompt));
+          addMessage('user', 'Face detail: ' + escapeHtml(prompt));
           return deps.runFaceDetail(prompt, img);
         });
       });
@@ -1188,10 +1188,10 @@ export function makeCommandHandler(deps) {
         fdChain = fdChain.then(() => {
           const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]);
           if (!prompt) {
-            addMessage(‘bot’, ‘<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>’);
+            addMessage('bot', '<span style="color:#f87171">No LoRA in this image\'s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
             return;
           }
-          addMessage(‘user’, ‘Face detail: ‘ + escapeHtml(prompt));
+          addMessage('user', 'Face detail: ' + escapeHtml(prompt));
           return deps.runFaceDetail(prompt, img);
         });
       });
