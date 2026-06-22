@@ -81,7 +81,7 @@ export function renderSlashAc() {
     `<div class="slash-ac-item${i === acFocused ? ' ac-focused' : ''}" data-idx="${i}">` +
     (acMode === 'lora'
       ? `<span class="slash-ac-cmd">${escapeHtml(c.label)}</span>` +
-        `<span class="slash-ac-desc">strength ${c.strength}</span>`
+        `<span class="slash-ac-desc">${c.triggers ? escapeHtml(c.triggers) : 'strength ' + c.strength}</span>`
       : `<span class="slash-ac-cmd">${c.cmd}</span>` +
         `<span class="slash-ac-desc">${c.desc}</span>`) +
     `</div>`
@@ -134,8 +134,9 @@ export function selectSlashAcItem(idx) {
   const c = acMatches[idx];
   if (!c) return;
   if (acMode === 'lora') {
-    const tag   = `<lora:${c.name}:${c.strength}> `;
-    const caret = inputEl.selectionStart;
+    const suffix = c.triggers ? ' ' + c.triggers : '';
+    const tag    = `<lora:${c.name}:${c.strength}>${suffix} `;
+    const caret  = inputEl.selectionStart;
     inputEl.value = inputEl.value.slice(0, loraTriggerStart) + tag + inputEl.value.slice(caret);
     const pos = loraTriggerStart + tag.length;
     hideSlashAc();

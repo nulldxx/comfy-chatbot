@@ -256,7 +256,8 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
 
         mapping = {"PROMPT": prompt}
         for i, (name, strength) in enumerate(loras, start=1):
-            mapping[f"LORA_{i}_NAME"] = lora_path_for_os(name, server_os)
+            lora_name = name if name.endswith('.safetensors') else f"{name}.safetensors"
+            mapping[f"LORA_{i}_NAME"] = lora_path_for_os(lora_name, server_os)
             mapping[f"LORA_{i}_STRENGTH"] = strength
         if loras:
             names = ", ".join(f"{n} ({s})" for n, s in loras)

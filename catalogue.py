@@ -25,10 +25,13 @@ def load_loras():
         return []
     try:
         data = json.loads(COMFY_LORAS_FILE.read_text())
-        loras = data.get("loras", [])
         return [
-            entry if isinstance(entry, dict) else {"name": entry, "strength": 1.0}
-            for entry in loras
+            {
+                "name": name,
+                "strength": float(meta.get("suggested_strength") or 0.8),
+                "triggers": meta.get("active_triggers") or "",
+            }
+            for name, meta in data.items()
         ]
     except Exception:
         return []

@@ -24,11 +24,12 @@ import { makeCommandHandler } from './commands.js';
 fetch('/api/loras')
   .then(r => r.json())
   .then(loras => {
-    state.LORAS = loras.map(entry => {
-      const name     = typeof entry === 'string' ? entry : entry.name;
-      const strength = typeof entry === 'string' ? 1.0  : (entry.strength ?? 1.0);
-      return { name, strength, label: name.split('/').pop().replace(/\.safetensors$/i, '') };
-    });
+    state.LORAS = loras.map(entry => ({
+      name:     entry.name,
+      strength: entry.strength ?? 0.8,
+      triggers: entry.triggers || '',
+      label:    entry.name.split('/').pop().replace(/\.safetensors$/i, ''),
+    }));
   })
   .catch(() => {});
 

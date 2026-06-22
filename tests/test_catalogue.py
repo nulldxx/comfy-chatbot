@@ -41,35 +41,58 @@ class TestLoadServerCatalogue(unittest.TestCase):
 
 class TestLoadLoras(unittest.TestCase):
     def test_missing_file_returns_empty(self):
-        with patch.object(catalogue, "COMFY_LORAS_FILE", Path("/no/such/loras.json")):
+        with patch.object(catalogue, "COMFY_LORAS_FILE", Path("/no/such/loras-new.json")):
             self.assertEqual(catalogue.load_loras(), [])
 
-    def test_string_entries_normalised_to_dicts(self):
+    def test_new_format_parsed_correctly(self):
+        data = {"z-image/known/zit-ljr": {"active_triggers": "ljr", "suggested_strength": "0.8"}}
         with tempfile.TemporaryDirectory() as d:
-            f = Path(d) / "loras.json"
-            f.write_text(json.dumps({"loras": ["my-lora"]}))
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps(data))
             with patch.object(catalogue, "COMFY_LORAS_FILE", f):
                 result = catalogue.load_loras()
-        self.assertEqual(result, [{"name": "my-lora", "strength": 1.0}])
+        self.assertEqual(result, [{"name": "z-image/known/zit-ljr", "strength": 0.8, "triggers": "ljr"}])
 
-    def test_dict_entries_preserved(self):
+    def test_null_strength_defaults_to_0_8(self):
+        data = {"my-lora": {"active_triggers": "", "suggested_strength": None}}
         with tempfile.TemporaryDirectory() as d:
-            f = Path(d) / "loras.json"
-            f.write_text(json.dumps({"loras": [{"name": "my-lora", "strength": 0.7}]}))
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps(data))
             with patch.object(catalogue, "COMFY_LORAS_FILE", f):
                 result = catalogue.load_loras()
-        self.assertEqual(result, [{"name": "my-lora", "strength": 0.7}])
+        self.assertEqual(result[0]["strength"], 0.8)
+
+    def test_triggers_included(self):
+        data = {"chroma/style/chroma-80s-fantasy-movie": {
+            "active_triggers": "ArsMovieStill, 80s Fantasy Movie Still",
+            "suggested_strength": None,
+        }}
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps(data))
+            with patch.object(catalogue, "COMFY_LORAS_FILE", f):
+                result = catalogue.load_loras()
+        self.assertEqual(result[0]["triggers"], "ArsMovieStill, 80s Fantasy Movie Still")
+
+    def test_empty_triggers_becomes_empty_string(self):
+        data = {"my-lora": {"active_triggers": "", "suggested_strength": "0.75"}}
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps(data))
+            with patch.object(catalogue, "COMFY_LORAS_FILE", f):
+                result = catalogue.load_loras()
+        self.assertEqual(result[0]["triggers"], "")
 
     def test_malformed_json_returns_empty(self):
         with tempfile.TemporaryDirectory() as d:
-            f = Path(d) / "loras.json"
+            f = Path(d) / "loras-new.json"
             f.write_text("oops")
             with patch.object(catalogue, "COMFY_LORAS_FILE", f):
                 self.assertEqual(catalogue.load_loras(), [])
 
-    def test_missing_loras_key_returns_empty(self):
+    def test_empty_object_returns_empty(self):
         with tempfile.TemporaryDirectory() as d:
-            f = Path(d) / "loras.json"
+            f = Path(d) / "loras-new.json"
             f.write_text(json.dumps({}))
             with patch.object(catalogue, "COMFY_LORAS_FILE", f):
                 self.assertEqual(catalogue.load_loras(), [])
@@ -80,11 +103,11 @@ class TestLoraCatalogueStrength(unittest.TestCase):
         return patch.object(catalogue, "load_loras", return_value=entries)
 
     def test_returns_strength_as_string(self):
-        with self._patch_loras([{"name": "x", "strength": 0.8}]):
+        with self._patch_loras([{"name": "x", "strength": 0.8, "triggers": "ljr"}]):
             self.assertEqual(catalogue.lora_catalogue_strength("x"), "0.8")
 
     def test_missing_lora_returns_none(self):
-        with self._patch_loras([{"name": "y", "strength": 1.0}]):
+        with self._patch_loras([{"name": "y", "strength": 0.8, "triggers": ""}]):
             self.assertIsNone(catalogue.lora_catalogue_strength("missing"))
 
     def test_empty_catalogue_returns_none(self):

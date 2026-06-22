@@ -10,7 +10,7 @@ COMFY_SERVER = os.environ.get('COMFY_SERVER', '192.168.1.135:8000')
 COMFY_SERVER_OS = os.environ.get('COMFY_SERVER_OS', 'unix')
 COMFY_WORKFLOW = os.environ.get('COMFY_WORKFLOW', 'z_image_turbo_api')
 COMFY_WORKFLOW_DIR = Path(os.environ.get('COMFY_WORKFLOW_DIR', '/app/workflows'))
-COMFY_LORAS_FILE = Path(os.environ.get('COMFY_LORAS_FILE', '/app/workflows/loras.json'))
+COMFY_LORAS_FILE = Path(os.environ.get('COMFY_LORAS_FILE', '/app/workflows/loras-new.json'))
 # Generation workflows live in a subdir of the main workflow folder, alongside
 # the facedetailer/ and upscaler/ subdirs. (loras.json and servers.json stay in
 # the workflow folder root.)
