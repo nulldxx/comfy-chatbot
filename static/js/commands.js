@@ -1024,6 +1024,34 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/upscale-workflow') {
+      const wfArg = raw.slice('/upscale-workflow'.length).trim();
+      if (wfArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        state.currentUpscaleWorkflow = wfArg;
+        addMessage('bot', `Upscale workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        return;
+      }
+      renderWorkflowPicker({
+        url: '/api/upscaler-workflows',
+        title: 'Select an upscaler workflow:',
+        loadingText: 'Loading upscaler workflows…',
+        failLabel: 'upscaler workflows',
+        emptyMsg: 'No upscaler workflows available — add one to the <code>upscaler/</code> folder.',
+        current: state.currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW,
+        setMsg: 'Upscale workflow set to',
+        onSelect: wf => { state.currentUpscaleWorkflow = wf; },
+      });
+      return;
+    }
+
+    if (cmd === '/upscale-workflow-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.currentUpscaleWorkflow = null;
+      addMessage('bot', 'Upscale workflow reset to default.');
+      return;
+    }
+
     if (cmd === '/image2image') {
       addMessage('user', escapeHtml(raw), raw);
       if (!state.sessionImages.length) {
@@ -1293,6 +1321,8 @@ export function makeCommandHandler(deps) {
         { sig: '/slideshow-today', desc: 'browse today\'s images, oldest first' },
         { sig: '/splice-session', desc: 'drag this session\'s videos into order, then press ✓ to join them into one clip' },
         { sig: '/upscale [N]', desc: 'run an upscaler workflow over the last N generated images (default 1, no prompt needed)' },
+        { sig: '/upscale-workflow [name]', desc: 'choose which upscaler workflow the <code>/upscale</code> command and ⬆ button use (no arg = picker)' },
+        { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
         { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video' },
         { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
         { sig: '/workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },

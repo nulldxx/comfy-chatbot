@@ -72,6 +72,8 @@ export const SLASH_COMMANDS = [
   { cmd: '/slideshow-today',              desc: 'browse today\'s images, oldest first',                                               args: ''  },
   { cmd: '/splice-session',               desc: 'drag to reorder this session\'s videos, then ✓ to join them into one',               args: ''  },
   { cmd: '/upscale',                      desc: 'upscale the last N images (default 1, no prompt)',                                   args: ' ' },
+  { cmd: '/upscale-workflow',             desc: 'choose an upscaler workflow (no arg = picker)',                                      args: ' ' },
+  { cmd: '/upscale-workflow-reset',       desc: 'reset the upscaler workflow to its default',                                         args: ''  },
   { cmd: '/video-sequence',               desc: 'like /sequence, plus per-shot action & audio for video (Grok)',                      args: ' ' },
   { cmd: '/video-settings',               desc: 'set video duration, frames, fps, resolution & audio (lock one, the others follow)',  args: ''  },
   { cmd: '/workflow',                     desc: 'choose an image generation workflow template (no arg = picker)',                     args: ' ' },
