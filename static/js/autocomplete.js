@@ -63,6 +63,8 @@ export const SLASH_COMMANDS = [
   { cmd: '/session-new',                  desc: 'start a new session (resets all settings)',                                          args: ''  },
   { cmd: '/session-save',                 desc: 'save the current session (no name: pick one to overwrite)',                          args: ' ' },
   { cmd: '/session-summary',              desc: 'show active settings (workflow, replacements, etc.)',                                args: ''  },
+  { cmd: '/settings-restore',            desc: 'pop and reapply the most recent /settings-save snapshot',                            args: ''  },
+  { cmd: '/settings-save',              desc: 'push a snapshot of all generation settings onto an in-memory stack',                  args: ''  },
   { cmd: '/slideshow',                    desc: 'browse the last N images, oldest first',                                             args: ' ' },
   { cmd: '/slideshow-all',                desc: 'browse every image, oldest first',                                                   args: ''  },
   { cmd: '/slideshow-reverse',            desc: 'browse every image, newest first',                                                   args: ''  },

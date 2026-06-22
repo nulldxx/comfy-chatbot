@@ -1284,6 +1284,8 @@ export function makeCommandHandler(deps) {
         { sig: '/session-new', desc: 'start a completely new session, resetting all settings to defaults' },
         { sig: '/session-save <name>', desc: 'save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete' },
         { sig: '/session-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
+        { sig: '/settings-save', desc: 'push a snapshot of all generation settings (workflows, resolution, denoise, video settings, override prompts, replacements) onto an in-memory stack; pair with <code>/settings-restore</code> to bracket a macro so it leaves settings unchanged' },
+        { sig: '/settings-restore', desc: 'pop and reapply the most recent <code>/settings-save</code> snapshot; warns if the stack is empty; stack-based so nested macros work correctly without cross-contaminating each other' },
         { sig: '/slideshow <n>', desc: 'browse the last N images, oldest first' },
         { sig: '/slideshow-all', desc: 'browse every image, oldest first' },
         { sig: '/slideshow-reverse', desc: 'browse every image, newest first' },
@@ -1956,6 +1958,66 @@ export function makeCommandHandler(deps) {
 
     if (cmd === '/session-summary') {
       showSessionSummary();
+      return;
+    }
+
+    if (cmd === '/settings-save') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.settingsStack.push({
+        workflow:                  state.currentWorkflow,
+        faceWorkflow:              state.currentFaceWorkflow,
+        upscaleWorkflow:           state.currentUpscaleWorkflow,
+        image2imageWorkflow:       state.currentImage2ImageWorkflow,
+        image2videoWorkflow:       state.currentImage2VideoWorkflow,
+        inpaintingWorkflow:        state.currentInpaintingWorkflow,
+        removalWorkflow:           state.currentRemovalWorkflow,
+        resolution:                state.currentResolution ? { ...state.currentResolution } : null,
+        generationSteps:           state.currentGenerationSteps,
+        iterations:                state.iterations,
+        currentDenoise:            { ...state.currentDenoise },
+        videoSettings:             { ...state.currentVideoSettings },
+        videoLock:                 state.videoLock,
+        sequenceReplacements:      state.sequenceReplacements.slice(),
+        image2imageReplacements:   state.image2imageReplacements.slice(),
+        image2imageOverridePrompt: state.image2imageOverridePrompt,
+        image2videoReplacements:   state.image2videoReplacements.slice(),
+        image2videoOverridePrompt: state.image2videoOverridePrompt,
+        lastFaceDetailPrompt:      state.lastFaceDetailPrompt,
+        lastInpaintingPrompt:      state.lastInpaintingPrompt,
+      });
+      addMessage('bot', `Settings snapshot saved (stack depth: ${state.settingsStack.length}).`);
+      return;
+    }
+
+    if (cmd === '/settings-restore') {
+      addMessage('user', escapeHtml(raw), raw);
+      if (!state.settingsStack.length) {
+        addMessage('bot', '<span style="color:#f87171">⚠ Nothing to restore — settings stack is empty.</span>');
+        return;
+      }
+      const s = state.settingsStack.pop();
+      state.currentWorkflow             = s.workflow;
+      state.currentFaceWorkflow         = s.faceWorkflow;
+      state.currentUpscaleWorkflow      = s.upscaleWorkflow;
+      state.currentImage2ImageWorkflow  = s.image2imageWorkflow;
+      state.currentImage2VideoWorkflow  = s.image2videoWorkflow;
+      state.currentInpaintingWorkflow   = s.inpaintingWorkflow;
+      state.currentRemovalWorkflow      = s.removalWorkflow;
+      state.currentResolution           = s.resolution;
+      state.currentGenerationSteps      = s.generationSteps;
+      state.iterations                  = s.iterations;
+      state.currentDenoise              = { ...DEFAULT_DENOISE, ...s.currentDenoise };
+      state.currentVideoSettings        = { ...DEFAULT_VIDEO_SETTINGS, ...s.videoSettings };
+      state.videoLock                   = s.videoLock;
+      state.sequenceReplacements        = s.sequenceReplacements;
+      state.image2imageReplacements     = s.image2imageReplacements;
+      state.image2imageOverridePrompt   = s.image2imageOverridePrompt;
+      state.image2videoReplacements     = s.image2videoReplacements;
+      state.image2videoOverridePrompt   = s.image2videoOverridePrompt;
+      state.lastFaceDetailPrompt        = s.lastFaceDetailPrompt;
+      state.lastInpaintingPrompt        = s.lastInpaintingPrompt;
+      deps.updateHeaderStatus();
+      addMessage('bot', `Settings restored from snapshot (stack depth: ${state.settingsStack.length}).`);
       return;
     }
 

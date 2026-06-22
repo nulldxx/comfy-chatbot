@@ -66,6 +66,9 @@ export const state = {
   // y/n confirmation callback for destructive commands
   pendingConfirm:              null,
 
+  // In-memory stack for /settings-save / /settings-restore
+  settingsStack:               [],
+
   // Tracks which elements are in faux-fullscreen so body overflow is only
   // restored when the last one exits.
   fauxFullscreenEls:           new Set(),
