@@ -449,7 +449,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
 
   const hint = document.createElement('div');
   hint.style.cssText = 'font-size:0.8rem;color:#64748b';
-  hint.textContent = 'Each step is a prompt or a /command, run in order when you type #' + name + '.';
+  hint.innerHTML = 'Each step is a prompt or a /command, run in order when you type <code>#' + escapeHtml(name) + '</code>. Use <code>&lt;PARAM&gt;</code> in any step — it is replaced by the text after the macro name when invoked, e.g. <code>#' + escapeHtml(name) + ' my text</code>.';
   wrap.appendChild(hint);
 
   const stepsList = document.createElement('div');

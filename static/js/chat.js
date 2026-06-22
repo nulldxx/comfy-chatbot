@@ -850,7 +850,10 @@ function sendMessage() {
   if (!raw || sendBtn.disabled) return;
 
   if (raw.startsWith('#')) {
-    const macroName = raw.slice(1).trim();
+    const rawContent = raw.slice(1).trim();
+    const spaceIdx = rawContent.indexOf(' ');
+    const macroName = spaceIdx === -1 ? rawContent : rawContent.slice(0, spaceIdx);
+    const macroParam = spaceIdx === -1 ? '' : rawContent.slice(spaceIdx + 1).trim();
     inputEl.value = '';
     inputEl.style.height = 'auto';
     if (state.history[0] !== raw) state.history.unshift(raw);
@@ -861,10 +864,11 @@ function sendMessage() {
       addMessage('bot', `<span style="color:#f87171">⚠ No macro named <code>#${escapeHtml(macroName)}</code> — use <code>/macro-list</code> to see macros or <code>/macro-create ${escapeHtml(macroName)}</code> to create one.</span>`);
       return;
     }
-    addMessage('user', `#${escapeHtml(macroName)}`, raw);
+    addMessage('user', `#${escapeHtml(macroName)}${macroParam ? ' ' + escapeHtml(macroParam) : ''}`, raw);
     sendBtn.disabled = true;
     (async () => {
-      for (const step of macroSteps) {
+      for (const rawStep of macroSteps) {
+        const step = macroParam ? rawStep.replace(/<PARAM>/gi, macroParam) : rawStep;
         if (step.startsWith('/')) {
           await handleSlashCommand(step);
         } else {
