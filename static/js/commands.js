@@ -786,6 +786,13 @@ export function makeCommandHandler(deps) {
     }
 
     if (cmd === '/image2image-workflow') {
+      const wfArg = raw.slice('/image2image-workflow'.length).trim();
+      if (wfArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        state.currentImage2ImageWorkflow = wfArg;
+        addMessage('bot', `Image2image workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        return;
+      }
       renderWorkflowPicker({
         url: '/api/image2image-workflows',
         title: 'Select an image2image workflow:',
@@ -796,6 +803,13 @@ export function makeCommandHandler(deps) {
         setMsg: 'Image2image workflow set to',
         onSelect: wf => { state.currentImage2ImageWorkflow = wf; },
       });
+      return;
+    }
+
+    if (cmd === '/image2image-workflow-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.currentImage2ImageWorkflow = null;
+      addMessage('bot', 'Image2image workflow reset to default.');
       return;
     }
 
@@ -852,6 +866,13 @@ export function makeCommandHandler(deps) {
     }
 
     if (cmd === '/image2video-workflow') {
+      const wfArg = raw.slice('/image2video-workflow'.length).trim();
+      if (wfArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        state.currentImage2VideoWorkflow = wfArg;
+        addMessage('bot', `Image2video workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        return;
+      }
       renderWorkflowPicker({
         url: '/api/image2video-workflows',
         title: 'Select an image2video workflow:',
@@ -862,6 +883,13 @@ export function makeCommandHandler(deps) {
         setMsg: 'Image2video workflow set to',
         onSelect: wf => { state.currentImage2VideoWorkflow = wf; },
       });
+      return;
+    }
+
+    if (cmd === '/image2video-workflow-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.currentImage2VideoWorkflow = null;
+      addMessage('bot', 'Image2video workflow reset to default.');
       return;
     }
 
@@ -907,6 +935,13 @@ export function makeCommandHandler(deps) {
     }
 
     if (cmd === '/inpaint-workflow') {
+      const wfArg = raw.slice('/inpaint-workflow'.length).trim();
+      if (wfArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        state.currentInpaintingWorkflow = wfArg;
+        addMessage('bot', `Inpainting workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        return;
+      }
       renderWorkflowPicker({
         url: '/api/inpainting-workflows',
         title: 'Select an inpainting workflow:',
@@ -917,6 +952,13 @@ export function makeCommandHandler(deps) {
         setMsg: 'Inpainting workflow set to',
         onSelect: wf => { state.currentInpaintingWorkflow = wf; },
       });
+      return;
+    }
+
+    if (cmd === '/inpaint-workflow-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.currentInpaintingWorkflow = null;
+      addMessage('bot', 'Inpainting workflow reset to default.');
       return;
     }
 
@@ -934,6 +976,13 @@ export function makeCommandHandler(deps) {
     }
 
     if (cmd === '/removal-workflow') {
+      const wfArg = raw.slice('/removal-workflow'.length).trim();
+      if (wfArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        state.currentRemovalWorkflow = wfArg;
+        addMessage('bot', `Removal workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        return;
+      }
       renderWorkflowPicker({
         url: '/api/removal-workflows',
         title: 'Select a removal workflow:',
@@ -944,6 +993,13 @@ export function makeCommandHandler(deps) {
         setMsg: 'Removal workflow set to',
         onSelect: wf => { state.currentRemovalWorkflow = wf; },
       });
+      return;
+    }
+
+    if (cmd === '/removal-workflow-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.currentRemovalWorkflow = null;
+      addMessage('bot', 'Removal workflow reset to default.');
       return;
     }
 
@@ -1163,21 +1219,27 @@ export function makeCommandHandler(deps) {
         { sig: '/face-detail-prompt <prompt>', desc: 'set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image\'s own prompt (needs a <code>&lt;lora:…&gt;</code> tag)' },
         { sig: '/face-detail-prompt-reset', desc: 'clear that override so the face icons derive a prompt from each image again' },
         { sig: '/face-detail-session', desc: 'face-detail every image from this session, one after another' },
-        { sig: '/face-detail-workflow', desc: 'choose which face-detailer workflow the face icons use' },
+        { sig: '/face-detail-workflow [name]', desc: 'choose which face-detailer workflow the face icons use (no arg = picker)' },
+        { sig: '/face-detail-workflow-reset', desc: 'reset the face-detailer workflow to its default' },
         { sig: '/help', desc: 'show this message' },
         { sig: '/image2image [N]', desc: 're-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set' },
         { sig: '/image2image-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)' },
         { sig: '/image2image-replacement-reset', desc: 'clear all image2image replacements' },
         { sig: '/image2image-set-prompt <prompt>', desc: 'override prompt used by <code>/image2image</code> and the 🎨 button instead of each image\'s original prompt (handy after a <code>/review</code>); no args shows it' },
         { sig: '/image2image-set-prompt-reset', desc: 'clear the override prompt' },
-        { sig: '/image2image-workflow', desc: 'choose which image2image workflow <code>/image2image</code> uses' },
+        { sig: '/image2image-workflow [name]', desc: 'choose which image2image workflow <code>/image2image</code> uses (no arg = picker)' },
+        { sig: '/image2image-workflow-reset', desc: 'reset the image2image workflow to its default' },
         { sig: '/image2video [N]', desc: 'run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set' },
         { sig: '/image2video-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/image2video</code> runs with no override (no args lists them)' },
         { sig: '/image2video-replacement-reset', desc: 'clear all image2video replacements' },
         { sig: '/image2video-set-prompt <prompt>', desc: 'override prompt used by <code>/image2video</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
         { sig: '/image2video-set-prompt-reset', desc: 'clear the override prompt' },
-        { sig: '/image2video-workflow', desc: 'choose which image2video workflow <code>/image2video</code> uses' },
+        { sig: '/image2video-workflow [name]', desc: 'choose which image2video workflow <code>/image2video</code> uses (no arg = picker)' },
+        { sig: '/image2video-workflow-reset', desc: 'reset the image2video workflow to its default' },
         { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },
+        { sig: '/inpaint-workflow [name]', desc: 'choose which inpainting workflow the 🩹 button uses (no arg = picker)' },
+        { sig: '/inpaint-workflow-reset', desc: 'reset the inpainting workflow to its default' },
+        { sig: '/inpainting-prompt <prompt>', desc: 'set the prompt used by the 🩹 inpaint button; no args clears it' },
         { sig: '/iterations <n>', desc: 'generate n images per prompt (default 1)' },
         { sig: '/jobs', desc: 'grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)' },
         { sig: '/last-sent', desc: 'show the last workflow submitted to ComfyUI with all replacements applied — downloadable as JSON' },
@@ -1190,6 +1252,8 @@ export function makeCommandHandler(deps) {
         { sig: '/review-all', desc: 'grid of every image, oldest first (tap to view, trash to delete)' },
         { sig: '/review-session', desc: 'grid of this session\'s images' },
         { sig: '/review-today', desc: 'grid of today\'s images, oldest first' },
+        { sig: '/removal-workflow [name]', desc: 'choose which object-removal workflow the removal button uses (no arg = picker)' },
+        { sig: '/removal-workflow-reset', desc: 'reset the removal workflow to its default' },
         { sig: '/sequence <master prompt>', desc: 'ask Grok to expand a master prompt into a sequence of prompts, then generate an image for each one after another', notes: 'count comes from <code>/iterations</code> (or 15 if iterations is 1) &nbsp;·&nbsp; needs <code>XAI_API_KEY</code> set on the server' },
         { sig: '/sequence-replacement <from> <to>', desc: 'find→replace applied to each Grok prompt (no args lists them)' },
         { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
@@ -1208,8 +1272,9 @@ export function makeCommandHandler(deps) {
         { sig: '/upscale [N]', desc: 'run an upscaler workflow over the last N generated images (default 1, no prompt needed)' },
         { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video' },
         { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
-        { sig: '/workflow', desc: 'choose an image generation workflow template' },
+        { sig: '/workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
         { sig: '/workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
+        { sig: '/workflow-reset', desc: 'reset the main generation workflow to its default' },
       ];
 
       function hlHtml(html, term) {
@@ -1289,6 +1354,14 @@ export function makeCommandHandler(deps) {
     }
 
     if (cmd === '/workflow') {
+      const wfArg = raw.slice('/workflow'.length).trim();
+      if (wfArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        state.currentWorkflow = wfArg;
+        deps.updateHeaderStatus();
+        addMessage('bot', `Workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        return;
+      }
       renderWorkflowPicker({
         url: '/api/workflows',
         title: 'Select a workflow:',
@@ -1301,7 +1374,22 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/workflow-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.currentWorkflow = null;
+      deps.updateHeaderStatus();
+      addMessage('bot', 'Workflow reset to default.');
+      return;
+    }
+
     if (cmd === '/face-detail-workflow') {
+      const wfArg = raw.slice('/face-detail-workflow'.length).trim();
+      if (wfArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        state.currentFaceWorkflow = wfArg;
+        addMessage('bot', `Face-detailer workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        return;
+      }
       renderWorkflowPicker({
         url: '/api/facedetailer-workflows',
         title: 'Select a face-detailer workflow:',
@@ -1312,6 +1400,13 @@ export function makeCommandHandler(deps) {
         setMsg: 'Face-detailer workflow set to',
         onSelect: wf => { state.currentFaceWorkflow = wf; },
       });
+      return;
+    }
+
+    if (cmd === '/face-detail-workflow-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.currentFaceWorkflow = null;
+      addMessage('bot', 'Face-detailer workflow reset to default.');
       return;
     }
 
