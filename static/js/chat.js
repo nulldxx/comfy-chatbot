@@ -333,7 +333,7 @@ function openVideoMetaEditor(url, wrap) {
 // Image2image pre-run dialog
 // ---------------------------------------------------------------------------
 
-function showI2IDialog(wrap, defaultPrompt, defaultDenoise) {
+function showI2IDialog(wrap, defaultPrompt, defaultDenoise, titleText = 'Image to image') {
   return new Promise((resolve, reject) => {
     const overlay = document.createElement('div');
     overlay.className = 'img-i2i-dialog';
@@ -343,7 +343,7 @@ function showI2IDialog(wrap, defaultPrompt, defaultDenoise) {
 
     const title = document.createElement('div');
     title.className = 'img-i2i-dialog-title';
-    title.textContent = 'Image to image';
+    title.textContent = titleText;
 
     const promptLabel = document.createElement('label');
     promptLabel.className = 'img-i2i-dialog-label';
@@ -749,21 +749,25 @@ function appendChatImage(container, url) {
       e.stopPropagation();
       if (reinpaint.disabled || sendBtn.disabled) return;
       reinpaint.disabled = true;
-      fetch('/api/upload-mask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: maskCtx.maskB64 }),
-      })
-      .then(r => r.json())
-      .then(data => {
-        if (data.error) throw new Error(data.error);
-        addMessage('user', `Inpaint: ${escapeHtml(maskCtx.prompt || '')}`);
-        runInpaint(url, data.token, wrap, maskCtx.prompt, maskCtx.denoise, maskCtx.maskB64);
-      })
-      .catch(err => {
-        reinpaint.disabled = false;
-        addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
-      });
+      showI2IDialog(wrap, maskCtx.prompt || '', maskCtx.denoise != null ? maskCtx.denoise : state.currentDenoise.inpaint, 'Re-inpaint')
+        .then(({ prompt, denoise }) => {
+          fetch('/api/upload-mask', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: maskCtx.maskB64 }),
+          })
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) throw new Error(data.error);
+            addMessage('user', `Inpaint: ${escapeHtml(prompt || '')}`);
+            runInpaint(url, data.token, wrap, prompt, denoise, maskCtx.maskB64);
+          })
+          .catch(err => {
+            reinpaint.disabled = false;
+            addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
+          });
+        })
+        .catch(() => { reinpaint.disabled = false; });
     });
     wrap.appendChild(reinpaint);
   }
