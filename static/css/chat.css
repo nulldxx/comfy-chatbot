@@ -330,6 +330,29 @@ header a:hover { color: #a78bfa; }
   .img-reinpaint { opacity: 0.6; }
 }
 
+/* Default macro button: sits bottom centre of the image */
+.img-macro {
+  position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 5px 8px; font-size: 0.85rem;
+  cursor: pointer; line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.img-wrap:hover .img-macro { opacity: 1; }
+.img-macro:hover { border-color: #a78bfa; color: #a78bfa; }
+.img-macro:disabled { cursor: default; opacity: 0.4; }
+@media (hover: none) { .img-macro { opacity: 0.6; } }
+
+.review-macro {
+  position: absolute;
+  bottom: 4px; left: 50%; transform: translateX(-50%);
+  padding: 3px 6px;
+  font-size: 0.8rem;
+}
+.review-thumb:hover .review-macro { opacity: 1; }
+
 /* Image2image dialog overlay (floats inside .img-wrap) */
 .img-i2i-dialog {
   position: absolute; inset: 0; z-index: 20;
@@ -652,6 +675,7 @@ header a:hover { color: #a78bfa; }
   .review-redo { opacity: 0.6; }
   .review-inpaint { opacity: 0.6; }
   .review-i2v { opacity: 0.6; }
+  .review-macro { opacity: 0.6; }
   .review-import { opacity: 0.6; }
 }
 

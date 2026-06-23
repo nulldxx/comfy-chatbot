@@ -69,7 +69,7 @@ export function renderSequenceReview(bubble, seq, { runGeneration }) {
 
 // Renders a responsive grid of the given image URLs into `bubble`. Tapping a
 // thumb opens the lightbox; the trash button deletes from the output folder.
-export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runImage2Image, runDoOver, runImage2Video, runInpaint }) {
+export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runImage2Image, runDoOver, runImage2Video, runInpaint, runDefaultMacro }) {
   bubble.innerHTML = '';
   const grid = document.createElement('div');
   grid.className = 'review-grid';
@@ -238,6 +238,17 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
       runImage2Video(prompt, url).finally(() => { ri2v.disabled = false; });
     });
 
+    const rmacro = document.createElement('button');
+    rmacro.className = 'img-macro review-macro';
+    rmacro.title = 'Run default macro on this image';
+    rmacro.textContent = '🤖';
+    rmacro.addEventListener('click', e => {
+      e.stopPropagation();
+      if (rmacro.disabled) return;
+      rmacro.disabled = true;
+      runDefaultMacro(url).finally(() => { rmacro.disabled = false; });
+    });
+
     cell.appendChild(media);
     cell.appendChild(del);
     cell.appendChild(face);
@@ -246,6 +257,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     cell.appendChild(ri2i);
     cell.appendChild(rinpaint);
     cell.appendChild(ri2v);
+    cell.appendChild(rmacro);
     cell.appendChild(importBtn);
     grid.appendChild(cell);
   });

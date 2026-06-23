@@ -63,6 +63,9 @@ export const state = {
   historyIdx:                  -1,
   savedDraft:                  '',
 
+  // Default macro name for the 🤖 image button (null = not set)
+  defaultMacro:                null,
+
   // y/n confirmation callback for destructive commands
   pendingConfirm:              null,
 

@@ -727,6 +727,17 @@ function appendChatImage(container, url) {
 
   const lastframe = makeLastFrameButton(url);
 
+  const macroBtn = document.createElement('button');
+  macroBtn.className = 'img-macro';
+  macroBtn.title = 'Run default macro on this image';
+  macroBtn.textContent = '🤖';
+  macroBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (macroBtn.disabled || sendBtn.disabled) return;
+    macroBtn.disabled = true;
+    runDefaultMacroOnImage(url).finally(() => { macroBtn.disabled = false; });
+  });
+
   wrap.appendChild(img);
   wrap.appendChild(del);
   wrap.appendChild(face);
@@ -738,6 +749,7 @@ function appendChatImage(container, url) {
   wrap.appendChild(i2v);
   wrap.appendChild(lastframe);
   wrap.appendChild(editMeta);
+  wrap.appendChild(macroBtn);
 
   const maskCtx = state.imageMasks[url];
   if (maskCtx) {
@@ -1351,7 +1363,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
 // Wire up the command handler (after all deps are defined)
 // ---------------------------------------------------------------------------
 
-const { handleSlashCommand } = makeCommandHandler({
+const { handleSlashCommand, runDefaultMacroOnImage } = makeCommandHandler({
   runGeneration,
   runFaceDetail,
   runUpscale,

@@ -614,17 +614,49 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
 }
 
 export function makeCommandHandler(deps) {
+  function runDefaultMacroOnImage(url) {
+    if (!state.defaultMacro) {
+      addMessage('bot', '<span style="color:#f87171">⚠ No default macro set — use <code>/macro-set-default</code> to choose one.</span>');
+      return Promise.resolve();
+    }
+    const name = state.defaultMacro;
+    const macroSteps = state.MACROS[name];
+    if (!macroSteps || !macroSteps.length) {
+      state.defaultMacro = null;
+      addMessage('bot', `<span style="color:#f87171">⚠ Default macro <code>#${escapeHtml(name)}</code> no longer exists — use <code>/macro-set-default</code> to choose a new one.</span>`);
+      return Promise.resolve();
+    }
+    if (sendBtn.disabled) return Promise.resolve();
+    addMessage('user', `🤖 #${escapeHtml(name)}`, null);
+    sendBtn.disabled = true;
+    return (async () => {
+      for (const rawStep of macroSteps) {
+        const step = rawStep.replace(/<PARAM>/gi, url);
+        if (step.startsWith('/')) {
+          await handleSlashCommand(step);
+        } else {
+          const prompt = expandAliases(step, state.ALIASES);
+          addMessage('user', escapeHtml(prompt), prompt);
+          const ok = await deps.runGeneration(prompt, '');
+          if (!ok) break;
+        }
+      }
+      sendBtn.disabled = false;
+    })();
+  }
+
   function handleSlashCommand(raw) {
     const parts = raw.trim().split(/\s+/);
     const cmd   = parts[0].toLowerCase();
 
     const gridRunners = {
-      runFaceDetail:  deps.runFaceDetail,
-      runUpscale:     deps.runUpscale,
-      runImage2Image: deps.runImage2Image,
-      runDoOver:      deps.runDoOver,
-      runImage2Video: deps.runImage2Video,
-      runInpaint:     deps.runInpaint,
+      runFaceDetail:      deps.runFaceDetail,
+      runUpscale:         deps.runUpscale,
+      runImage2Image:     deps.runImage2Image,
+      runDoOver:          deps.runDoOver,
+      runImage2Video:     deps.runImage2Video,
+      runInpaint:         deps.runInpaint,
+      runDefaultMacro:    runDefaultMacroOnImage,
     };
 
     if (cmd === '/multi-prompt') {
@@ -1297,6 +1329,7 @@ export function makeCommandHandler(deps) {
         { sig: '/lora', desc: 'fuzzy-find a LoRA to insert (works anywhere in a prompt)' },
         { sig: '/macro-create <name>', desc: 'open an inline editor to define a named macro — a sequence of prompts and/or /commands run in order', notes: 'invoke the macro later by typing <code>#name</code> — e.g. <code>/macro-create warmup</code> then <code>#warmup</code><br>re-run <code>/macro-create name</code> to edit an existing macro' },
         { sig: '/macro-list', desc: 'list all defined macros with a delete button for each' },
+        { sig: '/macro-set-default', desc: 'choose a default macro for the 🤖 button on images — clicking 🤖 runs that macro with the image URL substituted for <code>&lt;PARAM&gt;</code>' },
         { sig: '/multi-prompt', desc: 'generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)' },
         { sig: '/purge', desc: 'free GPU memory on the active ComfyUI server' },
         { sig: '/review <n>', desc: 'grid of the last N images, oldest first' },
@@ -2825,8 +2858,54 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/macro-set-default') {
+      addMessage('user', escapeHtml(raw), raw);
+      const entries = Object.entries(state.MACROS).sort(([a], [b]) => a.localeCompare(b));
+      if (!entries.length) {
+        addMessage('bot', 'No macros defined. Use <code>/macro-create &lt;name&gt;</code> to create one.');
+        return;
+      }
+      const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+      const header = document.createElement('strong');
+      header.textContent = 'Select default macro for the 🤖 button:';
+      const selList = document.createElement('div');
+      selList.className = 'sel-list';
+      selList.style.cssText = 'margin-top:8px;gap:4px';
+
+      entries.forEach(([name, macroStepList]) => {
+        const isCur = name === state.defaultMacro;
+        const btn = document.createElement('button');
+        btn.className = 'sel-btn' + (isCur ? ' current' : '');
+        btn.innerHTML = `<code>#${escapeHtml(name)}</code> <span style="color:#475569">— ${macroStepList.length} step(s)</span>${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}`;
+        btn.addEventListener('click', () => {
+          state.defaultMacro = name;
+          bubble.innerHTML = `Default macro set to <code>#${escapeHtml(name)}</code> — the 🤖 button on images will now run it.`;
+          scrollBottom();
+        });
+        selList.appendChild(btn);
+      });
+
+      if (state.defaultMacro) {
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'sel-btn';
+        clearBtn.style.cssText = 'color:#f87171;margin-top:4px';
+        clearBtn.textContent = '✕ Clear default macro';
+        clearBtn.addEventListener('click', () => {
+          state.defaultMacro = null;
+          bubble.innerHTML = 'Default macro cleared — the 🤖 button will show an error until a new one is set.';
+          scrollBottom();
+        });
+        selList.appendChild(clearBtn);
+      }
+
+      bubble.appendChild(header);
+      bubble.appendChild(selList);
+      scrollBottom();
+      return;
+    }
+
     addMessage('bot', `Unknown command <code>${escapeHtml(cmd)}</code> — type <code>/help</code> for available commands.`);
   }
 
-  return { handleSlashCommand };
+  return { handleSlashCommand, runDefaultMacroOnImage };
 }
