@@ -476,7 +476,8 @@ function runRemove(image, mask, imgWrap, _prompt, _denoise, maskB64) {
 
 function runDoOver(url, imgWrap) {
   const prompt = state.imagePrompts[url] || '';
-  return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url });
+  const videoMeta = state.imageVideoMeta[url] || null;
+  return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url, videoMeta });
 }
 
 // ---------------------------------------------------------------------------
