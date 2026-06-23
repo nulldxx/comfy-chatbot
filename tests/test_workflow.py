@@ -117,20 +117,18 @@ class TestStripLoraNodes(unittest.TestCase):
 class TestStripLastFrameGuide(unittest.TestCase):
     def _ltx_workflow(self):
         # Minimal representation of the LTX 2.3 last-frame subgraph.
-        # Nodes:
-        #   "load_lf"     LoadImage (last frame)
-        #   "resize_lf"   Resize (feeds preprocess)
-        #   "preproc_lf"  LTXVPreprocess (feeds guide)
-        #   "strength"    PrimitiveFloat (feeds guide)
-        #   "guide"       LTXVAddGuide (the node to strip)
-        #   "cond"        LTXVConditioning (positive/negative source)
-        #   "latent_src"  LTXVImgToVideoInplace (latent source)
-        #   "concat"      LTXVConcatAVLatent (downstream of guide latent output)
-        #   "cfg"         CFGGuider (downstream of guide positive/negative)
-        #   "crop"        LTXVCropGuides (downstream of guide positive/negative)
+        # "width_prim" and "height_prim" are shared with the main resize ("main_resize"),
+        # mirroring the real workflow where 320:312/320:299 are referenced by both
+        # the last-frame resize and the main image resize.
         return {
+            "width_prim":  {"class_type": "PrimitiveInt",          "inputs": {"value": 1280}},
+            "height_prim": {"class_type": "PrimitiveInt",          "inputs": {"value": 720}},
             "load_lf":    {"class_type": "LoadImage",             "inputs": {"image": "last.png"}},
-            "resize_lf":  {"class_type": "ResizeImageMaskNode",   "inputs": {"input": ["load_lf", 0]}},
+            "resize_lf":  {"class_type": "ResizeImageMaskNode",   "inputs": {
+                "input":              ["load_lf", 0],
+                "resize_type.width":  ["width_prim", 0],
+                "resize_type.height": ["height_prim", 0],
+            }},
             "preproc_lf": {"class_type": "LTXVPreprocess",        "inputs": {"image": ["resize_lf", 0]}},
             "strength":   {"class_type": "PrimitiveFloat",        "inputs": {"value": 0.0}},
             "guide": {
@@ -150,6 +148,10 @@ class TestStripLastFrameGuide(unittest.TestCase):
             "concat":     {"class_type": "LTXVConcatAVLatent",    "inputs": {"video_latent": ["guide", 2]}},
             "cfg":        {"class_type": "CFGGuider",             "inputs": {"positive": ["guide", 0], "negative": ["guide", 1]}},
             "crop":       {"class_type": "LTXVCropGuides",        "inputs": {"positive": ["guide", 0], "negative": ["guide", 1]}},
+            "main_resize": {"class_type": "ResizeImageMaskNode",  "inputs": {
+                "resize_type.width":  ["width_prim", 0],
+                "resize_type.height": ["height_prim", 0],
+            }},
         }
 
     def test_removes_guide_and_chain(self):
@@ -163,6 +165,15 @@ class TestStripLastFrameGuide(unittest.TestCase):
         strip_last_frame_guide(wf)
         for nid in ("cond", "latent_src", "concat", "cfg", "crop"):
             self.assertIn(nid, wf)
+
+    def test_preserves_shared_primitives(self):
+        # width_prim and height_prim are referenced by both resize_lf and main_resize;
+        # they must survive even though the trace reaches them via resize_lf.
+        wf = self._ltx_workflow()
+        strip_last_frame_guide(wf)
+        self.assertIn("width_prim", wf)
+        self.assertIn("height_prim", wf)
+        self.assertIn("main_resize", wf)
 
     def test_rewires_positive_negative(self):
         wf = self._ltx_workflow()

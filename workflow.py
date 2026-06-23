@@ -46,7 +46,7 @@ def strip_last_frame_guide(workflow):
         2: inputs.get("latent"),    # video latent
     }
 
-    # Collect upstream-only nodes to delete (they feed only into the guide chain)
+    # Collect candidate upstream nodes reachable from the guide's private inputs.
     to_remove = {guide_id}
 
     def _trace(ref):
@@ -60,10 +60,23 @@ def strip_last_frame_guide(workflow):
     _trace(inputs.get("image"))    # preprocess → resize → load_last_frame chain
     _trace(inputs.get("strength")) # strength primitive
 
+    # Only delete nodes that are exclusively referenced within the removal set.
+    # Shared nodes (e.g. Width/Height primitives used by both the guide resize
+    # and the main resize) must not be removed.
+    def _referenced_outside(nid):
+        return any(
+            isinstance(v, list) and len(v) == 2 and v[0] == nid
+            for other_id, other in workflow.items()
+            if other_id not in to_remove
+            for v in other.get("inputs", {}).values()
+        )
+
+    safe_to_remove = {nid for nid in to_remove if not _referenced_outside(nid)}
+
     del workflow[guide_id]
     _rewire_references(workflow, guide_id, passthrough)
 
-    for nid in to_remove - {guide_id}:
+    for nid in safe_to_remove - {guide_id}:
         workflow.pop(nid, None)
 
     return workflow
