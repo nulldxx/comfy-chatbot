@@ -558,6 +558,7 @@ function appendChatImage(container, url) {
     wrap.appendChild(del);
     wrap.appendChild(cut);
     container.appendChild(wrap);
+    scheduleRecordSave();
     return;
   }
 
@@ -765,6 +766,7 @@ function appendChatImage(container, url) {
   }
 
   container.appendChild(wrap);
+  scheduleRecordSave();
 }
 
 // ---------------------------------------------------------------------------
@@ -816,7 +818,61 @@ function captureSessionMessages() {
   return messages;
 }
 
+// ---------------------------------------------------------------------------
+// Session recording — auto-save after each image arrives
+// ---------------------------------------------------------------------------
+
+let recordSaveTimer = null;
+
+function scheduleRecordSave() {
+  if (!state.recordingName) return;
+  clearTimeout(recordSaveTimer);
+  recordSaveTimer = setTimeout(doRecordSave, 1500);
+}
+
+function doRecordSave() {
+  if (!state.recordingName) return;
+  fetch('/api/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: state.recordingName,
+      recordingName: state.recordingName,
+      settings: {
+        server: state.currentServer,
+        workflow: state.currentWorkflow,
+        faceWorkflow: state.currentFaceWorkflow,
+        upscaleWorkflow: state.currentUpscaleWorkflow,
+        image2imageWorkflow: state.currentImage2ImageWorkflow,
+        image2videoWorkflow: state.currentImage2VideoWorkflow,
+        inpaintingWorkflow: state.currentInpaintingWorkflow,
+        resolution: state.currentResolution,
+        generationSteps: state.currentGenerationSteps,
+        iterations: state.iterations,
+        sequenceReplacements: state.sequenceReplacements.slice(),
+        image2imageReplacements: state.image2imageReplacements.slice(),
+        image2imageOverridePrompt: state.image2imageOverridePrompt,
+        image2videoReplacements: state.image2videoReplacements.slice(),
+        image2videoOverridePrompt: state.image2videoOverridePrompt,
+        lastFaceDetailPrompt: state.lastFaceDetailPrompt,
+        lastInpaintingPrompt: state.lastInpaintingPrompt,
+        currentDenoise: { ...state.currentDenoise },
+        videoSettings: { ...state.currentVideoSettings },
+        videoLock: state.videoLock,
+      },
+      sessionImages: state.sessionImages.slice(),
+      imagePrompts: Object.assign({}, state.imagePrompts),
+      imageVideoMeta: Object.assign({}, state.imageVideoMeta),
+      lastSequence: state.lastSequence,
+      promptHistory: state.history.slice(),
+      messages: captureSessionMessages(),
+    }),
+  }).catch(() => {});
+}
+
 function restoreSession(data) {
+  clearTimeout(recordSaveTimer);
+  state.recordingName = null;
   state.history.length = 0;
   state.historyIdx = -1;
   state.savedDraft = '';
@@ -869,6 +925,12 @@ function restoreSession(data) {
         bubble.parentElement.remove();
       }
     }
+  }
+
+  if (data.recordingName) {
+    state.recordingName = data.recordingName;
+    addMessage('bot', `Recording resumed — auto-saving to session <strong style="color:#a78bfa">${escapeHtml(data.recordingName)}</strong>.`);
+    scrollBottom();
   }
 }
 

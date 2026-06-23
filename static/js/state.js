@@ -69,6 +69,9 @@ export const state = {
   // In-memory stack for /settings-save / /settings-restore
   settingsStack:               [],
 
+  // Active recording session name (null = not recording)
+  recordingName:               null,
+
   // Tracks which elements are in faux-fullscreen so body overflow is only
   // restored when the last one exits.
   fauxFullscreenEls:           new Set(),

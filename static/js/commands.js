@@ -1310,6 +1310,7 @@ export function makeCommandHandler(deps) {
         { sig: '/server', desc: 'choose a ComfyUI server' },
         { sig: '/session-load', desc: 'pick and restore a previously saved session' },
         { sig: '/session-new', desc: 'start a completely new session, resetting all settings to defaults' },
+        { sig: '/session-record <name>', desc: 'start auto-saving the session after every image; omit the name to pick an existing session to record into; run again (no name, or same name) to stop recording' },
         { sig: '/session-save <name>', desc: 'save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete' },
         { sig: '/session-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
         { sig: '/settings-save', desc: 'push a snapshot of all generation settings (workflows, resolution, denoise, video settings, override prompts, replacements) onto an in-memory stack; pair with <code>/settings-restore</code> to bracket a macro so it leaves settings unchanged' },
@@ -1923,6 +1924,7 @@ export function makeCommandHandler(deps) {
           videoSettings: { ...state.currentVideoSettings },
           videoLock: state.videoLock,
         },
+        recordingName: state.recordingName,
         sessionImages: state.sessionImages.slice(),
         imagePrompts: Object.assign({}, state.imagePrompts),
         imageVideoMeta: Object.assign({}, state.imageVideoMeta),
@@ -1959,6 +1961,45 @@ export function makeCommandHandler(deps) {
       renderSessionPicker({
         headerHtml: '<strong>Select a session to overwrite:</strong>',
         onSelect: (name, bubble) => doSave(name, bubble),
+      });
+      return;
+    }
+
+    if (cmd === '/session-record') {
+      const rawName = raw.slice('/session-record'.length).trim();
+      addMessage('user', escapeHtml(raw), raw);
+
+      if (!rawName && state.recordingName) {
+        const prev = state.recordingName;
+        state.recordingName = null;
+        const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+        bubble.innerHTML = `Recording stopped for session <strong style="color:#a78bfa">${escapeHtml(prev)}</strong>.`;
+        scrollBottom();
+        return;
+      }
+
+      const doRecord = (name, bubble) => {
+        state.recordingName = name;
+        bubble.innerHTML = `Recording started — session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> will be saved automatically after each image. Run <code>/session-record</code> with no name to stop.`;
+        scrollBottom();
+      };
+
+      if (rawName) {
+        if (state.recordingName === rawName) {
+          state.recordingName = null;
+          const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+          bubble.innerHTML = `Recording stopped for session <strong style="color:#a78bfa">${escapeHtml(rawName)}</strong>.`;
+          scrollBottom();
+          return;
+        }
+        const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+        doRecord(rawName, bubble);
+        return;
+      }
+
+      renderSessionPicker({
+        headerHtml: '<strong>Select a session to record into:</strong>',
+        onSelect: (name, bubble) => doRecord(name, bubble),
       });
       return;
     }
