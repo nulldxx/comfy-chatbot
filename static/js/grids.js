@@ -117,9 +117,25 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
         });
     });
 
+    const importBtn = document.createElement('button');
+    importBtn.className = 'review-import';
+    importBtn.title = 'Import into this session';
+    importBtn.textContent = '🫳';
+    if (state.sessionImages.includes(url)) {
+      importBtn.style.display = 'none';
+    }
+    importBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!state.sessionImages.includes(url)) {
+        state.sessionImages.push(url);
+      }
+      importBtn.style.display = 'none';
+    });
+
     if (isVideo) {
       cell.appendChild(media);
       cell.appendChild(del);
+      cell.appendChild(importBtn);
       grid.appendChild(cell);
       return;
     }
@@ -230,6 +246,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     cell.appendChild(ri2i);
     cell.appendChild(rinpaint);
     cell.appendChild(ri2v);
+    cell.appendChild(importBtn);
     grid.appendChild(cell);
   });
 

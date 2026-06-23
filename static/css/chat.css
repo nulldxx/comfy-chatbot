@@ -629,6 +629,20 @@ header a:hover { color: #a78bfa; }
   font-size: 0.8rem;
 }
 .review-thumb:hover .review-i2v { opacity: 1; }
+.review-import {
+  position: absolute;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  padding: 4px 8px;
+  font-size: 1.3rem;
+  opacity: 0;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  line-height: 1;
+}
+.review-thumb:hover .review-import { opacity: 1; }
 @media (max-width: 600px) {
   .review-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
   .review-del { opacity: 0.6; }   /* always visible where there's no hover */
@@ -638,6 +652,7 @@ header a:hover { color: #a78bfa; }
   .review-redo { opacity: 0.6; }
   .review-inpaint { opacity: 0.6; }
   .review-i2v { opacity: 0.6; }
+  .review-import { opacity: 0.6; }
 }
 
 /* /splice-session: drag-to-reorder grid of session videos + a ✓ button. */
