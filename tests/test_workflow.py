@@ -14,6 +14,7 @@ from workflow import (
     find_placeholders,
     lora_path_for_os,
     randomize_seeds,
+    strip_last_frame_guide,
     strip_lora_nodes,
     LORA_NAME_SENTINEL,
 )
@@ -111,6 +112,75 @@ class TestStripLoraNodes(unittest.TestCase):
         result, removed = strip_lora_nodes(wf)
         self.assertIn("1", result)
         self.assertEqual(removed, [])
+
+
+class TestStripLastFrameGuide(unittest.TestCase):
+    def _ltx_workflow(self):
+        # Minimal representation of the LTX 2.3 last-frame subgraph.
+        # Nodes:
+        #   "load_lf"     LoadImage (last frame)
+        #   "resize_lf"   Resize (feeds preprocess)
+        #   "preproc_lf"  LTXVPreprocess (feeds guide)
+        #   "strength"    PrimitiveFloat (feeds guide)
+        #   "guide"       LTXVAddGuide (the node to strip)
+        #   "cond"        LTXVConditioning (positive/negative source)
+        #   "latent_src"  LTXVImgToVideoInplace (latent source)
+        #   "concat"      LTXVConcatAVLatent (downstream of guide latent output)
+        #   "cfg"         CFGGuider (downstream of guide positive/negative)
+        #   "crop"        LTXVCropGuides (downstream of guide positive/negative)
+        return {
+            "load_lf":    {"class_type": "LoadImage",             "inputs": {"image": "last.png"}},
+            "resize_lf":  {"class_type": "ResizeImageMaskNode",   "inputs": {"input": ["load_lf", 0]}},
+            "preproc_lf": {"class_type": "LTXVPreprocess",        "inputs": {"image": ["resize_lf", 0]}},
+            "strength":   {"class_type": "PrimitiveFloat",        "inputs": {"value": 0.0}},
+            "guide": {
+                "class_type": "LTXVAddGuide",
+                "inputs": {
+                    "positive":  ["cond", 0],
+                    "negative":  ["cond", 1],
+                    "vae":       ["model", 2],
+                    "latent":    ["latent_src", 0],
+                    "image":     ["preproc_lf", 0],
+                    "frame_idx": -1,
+                    "strength":  ["strength", 0],
+                },
+            },
+            "cond":       {"class_type": "LTXVConditioning",      "inputs": {"frame_rate": 24}},
+            "latent_src": {"class_type": "LTXVImgToVideoInplace", "inputs": {"strength": 0.7}},
+            "concat":     {"class_type": "LTXVConcatAVLatent",    "inputs": {"video_latent": ["guide", 2]}},
+            "cfg":        {"class_type": "CFGGuider",             "inputs": {"positive": ["guide", 0], "negative": ["guide", 1]}},
+            "crop":       {"class_type": "LTXVCropGuides",        "inputs": {"positive": ["guide", 0], "negative": ["guide", 1]}},
+        }
+
+    def test_removes_guide_and_chain(self):
+        wf = self._ltx_workflow()
+        strip_last_frame_guide(wf)
+        for nid in ("guide", "preproc_lf", "resize_lf", "load_lf", "strength"):
+            self.assertNotIn(nid, wf)
+
+    def test_preserves_non_guide_nodes(self):
+        wf = self._ltx_workflow()
+        strip_last_frame_guide(wf)
+        for nid in ("cond", "latent_src", "concat", "cfg", "crop"):
+            self.assertIn(nid, wf)
+
+    def test_rewires_positive_negative(self):
+        wf = self._ltx_workflow()
+        strip_last_frame_guide(wf)
+        self.assertEqual(wf["cfg"]["inputs"]["positive"],  ["cond", 0])
+        self.assertEqual(wf["cfg"]["inputs"]["negative"],  ["cond", 1])
+        self.assertEqual(wf["crop"]["inputs"]["positive"], ["cond", 0])
+        self.assertEqual(wf["crop"]["inputs"]["negative"], ["cond", 1])
+
+    def test_rewires_latent(self):
+        wf = self._ltx_workflow()
+        strip_last_frame_guide(wf)
+        self.assertEqual(wf["concat"]["inputs"]["video_latent"], ["latent_src", 0])
+
+    def test_no_guide_node_is_noop(self):
+        wf = {"a": {"class_type": "SomeOtherNode", "inputs": {}}}
+        result = strip_last_frame_guide(wf)
+        self.assertIn("a", result)
 
 
 class TestRandomizeSeeds(unittest.TestCase):

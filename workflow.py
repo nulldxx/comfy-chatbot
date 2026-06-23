@@ -25,6 +25,50 @@ def fill_lora_sentinels(text):
     return text
 
 
+def strip_last_frame_guide(workflow):
+    """Remove the LTXVAddGuide last-frame chain when no end frame is provided.
+
+    Strength=0.0 is not a true no-op — the guide still embeds the image into the
+    latent at the last position, causing a snap-back transition. Removing the nodes
+    entirely and rewiring around them is the correct bypass.
+    """
+    guide_id = next(
+        (nid for nid, n in workflow.items() if n.get("class_type") == "LTXVAddGuide"),
+        None,
+    )
+    if guide_id is None:
+        return workflow
+
+    inputs = workflow[guide_id].get("inputs", {})
+    passthrough = {
+        0: inputs.get("positive"),  # positive conditioning
+        1: inputs.get("negative"),  # negative conditioning
+        2: inputs.get("latent"),    # video latent
+    }
+
+    # Collect upstream-only nodes to delete (they feed only into the guide chain)
+    to_remove = {guide_id}
+
+    def _trace(ref):
+        if isinstance(ref, list) and len(ref) == 2:
+            nid = ref[0]
+            if nid in workflow and nid not in to_remove:
+                to_remove.add(nid)
+                for v in workflow[nid].get("inputs", {}).values():
+                    _trace(v)
+
+    _trace(inputs.get("image"))    # preprocess → resize → load_last_frame chain
+    _trace(inputs.get("strength")) # strength primitive
+
+    del workflow[guide_id]
+    _rewire_references(workflow, guide_id, passthrough)
+
+    for nid in to_remove - {guide_id}:
+        workflow.pop(nid, None)
+
+    return workflow
+
+
 def strip_lora_nodes(workflow):
     removed = [
         node_id

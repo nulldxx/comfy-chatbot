@@ -16,7 +16,7 @@ from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequ
 from workflow import (
     LORA_PLACEHOLDER_RE,
     apply_placeholders, find_placeholders, fill_lora_sentinels,
-    strip_lora_nodes, randomize_seeds, lora_path_for_os,
+    strip_lora_nodes, strip_last_frame_guide, randomize_seeds, lora_path_for_os,
     apply_resolution, apply_steps,
 )
 
@@ -313,21 +313,22 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
                     pass
 
         # First-frame/last-frame conditioning (image2video). The template carries an
-        # optional <INPUT_LAST_FRAME> LoadImage feeding an LTXVAddGuide node pinned to
-        # the final frame (frame_idx = -1); its <LAST_FRAME_STRENGTH> is the on/off
-        # toggle. When a last frame is supplied we upload it and set strength 1.0; when
-        # it isn't, we reuse the first frame as a harmless stand-in and set strength 0.0
-        # so the guide contributes nothing and the workflow behaves exactly like the
-        # single-image image2video it is today.
+        # LTXVAddGuide node (frame_idx=-1) that conditions the model on an end frame.
+        # When a last frame is supplied we upload it and set strength 1.0; when absent
+        # we strip the entire guide chain from the graph instead of relying on strength=0.0,
+        # because LTXVAddGuide at zero still embeds the guide image into the latent at
+        # the last position, which causes a snap-back transition at the end of the video.
+        strip_guide = False
         if "<INPUT_LAST_FRAME>" in template:
             if input_last_frame is not None:
                 send("progress", message="Uploading last frame to ComfyUI...")
                 mapping["INPUT_LAST_FRAME"] = server.upload_image(input_last_frame)
                 mapping["LAST_FRAME_STRENGTH"] = 1.0
             else:
-                # No end frame designated: stand in the first frame, guide off.
+                # Dummy values so the template parses as valid JSON; nodes removed below.
                 mapping["INPUT_LAST_FRAME"] = mapping.get("INPUT_IMAGE", "")
                 mapping["LAST_FRAME_STRENGTH"] = 0.0
+                strip_guide = True
 
         filled = apply_placeholders(template, mapping)
 
@@ -350,6 +351,10 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
             workflow, removed = strip_lora_nodes(workflow)
             if removed:
                 send("progress", message=f"Skipping {len(removed)} unused LoRA node(s)")
+
+        if strip_guide:
+            strip_last_frame_guide(workflow)
+            send("progress", message="Last-frame guide stripped (no end frame)")
 
         if "nodes" in workflow:
             send("progress", message="Converting UI-format workflow to API format...")
