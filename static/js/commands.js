@@ -941,12 +941,14 @@ export function makeCommandHandler(deps) {
             prompt = state.image2videoOverridePrompt;
           } else {
             const orig = state.imagePrompts[img];
-            if (!orig) {
+            const meta = state.imageVideoMeta[img];
+            if (!orig && !(meta && meta.action)) {
               i2vAborted = true;
               addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
               return;
             }
-            prompt = buildVideoPrompt(applyReplacements(orig, state.image2videoReplacements), state.imageVideoMeta[img], state.currentVideoSettings.audio);
+            const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
+            prompt = buildVideoPrompt(base, meta, state.currentVideoSettings.audio);
           }
           addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
           return deps.runImage2Video(prompt, img);
