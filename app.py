@@ -105,6 +105,7 @@ def index():
         default_inpainting_workflow=COMFY_INPAINTING_WORKFLOW,
         default_image2video_workflow=COMFY_IMAGE2VIDEO_WORKFLOW,
         default_removal_workflow=COMFY_REMOVAL_WORKFLOW,
+        build_version=BUILD_VERSION,
     )
 
 

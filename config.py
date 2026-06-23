@@ -1,7 +1,24 @@
 import os
+import subprocess
 from pathlib import Path
 
-BUILD_VERSION = os.environ.get('BUILD_VERSION', 'unknown')
+def _resolve_build_version():
+    v = os.environ.get('BUILD_VERSION', '')
+    if v:
+        return v
+    try:
+        result = subprocess.run(
+            ['git', 'describe', '--tags', '--always', '--dirty'],
+            capture_output=True, text=True, timeout=5,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return 'unknown'
+
+BUILD_VERSION = _resolve_build_version()
 USERNAME = os.environ.get('APP_USERNAME', 'user')
 PASSWORD = os.environ.get('APP_PASSWORD', 'password')
 SECRET_KEY = os.environ.get('SECRET_KEY', 'your-secret-key-change-this-in-production')
