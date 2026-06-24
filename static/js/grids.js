@@ -69,14 +69,40 @@ export function renderSequenceReview(bubble, seq, { runGeneration }) {
 
 // Renders a responsive grid of the given image URLs into `bubble`. Tapping a
 // thumb opens the lightbox; the trash button deletes from the output folder.
-export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runImage2Image, runDoOver, runImage2Video, runInpaint, runDefaultMacro }) {
+// Pass onReorder in deps to enable drag-to-reorder (updates state.sessionImages).
+export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runImage2Image, runDoOver, runImage2Video, runInpaint, runDefaultMacro, onReorder }) {
   bubble.innerHTML = '';
+
+  if (onReorder) {
+    const hint = document.createElement('div');
+    hint.className = 'composite-hint';
+    hint.textContent = 'Drag ⢿ to reorder — order is preserved when archiving with /archive-session.';
+    bubble.appendChild(hint);
+  }
+
   const grid = document.createElement('div');
-  grid.className = 'review-grid';
+  grid.className = onReorder ? 'review-grid review-draggable' : 'review-grid';
+
+  let order = urls.slice();
+  const cells = new Map();
+  let dragging = null, draggingUrl = null;
+
+  function relayout() {
+    order.forEach(url => { const c = cells.get(url); if (c) grid.appendChild(c); });
+  }
+
+  function cellFromPoint(x, y) {
+    for (const cell of cells.values()) {
+      const r = cell.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return cell;
+    }
+    return null;
+  }
 
   urls.forEach(url => {
     const cell = document.createElement('div');
     cell.className = 'review-thumb';
+    cell.dataset.url = url;
 
     const isVideo = isVideoUrl(url);
     const media = createMediaElement(url);
@@ -101,6 +127,10 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
       deleteImageFile(url)
         .then(() => {
           removeImageFromChat(url);
+          if (onReorder) {
+            order = order.filter(u => u !== url);
+            onReorder(order);
+          }
           cell.remove();
           if (!grid.children.length) {
             bubble.innerHTML = 'All session images deleted.';
@@ -132,10 +162,51 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
       importBtn.style.display = 'none';
     });
 
+    // Drag handle for reorder mode — occupies the center slot (import is hidden for session images)
+    let handle = null;
+    if (onReorder) {
+      handle = document.createElement('button');
+      handle.className = 'review-drag-handle';
+      handle.title = 'Drag to reorder';
+      handle.textContent = '⢿';
+
+      handle.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        dragging = cell;
+        draggingUrl = url;
+        cell.classList.add('review-dragging');
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      });
+      handle.addEventListener('pointermove', e => {
+        if (!dragging) return;
+        e.preventDefault();
+        const target = cellFromPoint(e.clientX, e.clientY);
+        if (target && target !== dragging) {
+          const from = order.indexOf(draggingUrl);
+          const to   = order.indexOf(target.dataset.url);
+          if (from !== -1 && to !== -1) {
+            order = reorderList(order, from, to);
+            relayout();
+          }
+        }
+      });
+      const endDrag = e => {
+        if (!dragging) return;
+        dragging.classList.remove('review-dragging');
+        dragging = null; draggingUrl = null;
+        try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+        onReorder(order);
+      };
+      handle.addEventListener('pointerup', endDrag);
+      handle.addEventListener('pointercancel', endDrag);
+    }
+
     if (isVideo) {
       cell.appendChild(media);
       cell.appendChild(del);
+      if (handle) cell.appendChild(handle);
       cell.appendChild(importBtn);
+      cells.set(url, cell);
       grid.appendChild(cell);
       return;
     }
@@ -258,7 +329,9 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     cell.appendChild(rinpaint);
     cell.appendChild(ri2v);
     cell.appendChild(rmacro);
+    if (handle) cell.appendChild(handle);
     cell.appendChild(importBtn);
+    cells.set(url, cell);
     grid.appendChild(cell);
   });
 

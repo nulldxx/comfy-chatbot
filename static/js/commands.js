@@ -1596,7 +1596,10 @@ export function makeCommandHandler(deps) {
         return;
       }
       const bubble = addMessage('bot', '');
-      renderReviewGrid(bubble, state.sessionImages.slice(), gridRunners);
+      renderReviewGrid(bubble, state.sessionImages.slice(), {
+        ...gridRunners,
+        onReorder: (urls) => { state.sessionImages.splice(0, state.sessionImages.length, ...urls); },
+      });
       return;
     }
 

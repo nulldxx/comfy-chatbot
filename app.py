@@ -1290,9 +1290,12 @@ def api_archive():
             dest_dir = ARCHIVE_MOUNT_DIR / "staging" / folder
             dest_dir.mkdir(parents=True, exist_ok=True)
             # Copy + verify every file before deleting any original (move semantics).
+            # Session archives are prefixed 001_, 002_, … to lock in the user's
+            # drag-sorted order on disk; other scopes keep original names.
             copied = []
-            for src in files:
-                dest = dest_dir / src.name
+            for i, src in enumerate(files):
+                fname = f"{i + 1:03d}_{src.name}" if scope == "session" else src.name
+                dest = dest_dir / fname
                 # copyfile (data only) rather than copy2: exFAT can't store
                 # POSIX permissions, so copystat's chmod raises EPERM there.
                 shutil.copyfile(src, dest)

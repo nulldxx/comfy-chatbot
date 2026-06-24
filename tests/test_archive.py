@@ -183,7 +183,7 @@ class TestArchive(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["archived"], 1)
-        self.assertEqual(self._staged_files(), ["clip.mp4"])
+        self.assertEqual(self._staged_files(), ["001_clip.mp4"])
 
     def test_archive_today_only(self):
         self._auth()
@@ -200,12 +200,14 @@ class TestArchive(unittest.TestCase):
         self._auth()
         self._make_image("keep.png")
         self._make_image("s1.png")
+        self._make_image("s2.png")
         resp = self.client.post(
-            "/api/archive", json={"scope": "session", "filenames": ["s1.png"]}
+            "/api/archive", json={"scope": "session", "filenames": ["s2.png", "s1.png"]}
         )
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.get_json()["archived"], 1)
-        self.assertEqual(self._staged_files(), ["s1.png"])
+        self.assertEqual(resp.get_json()["archived"], 2)
+        # Session files are prefixed in the caller's order so they sort correctly on disk.
+        self.assertEqual(self._staged_files(), ["001_s2.png", "002_s1.png"])
         self.assertIn("keep.png", os.listdir(self.images_dir))
 
     def test_archive_session_rejects_bad_filename(self):

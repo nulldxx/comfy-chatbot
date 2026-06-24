@@ -666,6 +666,22 @@ header a:hover { color: #a78bfa; }
   line-height: 1;
 }
 .review-thumb:hover .review-import { opacity: 1; }
+/* Drag-to-reorder handle: occupies the centre slot (import is hidden for session images) */
+.review-drag-handle {
+  position: absolute;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: rgba(15, 23, 42, 0.85); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 3px 7px; font-size: 1rem; line-height: 1;
+  cursor: grab; touch-action: none; user-select: none;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.15s;
+}
+.review-drag-handle:active { cursor: grabbing; }
+.review-drag-handle:hover { border-color: #38bdf8; color: #38bdf8; }
+.review-grid.review-draggable .review-drag-handle { pointer-events: auto; }
+.review-grid.review-draggable .review-thumb:hover .review-drag-handle { opacity: 1; }
+.review-thumb.review-dragging { opacity: 0.5; outline: 2px dashed #38bdf8; }
 @media (max-width: 600px) {
   .review-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
   .review-del { opacity: 0.6; }   /* always visible where there's no hover */
@@ -677,6 +693,7 @@ header a:hover { color: #a78bfa; }
   .review-i2v { opacity: 0.6; }
   .review-macro { opacity: 0.6; }
   .review-import { opacity: 0.6; }
+  .review-grid.review-draggable .review-drag-handle { opacity: 0.6; }
 }
 
 /* /splice-session: drag-to-reorder grid of session videos + a ✓ button. */
