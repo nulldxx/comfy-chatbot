@@ -666,16 +666,16 @@ function appendChatImage(container, url) {
   face.className = 'img-face';
   face.title = 'Run face detail';
   face.innerHTML = '&#128100;&#xFE0E;';
-  face.addEventListener(‘click’, e => {
+  face.addEventListener('click', e => {
     e.stopPropagation();
     if (face.disabled || sendBtn.disabled) return;
     const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]);
     if (!prompt) {
-      addMessage(‘bot’, ‘<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>’);
+      addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
       return;
     }
     face.disabled = true;
-    showI2IDialog(wrap, prompt, state.currentDenoise.face, ‘Face detail’)
+    showI2IDialog(wrap, prompt, state.currentDenoise.face, 'Face detail')
       .then(({ prompt: dlgPrompt, denoise }) => {
         runFaceDetail(dlgPrompt, url, wrap, denoise).finally(() => { face.disabled = false; });
       })

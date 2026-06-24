@@ -113,6 +113,24 @@ Environment variables for deployment:
 - `APP_PASSWORD`: Authentication password (default: 'password')  
 - `SECRET_KEY`: Flask session secret (change in production)
 
+## Known Pitfalls
+
+### Curly/smart quote corruption in JS files
+The Edit tool can silently convert straight ASCII quotes (`'`, `"`) to Unicode curly/smart quotes (`'`, `'`, `"`, `"`) when editing JavaScript. These are not valid JS string delimiters and cause a full script parse failure, breaking everything silently. After any JS edit, verify with:
+```bash
+node --check static/js/chat.js
+```
+If curly quotes are found, fix with:
+```bash
+python3 -c "
+lq='\\u2018'.encode(); rq='\\u2019'.encode(); sq=b\"'\"
+data=open('static/js/chat.js','rb').read()
+# replace only instances used as delimiters, not content
+# inspect first: grep -P '[\\x{2018}\\x{2019}]' static/js/chat.js
+"
+```
+Or use `sed -i "s/'/'/g; s/'/'/g" static/js/chat.js` to replace all curly single quotes (safe if the file has none intentionally).
+
 ## Development Guidelines
 
 ### Security Practices
