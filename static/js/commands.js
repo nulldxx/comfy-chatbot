@@ -1351,7 +1351,7 @@ export function makeCommandHandler(deps) {
         { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
         { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
         { sig: '/server', desc: 'choose a ComfyUI server' },
-        { sig: '/session-load', desc: 'pick and restore a previously saved session' },
+        { sig: '/session-load [name]', desc: 'restore a previously saved session; omit name to pick from a menu' },
         { sig: '/session-new', desc: 'start a completely new session, resetting all settings to defaults' },
         { sig: '/session-record <name>', desc: 'start auto-saving the session after every image; omit the name to pick an existing session to record into; run again (no name, or same name) to stop recording' },
         { sig: '/session-save <name>', desc: 'save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete' },
@@ -2051,25 +2051,33 @@ export function makeCommandHandler(deps) {
     }
 
     if (cmd === '/session-load') {
-      renderSessionPicker({
-        headerHtml: '<strong>Select a session to restore:</strong>',
-        onSelect: (name, bubble) => {
-          bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
-          fetch('/api/sessions/' + encodeURIComponent(name))
-          .then(parseJsonResponse)
-          .then(data => {
-            if (data.error) throw new Error(data.error);
-            deps.restoreSession(data);
-            bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
-            scrollBottom();
-            showSessionSummary();
-          })
-          .catch(err => {
-            bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
-            scrollBottom();
-          });
-        },
-      });
+      const sessionArg = raw.slice('/session-load'.length).trim();
+      const loadSession = (name, bubble) => {
+        bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
+        fetch('/api/sessions/' + encodeURIComponent(name))
+        .then(parseJsonResponse)
+        .then(data => {
+          if (data.error) throw new Error(data.error);
+          deps.restoreSession(data);
+          bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
+          scrollBottom();
+          showSessionSummary();
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
+      };
+      if (sessionArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        const bubble = addMessage('bot', `<div class="status-text">Loading <strong>${escapeHtml(sessionArg)}</strong>…</div>`);
+        loadSession(sessionArg, bubble);
+      } else {
+        renderSessionPicker({
+          headerHtml: '<strong>Select a session to restore:</strong>',
+          onSelect: loadSession,
+        });
+      }
       return;
     }
 

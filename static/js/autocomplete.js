@@ -60,7 +60,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/sequence-replacement-reset',   desc: 'clear all sequence replacements',                                                    args: ''  },
   { cmd: '/sequence-review',              desc: 'show the last sequence\'s prompts in a grid; ▶ to generate one',                     args: ''  },
   { cmd: '/server',                       desc: 'choose a ComfyUI server',                                                            args: ''  },
-  { cmd: '/session-load',                 desc: 'load a previously saved session',                                                    args: ''  },
+  { cmd: '/session-load',                 desc: 'load a previously saved session',                                                    args: '[name]'  },
   { cmd: '/session-new',                  desc: 'start a new session (resets all settings)',                                          args: ''  },
   { cmd: '/session-record',               desc: 'auto-save session after every image (no name: pick one; run again to stop)',         args: ' ' },
   { cmd: '/session-save',                 desc: 'save the current session (no name: pick one to overwrite)',                          args: ' ' },
