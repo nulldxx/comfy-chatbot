@@ -430,11 +430,11 @@ function showI2IDialog(wrap, defaultPrompt, defaultDenoise, titleText = 'Image t
 // Runner functions (face-detail, upscale, image2image, image2video, inpaint, do-over)
 // ---------------------------------------------------------------------------
 
-function runFaceDetail(prompt, image, imgWrap) {
+function runFaceDetail(prompt, image, imgWrap, denoiseOverride) {
   state.iterationsFromSequence = false;
   sendBtn.disabled = true;
   return runGeneration(prompt, '', null, {
-    face: { image, workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW },
+    face: { image, workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW, denoiseOverride },
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
@@ -585,16 +585,20 @@ function appendChatImage(container, url) {
   face.className = 'img-face';
   face.title = 'Run face detail';
   face.innerHTML = '&#128100;&#xFE0E;';
-  face.addEventListener('click', e => {
+  face.addEventListener(‘click’, e => {
     e.stopPropagation();
     if (face.disabled || sendBtn.disabled) return;
     const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]);
     if (!prompt) {
-      addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
+      addMessage(‘bot’, ‘<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>’);
       return;
     }
     face.disabled = true;
-    runFaceDetail(prompt, url, wrap).finally(() => { face.disabled = false; });
+    showI2IDialog(wrap, prompt, state.currentDenoise.face, ‘Face detail’)
+      .then(({ prompt: dlgPrompt, denoise }) => {
+        runFaceDetail(dlgPrompt, url, wrap, denoise).finally(() => { face.disabled = false; });
+      })
+      .catch(() => { face.disabled = false; });
   });
 
   const up = document.createElement('button');
@@ -1191,7 +1195,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(inpaint ? { mask: inpaint.mask } : {}),
       ...(inpaint && inpaint.drawToken ? { draw_token: inpaint.drawToken } : {}),
       ...(removal ? { mask: removal.mask } : {}),
-      ...(face        ? { denoise: state.currentDenoise.face } : {}),
+      ...(face        ? { denoise: face.denoiseOverride != null ? face.denoiseOverride : state.currentDenoise.face } : {}),
       ...(upscale     ? { denoise: state.currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
