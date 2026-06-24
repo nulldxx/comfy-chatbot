@@ -1999,6 +1999,18 @@ export function makeCommandHandler(deps) {
       };
 
       if (rawName) {
+        if (state.recordingName && state.recordingName !== rawName) {
+          addMessage('bot', `⚠ A recording is active for session <strong style="color:#a78bfa">${escapeHtml(state.recordingName)}</strong> but you're saving to a different name (<strong style="color:#a78bfa">${escapeHtml(rawName)}</strong>). Type <code>y</code> to save anyway or <code>n</code> to cancel.`);
+          state.pendingConfirm = (answer) => {
+            if (!/^y(es)?$/i.test(answer)) {
+              addMessage('bot', 'Cancelled — session not saved.');
+              return;
+            }
+            const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
+            doSave(rawName, bubble);
+          };
+          return;
+        }
         const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
         doSave(rawName, bubble);
         return;
@@ -2006,7 +2018,22 @@ export function makeCommandHandler(deps) {
 
       renderSessionPicker({
         headerHtml: '<strong>Select a session to overwrite:</strong>',
-        onSelect: (name, bubble) => doSave(name, bubble),
+        onSelect: (name, bubble) => {
+          if (state.recordingName && state.recordingName !== name) {
+            bubble.innerHTML = `⚠ A recording is active for session <strong style="color:#a78bfa">${escapeHtml(state.recordingName)}</strong> but you selected a different session (<strong style="color:#a78bfa">${escapeHtml(name)}</strong>). Type <code>y</code> to save anyway or <code>n</code> to cancel.`;
+            scrollBottom();
+            state.pendingConfirm = (answer) => {
+              if (!/^y(es)?$/i.test(answer)) {
+                bubble.innerHTML = 'Cancelled — session not saved.';
+                scrollBottom();
+                return;
+              }
+              doSave(name, bubble);
+            };
+            return;
+          }
+          doSave(name, bubble);
+        },
       });
       return;
     }
