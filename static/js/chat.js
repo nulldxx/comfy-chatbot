@@ -199,6 +199,22 @@ messagesEl.addEventListener('click', e => {
 })();
 
 // ---------------------------------------------------------------------------
+// Clipboard paste (Ctrl+V) image import
+// ---------------------------------------------------------------------------
+
+document.addEventListener('paste', e => {
+  const items = Array.from(e.clipboardData?.items || []);
+  const imageItem = items.find(item => item.type.startsWith('image/'));
+  if (!imageItem) return;
+  e.preventDefault();
+  const blob = imageItem.getAsFile();
+  if (!blob) return;
+  const ext = imageItem.type.split('/')[1] || 'png';
+  const file = new File([blob], `pasted-image.${ext}`, { type: imageItem.type });
+  importDroppedImage(file);
+});
+
+// ---------------------------------------------------------------------------
 // File-picker attach button (mobile + desktop alternative to drag-and-drop)
 // ---------------------------------------------------------------------------
 
