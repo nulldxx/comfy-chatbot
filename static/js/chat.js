@@ -427,6 +427,87 @@ function showI2IDialog(wrap, defaultPrompt, defaultDenoise, titleText = 'Image t
 }
 
 // ---------------------------------------------------------------------------
+// Regenerate pre-run dialog (prompt + steps)
+// ---------------------------------------------------------------------------
+
+function showRegenDialog(wrap, defaultPrompt, defaultSteps) {
+  return new Promise((resolve, reject) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'img-i2i-dialog';
+
+    const card = document.createElement('div');
+    card.className = 'img-i2i-dialog-card';
+
+    const title = document.createElement('div');
+    title.className = 'img-i2i-dialog-title';
+    title.textContent = 'Regenerate';
+
+    const promptLabel = document.createElement('label');
+    promptLabel.className = 'img-i2i-dialog-label';
+    promptLabel.textContent = 'Prompt';
+
+    const promptEl = document.createElement('textarea');
+    promptEl.className = 'img-i2i-dialog-prompt';
+    promptEl.value = defaultPrompt;
+
+    const stepsLabel = document.createElement('label');
+    stepsLabel.className = 'img-i2i-dialog-label';
+    stepsLabel.textContent = 'Steps';
+
+    const stepsRow = document.createElement('div');
+    stepsRow.className = 'img-i2i-dialog-denoise-row';
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'img-i2i-dialog-slider';
+    slider.min = '1'; slider.max = '150'; slider.step = '1';
+    slider.value = String(defaultSteps);
+
+    const stepsVal = document.createElement('span');
+    stepsVal.className = 'img-i2i-dialog-denoise-val';
+    stepsVal.textContent = String(defaultSteps);
+
+    slider.addEventListener('input', () => {
+      stepsVal.textContent = slider.value;
+    });
+
+    stepsRow.append(slider, stepsVal);
+
+    const actions = document.createElement('div');
+    actions.className = 'img-i2i-dialog-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'img-i2i-dialog-btn';
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+
+    const okBtn = document.createElement('button');
+    okBtn.className = 'img-i2i-dialog-btn img-i2i-dialog-btn-ok';
+    okBtn.type = 'button';
+    okBtn.textContent = 'OK';
+
+    const dismiss = () => overlay.remove();
+
+    cancelBtn.addEventListener('click', () => { dismiss(); reject(); });
+    okBtn.addEventListener('click', () => {
+      dismiss();
+      resolve({ prompt: promptEl.value.trim(), steps: parseInt(slider.value, 10) });
+    });
+    promptEl.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { dismiss(); reject(); }
+    });
+
+    actions.append(cancelBtn, okBtn);
+    card.append(title, promptLabel, promptEl, stepsLabel, stepsRow, actions);
+    overlay.appendChild(card);
+    wrap.appendChild(overlay);
+
+    promptEl.focus();
+    promptEl.setSelectionRange(promptEl.value.length, promptEl.value.length);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Runner functions (face-detail, upscale, image2image, image2video, inpaint, do-over)
 // ---------------------------------------------------------------------------
 
@@ -440,11 +521,11 @@ function runFaceDetail(prompt, image, imgWrap, denoiseOverride) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
-function runUpscale(image, imgWrap) {
+function runUpscale(image, imgWrap, denoiseOverride, prompt) {
   state.iterationsFromSequence = false;
   sendBtn.disabled = true;
-  return runGeneration('', '', null, {
-    upscale: { image, workflow: state.currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW },
+  return runGeneration(prompt || '', '', null, {
+    upscale: { image, workflow: state.currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW, denoiseOverride },
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
@@ -490,10 +571,10 @@ function runRemove(image, mask, imgWrap, _prompt, _denoise, maskB64) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
-function runDoOver(url, imgWrap) {
-  const prompt = state.imagePrompts[url] || '';
+function runDoOver(url, imgWrap, promptOverride, stepsOverride) {
+  const prompt = promptOverride != null ? promptOverride : (state.imagePrompts[url] || '');
   const videoMeta = state.imageVideoMeta[url] || null;
-  return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url, videoMeta });
+  return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url, videoMeta, stepsOverride });
 }
 
 // ---------------------------------------------------------------------------
@@ -609,7 +690,11 @@ function appendChatImage(container, url) {
     e.stopPropagation();
     if (up.disabled || sendBtn.disabled) return;
     up.disabled = true;
-    runUpscale(url, wrap).finally(() => { up.disabled = false; });
+    showI2IDialog(wrap, '', state.currentDenoise.upscale, 'Upscale')
+      .then(({ prompt, denoise }) => {
+        runUpscale(url, wrap, denoise, prompt).finally(() => { up.disabled = false; });
+      })
+      .catch(() => { up.disabled = false; });
   });
 
   const del = document.createElement('button');
@@ -641,7 +726,13 @@ function appendChatImage(container, url) {
     e.stopPropagation();
     if (redo.disabled || sendBtn.disabled) return;
     redo.disabled = true;
-    runDoOver(url, wrap).finally(() => { redo.disabled = false; });
+    const defaultPrompt = state.imagePrompts[url] || '';
+    const defaultSteps = state.currentGenerationSteps != null ? state.currentGenerationSteps : 20;
+    showRegenDialog(wrap, defaultPrompt, defaultSteps)
+      .then(({ prompt, steps }) => {
+        runDoOver(url, wrap, prompt, steps).finally(() => { redo.disabled = false; });
+      })
+      .catch(() => { redo.disabled = false; });
   });
 
   const i2i = document.createElement('button');
@@ -1147,6 +1238,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
+  const stepsOverride = opts.stepsOverride != null ? opts.stepsOverride : null;
   const inPlaceWrap = sliderReplace || replaceWrap;
   const job = face || upscale || image2image || image2video || inpaint || removal;
   const endpoint = face ? '/api/face-detail'
@@ -1190,13 +1282,13 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(state.currentServer ? { server: state.currentServer.address, server_os: state.currentServer.os } : {}),
       ...(wf ? { workflow: wf } : {}),
       ...(!job && state.currentResolution ? { width: state.currentResolution.width, height: state.currentResolution.height } : {}),
-      ...(!job && state.currentGenerationSteps !== null ? { steps: state.currentGenerationSteps } : {}),
+      ...(!job && (stepsOverride != null || state.currentGenerationSteps !== null) ? { steps: stepsOverride != null ? stepsOverride : state.currentGenerationSteps } : {}),
       ...(job ? { image: job.image } : {}),
       ...(inpaint ? { mask: inpaint.mask } : {}),
       ...(inpaint && inpaint.drawToken ? { draw_token: inpaint.drawToken } : {}),
       ...(removal ? { mask: removal.mask } : {}),
       ...(face        ? { denoise: face.denoiseOverride != null ? face.denoiseOverride : state.currentDenoise.face } : {}),
-      ...(upscale     ? { denoise: state.currentDenoise.upscale } : {}),
+      ...(upscale     ? { denoise: upscale.denoiseOverride != null ? upscale.denoiseOverride : state.currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
