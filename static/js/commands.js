@@ -629,6 +629,14 @@ export function makeCommandHandler(deps) {
     if (sendBtn.disabled) return Promise.resolve();
     addMessage('user', `🤖 #${escapeHtml(name)}`, null);
     sendBtn.disabled = true;
+    // Slash commands like /image2image and /upscale always operate on the last
+    // entry in sessionImages. Move the target URL to the end so they pick the
+    // right image instead of whatever was generated most recently.
+    const sidx = state.sessionImages.indexOf(url);
+    if (sidx !== -1 && sidx !== state.sessionImages.length - 1) {
+      state.sessionImages.splice(sidx, 1);
+      state.sessionImages.push(url);
+    }
     return (async () => {
       for (const rawStep of macroSteps) {
         const step = rawStep.replace(/<PARAM>/gi, url);
