@@ -55,16 +55,16 @@ services:
       # Optional: override the Grok model used for /sequence
       - GROK_MODEL=grok-4-1-fast-non-reasoning
 
-      # Archive (/archive-* commands) — copies images into a password-encrypted
-      # volume, then deletes the originals. Requires the archive-agent .deb
-      # installed and running on the host (it does the privileged zuluCrypt-cli
-      # mount). Leave ARCHIVE_VOLUME/ARCHIVE_PASSWORD blank to disable archiving.
+      # Archive (/archive-* commands) — copies images into an encrypted volume,
+      # then deletes the originals. Requires the archive-agent .deb installed and
+      # running on the host (it does the privileged zuluCrypt-cli mount). The
+      # volume is encrypted with SECRET_KEY and auto-created on first archive if
+      # absent. Leave ARCHIVE_VOLUME blank to disable archiving.
       #
       # Host path the agent opens with zuluCrypt-cli (LUKS/VeraCrypt auto-detected):
       - ARCHIVE_VOLUME=${ARCHIVE_VOLUME:-}
-      # Passphrase for the encrypted volume — sent to the agent per request; the
-      # agent never stores it.
-      - ARCHIVE_PASSWORD=${ARCHIVE_PASSWORD:-}
+      # Size of the volume auto-created on first archive (zuluCrypt-cli units, e.g. 20G).
+      - ARCHIVE_SIZE=${ARCHIVE_SIZE:-20G}
       # Unix socket the host agent listens on (bind-mounted below).
       - ARCHIVE_AGENT_SOCKET=/run/archive-agent.sock
       # Where the host mount appears inside the container (bind-mounted below).

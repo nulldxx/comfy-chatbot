@@ -106,15 +106,16 @@ MASKS_DIR.mkdir(parents=True, exist_ok=True)
 INPAINT_INPUTS_DIR = IMAGES_DIR / '.inpaint-inputs'
 INPAINT_INPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Archive config — the /archive-* commands copy images into a password-encrypted
-# volume and then delete the originals (move semantics). The container is
-# unprivileged and can't mount the volume itself, so it asks a root host agent
-# (shipped as the archive-agent .deb) to run zuluCrypt-cli over a Unix
-# socket. The volume path + password are sent to the agent per request — the
-# agent never stores the password. The agent mounts on the host at a directory
+# Archive config — the /archive-* commands copy images into an encrypted volume
+# and then delete the originals (move semantics). The container is unprivileged
+# and can't mount the volume itself, so it asks a root host agent (shipped as the
+# archive-agent .deb) to run zuluCrypt-cli over a Unix socket. The volume is
+# encrypted with SECRET_KEY (the deployment's single secret) and is auto-created
+# on first archive if the file is absent; the passphrase is sent to the agent per
+# request — the agent never stores it. The agent mounts on the host at a directory
 # bind-mounted into the container (with rshared propagation) as ARCHIVE_MOUNT_DIR.
 ARCHIVE_VOLUME = os.environ.get('ARCHIVE_VOLUME', '')          # host path to encrypted volume
-ARCHIVE_PASSWORD = os.environ.get('ARCHIVE_PASSWORD', '')
+ARCHIVE_SIZE = os.environ.get('ARCHIVE_SIZE', '20G')           # size of the volume auto-created on first archive
 ARCHIVE_AGENT_SOCKET = os.environ.get('ARCHIVE_AGENT_SOCKET', '/run/archive-agent.sock')
 ARCHIVE_MOUNT_DIR = Path(os.environ.get('ARCHIVE_MOUNT_DIR', '/app/archive'))
 # Marker file the agent writes at the volume root on mount. We refuse to delete

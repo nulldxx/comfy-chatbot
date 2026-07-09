@@ -47,8 +47,8 @@ All settings are environment variables in `docker-compose.yml`:
 | `APP_USERNAME` | `user` | Login username |
 | `APP_PASSWORD` | `password` | Login password |
 | `SECRET_KEY` | *(change this)* | Flask session secret |
-| `ARCHIVE_VOLUME` | *(empty)* | Host path to the encrypted volume for `/archive-*` (blank disables archiving) |
-| `ARCHIVE_PASSWORD` | *(empty)* | Passphrase for the encrypted volume (sent to the host agent per request) |
+| `ARCHIVE_VOLUME` | *(empty)* | Host path to the encrypted volume for `/archive-*`, encrypted with `SECRET_KEY` and auto-created on first archive (blank disables archiving) |
+| `ARCHIVE_SIZE` | `20G` | Size of the archive volume created on first archive (zuluCrypt-cli units) |
 | `ARCHIVE_AGENT_SOCKET` | `/run/archive-agent.sock` | Unix socket of the host archive agent |
 | `ARCHIVE_MOUNT_DIR` | `/app/archive` | Where the host mount appears inside the container |
 | `OUTPUT_VOLUME` | *(empty)* | Host path to the encrypted **live-output** volume (blank = plain, unencrypted output). Auto-created on first deploy |
@@ -96,9 +96,11 @@ volumes:
 
 ## Encrypted Archiving
 
-The `/archive-*` commands copy images into a password-encrypted volume (opened
-with [zuluCrypt](https://github.com/mhogomchungu/zuluCrypt)) and then delete the
-originals from the output folder — a *move*, not a backup copy.
+The `/archive-*` commands copy images into an encrypted volume (opened with
+[zuluCrypt](https://github.com/mhogomchungu/zuluCrypt)) and then delete the
+originals from the output folder — a *move*, not a backup copy. The volume is
+encrypted with `SECRET_KEY` (the deployment's single secret) and **self-provisions
+on first use**: if the volume file doesn't exist yet, the agent creates it.
 
 Each command stages its images under `staging/<folder>` on the volume. By
 default `<folder>` is a random GUID, but you can supply a name to use instead —
@@ -108,8 +110,8 @@ contains nothing usable, a GUID is used.
 
 Because the container runs unprivileged, it cannot mount the volume itself.
 Instead it asks a small **host-side root agent** (`archive-agent`) to run
-`zuluCrypt-cli` over a Unix socket. The container sends the volume path and
-passphrase **per request**; the agent never stores them.
+`zuluCrypt-cli` over a Unix socket. The container sends the volume path and the
+`SECRET_KEY` passphrase **per request**; the agent never stores them.
 
 **1. Install the agent on the host** (e.g. Raspberry Pi 5 / Debian Bookworm). The
 `.deb` is attached to each [GitHub Release](../../releases) (it's
@@ -128,8 +130,8 @@ mounts already present in `docker-compose.yml`:
 
 ```yaml
 environment:
-  - ARCHIVE_VOLUME=/srv/archives/photos.luks   # host path the agent opens
-  - ARCHIVE_PASSWORD=change-me
+  - ARCHIVE_VOLUME=/srv/archives/photos.luks   # host path the agent opens; auto-created on first archive
+  - ARCHIVE_SIZE=20G                            # size of the volume if auto-created
 volumes:
   - /run/archive-agent.sock:/run/archive-agent.sock
   - type: bind

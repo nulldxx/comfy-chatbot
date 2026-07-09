@@ -89,14 +89,15 @@ class TestArchive(unittest.TestCase):
         self._orig = {
             "IMAGES_DIR": app_module.IMAGES_DIR,
             "ARCHIVE_VOLUME": app_module.ARCHIVE_VOLUME,
-            "ARCHIVE_PASSWORD": app_module.ARCHIVE_PASSWORD,
+            "SECRET_KEY": app_module.SECRET_KEY,
             "ARCHIVE_AGENT_SOCKET": app_module.ARCHIVE_AGENT_SOCKET,
             "ARCHIVE_MOUNT_DIR": app_module.ARCHIVE_MOUNT_DIR,
         }
         self._orig_image_store_images_dir = image_store_module.IMAGES_DIR
         app_module.IMAGES_DIR = Path(self.images_dir)
         app_module.ARCHIVE_VOLUME = "/host/archive.img"
-        app_module.ARCHIVE_PASSWORD = "s3cret"
+        # The archive volume is encrypted with SECRET_KEY (no separate password).
+        app_module.SECRET_KEY = "s3cret"
         app_module.ARCHIVE_AGENT_SOCKET = self.sock_path
         app_module.ARCHIVE_MOUNT_DIR = Path(self.mount_dir)
         image_store_module.IMAGES_DIR = Path(self.images_dir)
@@ -162,7 +163,10 @@ class TestArchive(unittest.TestCase):
         self.assertEqual(actions, ["mount", "unmount"])
         mount_req = self.agent.requests[0]
         self.assertEqual(mount_req["volume"], "/host/archive.img")
+        # Encrypted with SECRET_KEY, and asked to auto-create if the volume is absent.
         self.assertEqual(mount_req["password"], "s3cret")
+        self.assertTrue(mount_req["create"])
+        self.assertEqual(mount_req["size"], app_module.ARCHIVE_SIZE)
 
     def test_archive_all_includes_videos(self):
         self._auth()

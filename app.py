@@ -24,7 +24,7 @@ from catalogue import (
 from ComfyServer import ComfyServer
 from config import (
     ARCHIVE_AGENT_SOCKET, ARCHIVE_MARKER, ARCHIVE_MOUNT_DIR,
-    ARCHIVE_PASSWORD, ARCHIVE_VOLUME,
+    ARCHIVE_SIZE, ARCHIVE_VOLUME,
     BUILD_VERSION, COMFY_FACEDETAILER_DIR, COMFY_FACEDETAILER_WORKFLOW,
     COMFY_GENERATION_DIR, COMFY_IMAGE2IMAGE_DIR, COMFY_IMAGE2IMAGE_WORKFLOW,
     COMFY_IMAGE2VIDEO_DIR, COMFY_IMAGE2VIDEO_WORKFLOW,
@@ -1251,7 +1251,7 @@ def _agent_request(payload: dict, timeout: float = 120.0) -> dict:
 @app.route("/api/archive", methods=["POST"])
 @login_required
 def api_archive():
-    if not ARCHIVE_VOLUME or not ARCHIVE_PASSWORD:
+    if not ARCHIVE_VOLUME:
         return jsonify({"error": "Archiving is not configured on the server."}), 503
 
     body = request.get_json(silent=True) or {}
@@ -1272,7 +1272,12 @@ def api_archive():
             resp = _agent_request({
                 "action": "mount",
                 "volume": ARCHIVE_VOLUME,
-                "password": ARCHIVE_PASSWORD,
+                "password": SECRET_KEY,
+                # Self-provision on first archive if the volume file is absent
+                # (mirrors the output volume). Safe on an existing volume: the
+                # agent's open(volume, "xb") never clobbers one that exists.
+                "create": True,
+                "size": ARCHIVE_SIZE,
             })
         except RuntimeError as exc:
             return jsonify({"error": str(exc)}), 502
