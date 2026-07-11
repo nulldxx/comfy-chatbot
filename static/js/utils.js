@@ -14,6 +14,28 @@ export function isVideoUrl(url) {
   return /\.(mp4|webm)(?:[?#]|$)/i.test(String(url));
 }
 
+// Summarise one volume's /api/fscheck result into a small {icon, label, tone}
+// for display. Pure — covers every result shape the server sends:
+//   {configured:false}     -> not configured on this server
+//   {available:false}      -> configured but no startup check result yet
+//   {skipped:...}          -> volume not provisioned yet (nothing to check)
+//   {ok:false, error}      -> the check itself failed
+//   {ok:true, clean}       -> filesystem already clean
+//   {ok:true, uncorrected} -> errors remain (could not be fully repaired)
+//   {ok:true, corrected}   -> errors found and repaired
+// uncorrected is checked before corrected because a run can report both.
+export function formatFscheckResult(result) {
+  const r = result || {};
+  if (r.configured === false) return { icon: '—', label: 'not configured', tone: 'muted' };
+  if (r.available === false)  return { icon: '—', label: 'not checked yet', tone: 'muted' };
+  if (r.skipped)              return { icon: '—', label: 'volume not yet created', tone: 'muted' };
+  if (r.ok === false)         return { icon: '⚠', label: `check failed: ${r.error || 'unknown error'}`, tone: 'error' };
+  if (r.clean)                return { icon: '✓', label: 'clean', tone: 'ok' };
+  if (r.uncorrected)          return { icon: '⚠', label: 'problems remain — could not fully repair', tone: 'error' };
+  if (r.corrected)            return { icon: '🔧', label: 'errors found and repaired', tone: 'warn' };
+  return { icon: '?', label: 'unknown result', tone: 'muted' };
+}
+
 // Subsequence fuzzy match: every query char must appear in order.
 // Returns a score (higher = better) or -1 for no match.
 export function fuzzyScore(query, text) {

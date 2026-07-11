@@ -32,12 +32,14 @@ from config import (
     COMFY_REMOVAL_DIR, COMFY_REMOVAL_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
-    IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_MARKER, OUTPUT_VOLUME, PASSWORD, SECRET_KEY, USERNAME,
+    FSCK_TIMEOUT,
+    IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT, OUTPUT_MARKER,
+    OUTPUT_VOLUME, PASSWORD, SECRET_KEY, USERNAME,
     VIDEO_EXTS,
 )
 from generation_service import (
     cancel_auto_purge, get_last_sent_workflow, jobs, jobs_lock,
-    run_generation, start_generation_job, start_sequence_job,
+    run_generation, start_background_job, start_generation_job, start_sequence_job,
 )
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
@@ -1318,6 +1320,60 @@ def api_archive():
                 app.logger.warning("archive agent unmount failed: %s", exc)
 
     return jsonify({"archived": len(files), "folder": folder})
+
+
+def _read_output_fscheck() -> dict:
+    """Read the output volume's last startup fsck result (written by the entrypoint
+    via `agent_client check-output`). A missing/unreadable file means the check
+    hasn't produced a result yet (fresh deploy, or the volume wasn't provisioned)."""
+    try:
+        with open(OUTPUT_FSCHECK_RESULT, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {"available": False}
+
+
+@app.route("/api/fscheck", methods=["POST"])
+@login_required
+def api_fscheck():
+    """Check + auto-repair the encrypted volumes. Returns a job_id immediately; the
+    work runs on a background thread streamed over /api/progress/<job_id> (fsck can
+    take minutes and would otherwise blow the gunicorn worker timeout).
+
+    The output volume is mounted for the container's whole life and so can't be
+    checked live — we surface the result of its startup check instead. The archive
+    volume is normally unmounted, so we fsck it now via the agent, serialised with
+    archive_lock so a fsck and an archive op can never touch the volume at once."""
+
+    def job(emit):
+        result: dict = {"archive": None, "output": None}
+
+        # Output volume: report the startup check result; no live action.
+        if OUTPUT_VOLUME:
+            emit("Reading output volume check (from container startup)…")
+            result["output"] = _read_output_fscheck()
+        else:
+            result["output"] = {"configured": False}
+
+        # Archive volume: check it now (it's unmounted between archive ops).
+        if not ARCHIVE_VOLUME:
+            result["archive"] = {"configured": False}
+        else:
+            emit("Checking archive volume… (this may take a few minutes)")
+            with archive_lock:
+                try:
+                    result["archive"] = _agent_request({
+                        "action": "fsck",
+                        "target": "archive",
+                        "volume": ARCHIVE_VOLUME,
+                        "password": SECRET_KEY,
+                    }, timeout=FSCK_TIMEOUT)
+                except RuntimeError as exc:
+                    result["archive"] = {"ok": False, "error": str(exc)}
+        return result
+
+    job_id = start_background_job(job, kind="fscheck", summary="Filesystem check")
+    return jsonify({"job_id": job_id})
 
 
 # ---------------------------------------------------------------------------

@@ -9,18 +9,28 @@ JSON request per connection, one JSON reply.
 Requests:
   {"action": "mount",   "volume": "<host path>", "password": "<passphrase>"}
   {"action": "unmount", "volume": "<host path>"}
+  {"action": "fsck",    "volume": "<host path>", "password": "<passphrase>"}
   {"action": "status"}
 
-mount/unmount take an optional "target": "archive" (default) or "output". The
+mount/unmount/fsck take an optional "target": "archive" (default) or "output". The
 output target is a second, persistently mounted volume the container uses for its
 live image output; it has its own mount name + dir (see OUTPUT_MOUNT_* config) so
 it never collides with the on-demand archive mount. A mount request may also pass
 "create": true (+ optional "size", e.g. "20G") to auto-provision the volume on
 first deploy if its file does not yet exist.
 
+A fsck request runs `e2fsck -f -y` on the volume's ext4 filesystem, opened via
+cryptsetup WITHOUT mounting (e2fsck refuses a mounted fs). It auto-repairs any
+corruption found (-y answers yes to every fix) and reports the outcome. The
+volume must be unmounted; a mounted volume is refused. Used at container startup
+to check the output volume before it is mounted, and on demand for the archive
+volume (which is normally unmounted).
+
 Replies:
   {"ok": true,  "mountpoint": "<dir>"}        # mount
   {"ok": true}                                # unmount / status
+  {"ok": true,  "clean": bool, "corrected": bool, "uncorrected": bool,
+   "exit_code": int, "output": "<e2fsck output>"}   # fsck
   {"ok": false, "error": "<message>"}
 
 The password is supplied per request and is NEVER stored. It is handed to
@@ -66,6 +76,12 @@ log = logging.getLogger("archive-agent")
 # Marker file written at the volume root on mount; the container verifies it
 # exists before deleting any originals. Keep in sync with app.py ARCHIVE_MARKER.
 MARKER_NAME = ".comfy-archive"
+
+# Upper bound for a single e2fsck run (the fsck action). A dirty 20G ext4 volume
+# checks+repairs in well under a minute on a Pi 5; 15 min is a generous ceiling.
+# The client side (app.py FSCK_TIMEOUT / agent_client) must wait LONGER than this
+# so the agent returns its result before the client's socket read gives up.
+E2FSCK_TIMEOUT_SECONDS = 900
 
 
 def load_config():
@@ -176,6 +192,60 @@ def _parse_size(size):
         return None
 
 
+def _write_keyfile(password):
+    """Write `password` to a fresh 0600 tmpfs key file and return its path. Keeps
+    the passphrase off argv (so it never appears in `ps`). Caller must remove it."""
+    fd, keyfile = tempfile.mkstemp(prefix="caa-", dir="/dev/shm")
+    os.fchmod(fd, 0o600)
+    # No trailing newline: the passphrase is used verbatim.
+    os.write(fd, password.encode("utf-8"))
+    os.close(fd)
+    return keyfile
+
+
+def _cryptsetup_format(volume, password):
+    """luksFormat `volume` with `password`. Returns None on success or an error
+    string. Passphrase via 0600 tmpfs keyfile."""
+    keyfile = None
+    try:
+        keyfile = _write_keyfile(password)
+        proc = subprocess.run(
+            ["cryptsetup", "luksFormat", "--batch-mode", "--key-file", keyfile, volume],
+            capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode != 0:
+            return f"cryptsetup luksFormat failed: {(proc.stdout + proc.stderr).strip()}"
+        return None
+    finally:
+        if keyfile and os.path.exists(keyfile):
+            os.remove(keyfile)
+
+
+def _cryptsetup_open(volume, password, mapper):
+    """Open LUKS `volume` at /dev/mapper/`mapper` WITHOUT mounting it — the
+    decrypted block device for operations that don't want a mounted filesystem
+    (volume creation's mkfs, and fsck). Returns None on success or an error
+    string. Passphrase via 0600 tmpfs keyfile."""
+    keyfile = None
+    try:
+        keyfile = _write_keyfile(password)
+        proc = subprocess.run(
+            ["cryptsetup", "open", "--key-file", keyfile, volume, mapper],
+            capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode != 0:
+            return f"cryptsetup open failed: {(proc.stdout + proc.stderr).strip()}"
+        return None
+    finally:
+        if keyfile and os.path.exists(keyfile):
+            os.remove(keyfile)
+
+
+def _cryptsetup_close(mapper):
+    """Close the /dev/mapper/`mapper` device. Harmless (and quiet) if not open."""
+    subprocess.run(["cryptsetup", "close", mapper], capture_output=True, text=True)
+
+
 def _create_volume(volume, size, password):
     """Auto-provision a new LUKS volume file at `volume` of `size` with an ext4
     filesystem inside (first-deploy path for the output volume). Uses cryptsetup
@@ -195,31 +265,22 @@ def _create_volume(volume, size, password):
         return f"invalid volume size: {size!r}"
 
     mapper = f"comfy-output-init-{os.getpid()}"
-    keyfile = None
     err = None
     try:
         with open(volume, "xb") as fh:   # x: never clobber an existing file
             fh.truncate(nbytes)
-        fd, keyfile = tempfile.mkstemp(prefix="caa-", dir="/dev/shm")
-        os.fchmod(fd, 0o600)
-        os.write(fd, password.encode("utf-8"))
-        os.close(fd)
-        for cmd in (
-            ["cryptsetup", "luksFormat", "--batch-mode", "--key-file", keyfile, volume],
-            ["cryptsetup", "open", "--key-file", keyfile, volume, mapper],
-            ["mkfs.ext4", "-q", f"/dev/mapper/{mapper}"],
-        ):
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        err = _cryptsetup_format(volume, password)
+        if err is None:
+            err = _cryptsetup_open(volume, password, mapper)
+        if err is None:
+            proc = subprocess.run(["mkfs.ext4", "-q", f"/dev/mapper/{mapper}"],
+                                  capture_output=True, text=True, timeout=300)
             if proc.returncode != 0:
-                err = f"{cmd[0]} failed: {(proc.stdout + proc.stderr).strip()}"
-                break
+                err = f"mkfs.ext4 failed: {(proc.stdout + proc.stderr).strip()}"
     except OSError as exc:
         err = f"could not create volume file: {exc}"
     finally:
-        subprocess.run(["cryptsetup", "close", mapper],
-                       capture_output=True, text=True)  # harmless if not open
-        if keyfile and os.path.exists(keyfile):
-            os.remove(keyfile)
+        _cryptsetup_close(mapper)  # harmless if the open never succeeded
 
     if err is not None:
         if os.path.exists(volume):
@@ -230,6 +291,85 @@ def _create_volume(volume, size, password):
         return err
     log.info("created encrypted volume %s (%s)", volume, size)
     return None
+
+
+def interpret_e2fsck(rc, output=""):
+    """Map an e2fsck exit code (a bitmask) to a structured result dict.
+
+    e2fsck exit bits: 1 = filesystem errors corrected, 2 = errors corrected +
+    reboot advised (irrelevant here), 4 = errors left UNcorrected, 8 = operational
+    error, 16 = usage/syntax error, 32 = cancelled, 128 = shared-lib error. 0 = the
+    filesystem was already clean. Bits 1+2 mean e2fsck ran and fixed things; bit 4
+    means it ran but couldn't fix everything; bits >=8 mean e2fsck itself failed.
+    """
+    operational = bool(rc & ~7)  # any bit above 4 -> e2fsck itself failed
+    result = {
+        "exit_code": rc,
+        "clean": rc == 0,
+        "corrected": bool(rc & 3),
+        "uncorrected": bool(rc & 4),
+        "output": output,
+    }
+    if operational:
+        result["ok"] = False
+        result["error"] = f"e2fsck operational error (exit {rc})"
+    else:
+        result["ok"] = True
+    return result
+
+
+def handle_fsck(cfg, req):
+    """Check (and auto-repair) a volume's ext4 filesystem with e2fsck. The volume
+    is opened via cryptsetup WITHOUT mounting — e2fsck refuses a mounted fs, and
+    opening a second dm-crypt mapper over a mounted rw volume would corrupt it."""
+    volume = req.get("volume")
+    password = req.get("password")
+    if not volume or password is None:
+        return {"ok": False, "error": "fsck requires 'volume' and 'password'"}
+
+    # First-deploy: the output volume may not exist yet (it's created on first
+    # mount). Nothing to check — report a skip, not an error, so the startup
+    # check is a no-op before the volume has ever been provisioned.
+    if not os.path.exists(volume):
+        return {"ok": True, "skipped": "volume absent",
+                "clean": True, "corrected": False, "uncorrected": False}
+
+    name, mount_dir = _resolve_target(cfg, req)
+
+    # Refuse if the volume looks mounted (zuluCrypt's own mountpoint or our bind
+    # dir). e2fsck must run unmounted; a live rw mount + a second mapper = data
+    # loss. The output volume is only fsck'd at startup before it's mounted; the
+    # archive volume is checked under the app's archive_lock while unmounted.
+    if os.path.ismount(_zulu_mountpoint(name)) or os.path.ismount(mount_dir):
+        return {"ok": False, "error": "volume is mounted; unmount before fsck"}
+
+    mapper = f"comfy-fsck-{os.getpid()}"
+    err = _cryptsetup_open(volume, password, mapper)
+    if err is not None:
+        return {"ok": False, "error": err}
+    try:
+        # -f: force a full check even if the fs is flagged clean. -y: assume "yes"
+        # to every repair (unattended auto-fix — thorough, but can discard
+        # unrecoverable data on severe corruption).
+        proc = subprocess.run(
+            ["e2fsck", "-f", "-y", f"/dev/mapper/{mapper}"],
+            capture_output=True, text=True, timeout=E2FSCK_TIMEOUT_SECONDS,
+        )
+        rc, out = proc.returncode, (proc.stdout + proc.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return {"ok": False,
+                "error": f"e2fsck timed out after {E2FSCK_TIMEOUT_SECONDS}s"}
+    finally:
+        _cryptsetup_close(mapper)
+
+    result = interpret_e2fsck(rc, out[-4000:])  # cap the echoed output
+    if result["clean"]:
+        log.info("fsck %s: clean", volume)
+    elif not result["ok"] or result["uncorrected"]:
+        log.error("fsck %s: rc=%s (problems remain): %s", volume, rc, out)
+    else:
+        log.warning("fsck %s: rc=%s (errors corrected)", volume, rc)
+    return result
 
 
 def handle_mount(cfg, req):
@@ -312,6 +452,8 @@ def handle(cfg, req):
         return handle_mount(cfg, req)
     if action == "unmount":
         return handle_unmount(cfg, req)
+    if action == "fsck":
+        return handle_fsck(cfg, req)
     if action == "status":
         return {"ok": True}
     return {"ok": False, "error": f"unknown action: {action!r}"}

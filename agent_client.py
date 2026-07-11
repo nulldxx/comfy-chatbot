@@ -8,9 +8,13 @@ stop). Stdlib only, so it runs unchanged in the slim runtime image.
 CLI:
   python -m agent_client mount-output     # create-if-missing + mount, wait for marker
   python -m agent_client unmount-output   # unmount (lock) the output volume
+  python -m agent_client check-output     # e2fsck the output volume (before mount)
 
-Both CLI commands are no-ops (exit 0) when OUTPUT_VOLUME is unset, so the
-entrypoint can call them unconditionally.
+All CLI commands are no-ops (exit 0) when OUTPUT_VOLUME is unset, so the
+entrypoint can call them unconditionally. check-output is best-effort: e2fsck can
+only run on an unmounted filesystem, so it must come BEFORE mount-output, and it
+never blocks startup (its result is recorded to OUTPUT_FSCHECK_RESULT for
+/api/fscheck to surface).
 """
 
 import os
@@ -121,13 +125,76 @@ def _unmount_output():
     return 0
 
 
+def _write_fscheck_result(path, resp):
+    """Record the output volume's fsck result (with a timestamp) so the Flask app
+    can surface it via /api/fscheck. Best-effort — a write failure is only logged."""
+    record = {"checked_at": time.time()}
+    record.update(resp)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(record, fh)
+    except OSError as exc:
+        print(f"output-fsck: could not write result to {path}: {exc}", file=sys.stderr)
+
+
+def _check_output():
+    """Ask the agent to e2fsck the (unmounted) output volume and record the result.
+
+    Best-effort by design: it runs before mount-output, and a dirty/uncorrectable
+    filesystem or an unreachable agent must NOT stop the container from starting —
+    the outcome is logged and written to OUTPUT_FSCHECK_RESULT for later display.
+    Always returns 0."""
+    volume = _env("OUTPUT_VOLUME")
+    if not volume:
+        return 0  # output encryption disabled — nothing to check
+    password = _env("OUTPUT_PASSWORD") or _env("SECRET_KEY")
+    if not password:
+        print("output-fsck: OUTPUT_VOLUME set but no OUTPUT_PASSWORD/SECRET_KEY; "
+              "skipping check", file=sys.stderr)
+        return 0
+    socket_path = _env("ARCHIVE_AGENT_SOCKET", "/run/archive-agent.sock")
+    # Wait longer than the agent's e2fsck ceiling so we get its result rather than
+    # timing out mid-check (keep the default in sync with config.FSCK_TIMEOUT).
+    timeout = float(_env("FSCK_TIMEOUT", "1200"))
+    result_path = _env("OUTPUT_FSCHECK_RESULT", "/tmp/comfy-output-fscheck.json")
+
+    try:
+        resp = send({
+            "action": "fsck",
+            "target": "output",
+            "volume": volume,
+            "password": password,
+        }, socket_path, timeout=timeout)
+    except RuntimeError as exc:
+        print(f"output-fsck: {exc}", file=sys.stderr)
+        resp = {"ok": False, "error": str(exc)}
+
+    _write_fscheck_result(result_path, resp)
+
+    if resp.get("skipped"):
+        print("output-fsck: volume not yet provisioned; skipped", file=sys.stderr)
+    elif resp.get("clean"):
+        print("output-fsck: filesystem clean", file=sys.stderr)
+    elif resp.get("uncorrected"):
+        print("output-fsck: WARNING — errors could not be fully corrected",
+              file=sys.stderr)
+    elif resp.get("corrected"):
+        print("output-fsck: filesystem errors corrected", file=sys.stderr)
+    elif not resp.get("ok"):
+        print(f"output-fsck: check failed: {resp.get('error')}", file=sys.stderr)
+    return 0
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
     if cmd == "mount-output":
         return _mount_output()
     if cmd == "unmount-output":
         return _unmount_output()
-    print(f"usage: {argv[0]} mount-output|unmount-output", file=sys.stderr)
+    if cmd == "check-output":
+        return _check_output()
+    print(f"usage: {argv[0]} mount-output|unmount-output|check-output",
+          file=sys.stderr)
     return 2
 
 

@@ -18,6 +18,11 @@ term() {
     exit 0
 }
 
+# Check + auto-repair the output volume's filesystem while it is still unmounted
+# (e2fsck can't run on a mounted fs). Best-effort: never blocks startup — the
+# result is recorded for /fscheck to surface. Must run BEFORE mount-output.
+python -m agent_client check-output || true
+
 # Mount (and on first deploy, create) the encrypted output volume before serving.
 # A non-zero exit here means encryption is enabled but the volume didn't mount,
 # so we abort rather than write plaintext images to disk.

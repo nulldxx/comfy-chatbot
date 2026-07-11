@@ -134,6 +134,19 @@ ARCHIVE_MARKER = '.comfy-archive'
 OUTPUT_VOLUME = os.environ.get('OUTPUT_VOLUME', '')   # host path to the output volume
 OUTPUT_MARKER = ARCHIVE_MARKER                        # same marker file the agent drops
 
+# Filesystem check (/fscheck). e2fsck can only run on an unmounted volume, so the
+# output volume — mounted for the container's whole life — is checked at startup
+# (before mount, in the entrypoint) rather than on demand; the archive volume
+# (normally unmounted) is checked live. The output check's result is written here
+# by the entrypoint's `agent_client check-output` and read back by /api/fscheck.
+# This path must be a plain container path OUTSIDE IMAGES_DIR (the check runs
+# before the output volume is mounted, so a path on it would be shadowed).
+OUTPUT_FSCHECK_RESULT = Path(os.environ.get('OUTPUT_FSCHECK_RESULT', '/tmp/comfy-output-fscheck.json'))
+# Client-side timeout (seconds) for a fsck request to the agent. Must exceed the
+# agent's own e2fsck ceiling (E2FSCK_TIMEOUT_SECONDS = 900) so the agent returns
+# its result before the socket read gives up.
+FSCK_TIMEOUT = int(os.environ.get('FSCK_TIMEOUT', '1200'))
+
 # Still-image outputs (and acceptable inputs), rendered in the browser via <img>.
 # Animated GIF/WebP also live here — they play natively in an <img>.
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}

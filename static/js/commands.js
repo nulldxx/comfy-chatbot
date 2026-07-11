@@ -1,7 +1,7 @@
 import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
   buildVideoPrompt, isVideoUrl, fmtDuration, clampVideo, recomputeVideo,
-  deriveFaceDetailPrompt, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
+  deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat } from './dom.js';
@@ -1312,6 +1312,7 @@ export function makeCommandHandler(deps) {
         { sig: '/face-detail-session', desc: 'face-detail every image from this session, one after another' },
         { sig: '/face-detail-workflow [name]', desc: 'choose which face-detailer workflow the face icons use (no arg = picker)' },
         { sig: '/face-detail-workflow-reset', desc: 'reset the face-detailer workflow to its default' },
+        { sig: '/fscheck', desc: 'check and auto-repair the encrypted volumes (archive checked now; output volume checked at container startup)', notes: 'needs the <code>archive-agent</code> running on the host; runs <code>e2fsck -fy</code>' },
         { sig: '/help', desc: 'show this message' },
         { sig: '/image2image [N]', desc: 're-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set' },
         { sig: '/image2image-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)' },
@@ -1800,6 +1801,54 @@ export function makeCommandHandler(deps) {
             scrollBottom();
           });
       };
+      return;
+    }
+
+    if (cmd === '/fscheck') {
+      const bubble = addMessage('bot', '<div class="status-text">Checking filesystems…</div>').parentElement.querySelector('.bubble');
+      const toneColor = { ok: '#4ade80', warn: '#fbbf24', error: '#f87171', muted: '#9ca3af' };
+      const renderRow = (label, result) => {
+        const f = formatFscheckResult(result);
+        const color = toneColor[f.tone] || toneColor.muted;
+        return `<div><span style="color:${color}">${f.icon}</span> <strong>${escapeHtml(label)}</strong> — <span style="color:${color}">${escapeHtml(f.label)}</span></div>`;
+      };
+      fetch('/api/fscheck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok || data.error || !data.job_id) throw new Error(data.error || 'Could not start filesystem check');
+          const es = new EventSource(`/api/progress/${data.job_id}`);
+          es.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'progress') {
+              bubble.innerHTML = `<div class="status-text">${escapeHtml(msg.message)}</div>`;
+              scrollBottom();
+            } else if (msg.type === 'done') {
+              es.close();
+              bubble.innerHTML =
+                '<div style="margin-bottom:4px"><strong>Filesystem check</strong></div>' +
+                renderRow('Output volume', msg.output) +
+                renderRow('Archive volume', msg.archive);
+              scrollBottom();
+            } else if (msg.type === 'error') {
+              es.close();
+              bubble.innerHTML = `<span style="color:#f87171">⚠ Filesystem check failed: ${escapeHtml(msg.message || 'unknown error')}</span>`;
+              scrollBottom();
+            }
+          };
+          es.onerror = () => {
+            es.close();
+            bubble.innerHTML = '<span style="color:#f87171">⚠ Lost connection to the filesystem check.</span>';
+            scrollBottom();
+          };
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
       return;
     }
 

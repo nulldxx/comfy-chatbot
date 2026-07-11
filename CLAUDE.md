@@ -218,6 +218,39 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 
 `fill_placeholders_for_validation()` substitutes dummy values (`1.0` for float slots including `<LAST_FRAME_STRENGTH>`, `1` for the integer video slots, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.
 
+## Encrypted volumes & filesystem checks (`/fscheck`)
+
+Images live on up to two LUKS-encrypted volumes (auto-created as ext4), mounted on
+the host by the root **archive-agent** (`packaging/agent/archive-agent`) over a Unix
+socket because the container is unprivileged:
+
+- **archive** volume (`ARCHIVE_VOLUME`) — mounted on demand only during an archive op.
+- **output** volume (`OUTPUT_VOLUME`) — mounted persistently at `IMAGES_DIR` for the container's whole life.
+
+`/fscheck` runs `e2fsck -f -y` (force + auto-repair everything) on these. Because
+`e2fsck` refuses a **mounted** filesystem, the two are handled differently:
+
+- **Archive** volume — normally unmounted, so `/fscheck` checks it **live**, via the
+  agent's `fsck` action (`cryptsetup open` without mount → `e2fsck` → `cryptsetup
+  close`), serialised under `archive_lock` so a check and an archive op never race.
+- **Output** volume — checked at **container startup**, before it's mounted, by
+  `docker-entrypoint.sh` calling `python -m agent_client check-output` (best-effort;
+  never blocks startup). The result is written to `OUTPUT_FSCHECK_RESULT` and
+  `/fscheck` surfaces it rather than re-checking live.
+
+Flow: `/fscheck` (command in `commands.js`) → `POST /api/fscheck` returns a `job_id`
+→ streamed over the existing `/api/progress/<job_id>` SSE (via `start_background_job`
+in `generation_service.py`), so a slow e2fsck never trips the gunicorn worker timeout.
+
+Config (`config.py`): `OUTPUT_FSCHECK_RESULT` (default `/tmp/comfy-output-fscheck.json`,
+must be **outside** `IMAGES_DIR` since the check runs before the output mount) and
+`FSCK_TIMEOUT` (client socket timeout, must exceed the agent's `E2FSCK_TIMEOUT_SECONDS`).
+The agent's `fsck` action needs `e2fsprogs` (declared in `packaging/deb/control.template`).
+
+**Caveat:** `e2fsck -fy` auto-answers *yes* to every repair — thorough, but severe
+corruption can mean data loss without a prompt. This is the deliberate, chosen policy
+for an unattended appliance.
+
 ## Live Configuration (Host Machine)
 
 The `docker-compose.yml` in this repo is an **example only**. The live deployment uses:

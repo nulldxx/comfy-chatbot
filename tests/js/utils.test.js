@@ -1,5 +1,6 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
-         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList } from '../../static/js/utils.js';
+         fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList,
+         formatFscheckResult } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // reorderList
@@ -518,5 +519,53 @@ describe('i2vTooltip', () => {
   test('trims whitespace around fields', () => {
     expect(i2vTooltip({ action: '  it leaps  ', audio: '  a meow ' }))
       .toBe('Image to video: it leaps, a meow');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatFscheckResult
+// ---------------------------------------------------------------------------
+
+describe('formatFscheckResult', () => {
+  test('not configured', () => {
+    expect(formatFscheckResult({ configured: false }))
+      .toEqual({ icon: '—', label: 'not configured', tone: 'muted' });
+  });
+
+  test('configured but not checked yet (output, pre-first-check)', () => {
+    expect(formatFscheckResult({ available: false }).label).toBe('not checked yet');
+  });
+
+  test('volume not yet provisioned (skipped)', () => {
+    expect(formatFscheckResult({ ok: true, skipped: 'volume absent', clean: true }).label)
+      .toBe('volume not yet created');
+  });
+
+  test('clean filesystem', () => {
+    const f = formatFscheckResult({ ok: true, clean: true, corrected: false, uncorrected: false });
+    expect(f).toEqual({ icon: '✓', label: 'clean', tone: 'ok' });
+  });
+
+  test('errors repaired', () => {
+    const f = formatFscheckResult({ ok: true, clean: false, corrected: true, uncorrected: false });
+    expect(f.tone).toBe('warn');
+    expect(f.label).toMatch(/repaired/);
+  });
+
+  test('uncorrected wins over corrected when both set', () => {
+    const f = formatFscheckResult({ ok: true, corrected: true, uncorrected: true });
+    expect(f.tone).toBe('error');
+    expect(f.label).toMatch(/problems remain/);
+  });
+
+  test('check failed surfaces the error message', () => {
+    const f = formatFscheckResult({ ok: false, error: 'agent unavailable' });
+    expect(f.tone).toBe('error');
+    expect(f.label).toMatch(/agent unavailable/);
+  });
+
+  test('null / undefined is handled without throwing', () => {
+    expect(formatFscheckResult(null).tone).toBe('muted');
+    expect(formatFscheckResult(undefined).tone).toBe('muted');
   });
 });

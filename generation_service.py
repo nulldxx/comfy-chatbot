@@ -622,3 +622,66 @@ def start_sequence_job(master, count, replacements, video):
     )
     t.start()
     return job_id
+
+
+# ---------------------------------------------------------------------------
+# Generic background jobs
+# ---------------------------------------------------------------------------
+#
+# For maintenance operations (e.g. /fscheck) that are too slow for the request
+# thread but aren't ComfyUI generations. Reuses the same _JobChannel + SSE
+# plumbing, so /api/progress/<job_id> streams them unchanged. The job's "kind"
+# keeps it out of the /api/jobs recovery view (which is image/video only).
+
+def run_background_job(job_id, fn):
+    with jobs_lock:
+        channel = jobs[job_id]["channel"]
+        jobs[job_id]["status"] = "running"
+
+    def send(msg_type, **kwargs):
+        channel.send(json.dumps({"type": msg_type, **kwargs}))
+
+    try:
+        result = fn(lambda message: send("progress", message=message))
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "done")
+        send("done", **(result or {}))
+    except Exception as e:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "error", error=str(e))
+        send("error", message=str(e))
+    finally:
+        channel.close()
+
+
+def start_background_job(fn, kind="task", summary=None):
+    """Run fn(emit) on a daemon thread as a tracked job; return its job_id.
+
+    fn receives an ``emit(message)`` callable to push progress lines, and may
+    return a dict whose keys are merged into the terminal ``done`` SSE event (so
+    the client can render structured results). Any exception becomes an ``error``
+    event. Streamable at /api/progress/<job_id> like any generation job.
+    """
+    job_id = str(uuid.uuid4())
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "channel": _JobChannel(),
+            "images": [],
+            "assets": [],
+            "cancel": threading.Event(),
+            "server": None,
+            "prompt_id": None,
+            "kind": kind,
+            "workflow_name": None,
+            "prompt": "",
+            "summary": summary or kind,
+            "started_at": time.time(),
+            "finished_at": None,
+            "error": None,
+        }
+        _evict_old_jobs_locked()
+
+    t = threading.Thread(target=run_background_job, args=(job_id, fn), daemon=True)
+    t.start()
+    return job_id
