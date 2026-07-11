@@ -158,6 +158,17 @@ def _check_output():
     timeout = float(_env("FSCK_TIMEOUT", "1200"))
     result_path = _env("OUTPUT_FSCHECK_RESULT", "/tmp/comfy-output-fscheck.json")
 
+    # The output mount lives in the host mount namespace (the agent runs with
+    # MountFlags=shared), so it survives container restarts. An unclean stop — or a
+    # deployment predating the shutdown unmount — leaves it mounted, and e2fsck
+    # refuses a mounted fs. Unmount first (best-effort): it's safe here because the
+    # app isn't serving yet and mount-output remounts it on the next line of the
+    # entrypoint. A "not mounted" error is expected on a clean boot and ignored.
+    try:
+        send({"action": "unmount", "target": "output", "volume": volume}, socket_path)
+    except RuntimeError as exc:
+        print(f"output-fsck: pre-check unmount skipped: {exc}", file=sys.stderr)
+
     try:
         resp = send({
             "action": "fsck",

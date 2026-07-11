@@ -233,10 +233,15 @@ socket because the container is unprivileged:
 - **Archive** volume — normally unmounted, so `/fscheck` checks it **live**, via the
   agent's `fsck` action (`cryptsetup open` without mount → `e2fsck` → `cryptsetup
   close`), serialised under `archive_lock` so a check and an archive op never race.
-- **Output** volume — checked at **container startup**, before it's mounted, by
-  `docker-entrypoint.sh` calling `python -m agent_client check-output` (best-effort;
-  never blocks startup). The result is written to `OUTPUT_FSCHECK_RESULT` and
-  `/fscheck` surfaces it rather than re-checking live.
+- **Output** volume — checked at **container startup** by `docker-entrypoint.sh`
+  calling `python -m agent_client check-output` (best-effort; never blocks startup),
+  just before `mount-output`. The output mount lives in the **host** mount namespace
+  (agent runs `MountFlags=shared`) so it survives container restarts; `check-output`
+  therefore **unmounts first** (safe — the app isn't serving yet and `mount-output`
+  remounts on the next line) so e2fsck isn't refused on a mount left over from an
+  unclean stop. The result is written to `OUTPUT_FSCHECK_RESULT` and `/fscheck`
+  surfaces it rather than re-checking live. The archive path likewise unmounts a
+  stale mount (under `archive_lock`) before its live check.
 
 Flow: `/fscheck` (command in `commands.js`) → `POST /api/fscheck` returns a `job_id`
 → streamed over the existing `/api/progress/<job_id>` SSE (via `start_background_job`

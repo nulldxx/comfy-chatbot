@@ -1361,6 +1361,14 @@ def api_fscheck():
         else:
             emit("Checking archive volume… (this may take a few minutes)")
             with archive_lock:
+                # Clear any stale mount left by a killed archive op — e2fsck needs
+                # an unmounted fs. archive_lock guarantees no concurrent archive
+                # op; a "not mounted" reply (the normal case) is ignored.
+                try:
+                    _agent_request({"action": "unmount", "target": "archive",
+                                    "volume": ARCHIVE_VOLUME})
+                except RuntimeError:
+                    pass
                 try:
                     result["archive"] = _agent_request({
                         "action": "fsck",
