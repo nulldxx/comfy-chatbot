@@ -26,6 +26,10 @@ class FakeAgent:
         # When True, mount succeeds but skips writing the marker — emulates a
         # MOUNT_DIR/bind-source mismatch where the volume never propagates in.
         self.skip_marker = False
+        # Reported by the "status" action (and gated on by the app's archive/fsck
+        # exclusive-mode guard): True emulates the host having the volume mounted
+        # via `m`.
+        self.host_mounted = False
         self.requests = []
         self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._srv.bind(sock_path)
@@ -53,13 +57,19 @@ class FakeAgent:
                 req = json.loads(raw.decode("utf-8").strip())
                 self.requests.append(req)
                 resp = {"ok": True}
-                if req.get("action") == "mount":
+                action = req.get("action")
+                if action == "mount":
                     resp["mountpoint"] = req.get("volume")
                     # Real agent drops a marker at the volume root on mount.
                     if self.mount_dir and not self.skip_marker:
                         with open(os.path.join(self.mount_dir, ".comfy-archive"),
                                   "w", encoding="utf-8") as fh:
                             fh.write("comfy-archive\n")
+                elif action == "host-mount":
+                    resp["mountpoint"] = "/run/media/private/ben/secure"
+                elif action == "status":
+                    resp["host_mounted"] = self.host_mounted
+                    resp["open"] = self.host_mounted
                 conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
 
     def stop(self):
@@ -158,10 +168,11 @@ class TestArchive(unittest.TestCase):
         self.assertEqual(os.listdir(self.images_dir), [])
         # Copies staged under staging/<guid>/.
         self.assertEqual(self._staged_files(), ["a.png", "b.png"])
-        # Agent was asked to mount (with the password) and to unmount.
+        # Agent was asked for status (host-mount guard), then to mount (with the
+        # password) and to unmount.
         actions = [r["action"] for r in self.agent.requests]
-        self.assertEqual(actions, ["mount", "unmount"])
-        mount_req = self.agent.requests[0]
+        self.assertEqual(actions, ["status", "mount", "unmount"])
+        mount_req = self.agent.requests[1]
         self.assertEqual(mount_req["volume"], "/host/archive.img")
         # Encrypted with SECRET_KEY, and asked to auto-create if the volume is absent.
         self.assertEqual(mount_req["password"], "s3cret")
@@ -233,9 +244,9 @@ class TestArchive(unittest.TestCase):
         self.assertEqual(resp.status_code, 500)
         # Original is preserved — no data loss.
         self.assertIn("a.png", os.listdir(self.images_dir))
-        # The volume was still unmounted afterwards.
+        # The volume was still unmounted afterwards (after the status preflight).
         actions = [r["action"] for r in self.agent.requests]
-        self.assertEqual(actions, ["mount", "unmount"])
+        self.assertEqual(actions, ["status", "mount", "unmount"])
 
     def test_archive_name_slugified_into_folder(self):
         self._auth()
@@ -276,6 +287,76 @@ class TestArchive(unittest.TestCase):
         self.assertEqual(resp.get_json()["archived"], 0)
         # Nothing to do means the agent is never contacted.
         self.assertEqual(self.agent.requests, [])
+
+    # --- host mount (external access via `m`) --------------------------------
+
+    def test_host_mount_requires_auth(self):
+        resp = self.client.post("/api/host-mount")
+        self.assertEqual(resp.status_code, 302)
+
+    def test_host_mount_not_configured(self):
+        self._auth()
+        app_module.ARCHIVE_VOLUME = ""
+        resp = self.client.post("/api/host-mount")
+        self.assertEqual(resp.status_code, 503)
+
+    def test_host_mount_returns_mountpoint(self):
+        self._auth()
+        resp = self.client.post("/api/host-mount")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["mountpoint"], "/run/media/private/ben/secure")
+        # The agent was asked to host-mount the volume with the SECRET_KEY passphrase.
+        req = self.agent.requests[-1]
+        self.assertEqual(req["action"], "host-mount")
+        self.assertEqual(req["target"], "host")
+        self.assertEqual(req["volume"], "/host/archive.img")
+        self.assertEqual(req["password"], "s3cret")
+
+    def test_host_unmount(self):
+        self._auth()
+        resp = self.client.post("/api/host-unmount")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.get_json()["ok"])
+        req = self.agent.requests[-1]
+        self.assertEqual(req["action"], "host-unmount")
+        self.assertEqual(req["target"], "host")
+
+    def test_host_status_reports_state(self):
+        self._auth()
+        self.agent.host_mounted = True
+        resp = self.client.get("/api/host-status")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["configured"])
+        self.assertTrue(data["host_mounted"])
+
+    def test_archive_refused_while_host_mounted(self):
+        # While the host holds the volume (via `m`), archiving must refuse rather
+        # than mount a second time under it — and must not delete originals.
+        self._auth()
+        self.agent.host_mounted = True
+        self._make_image("a.png")
+        resp = self.client.post("/api/archive", json={"scope": "all"})
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("m -u", resp.get_json()["error"])
+        # Original preserved; the agent was only asked for status (no mount).
+        self.assertIn("a.png", os.listdir(self.images_dir))
+        self.assertEqual([r["action"] for r in self.agent.requests], ["status"])
+
+    def test_fscheck_refused_while_host_mounted(self):
+        # fsck must never run while the host has the volume mounted (e2fsck needs
+        # it unmounted). The background job should surface the refusal, not fsck.
+        self._auth()
+        self.agent.host_mounted = True
+        resp = self.client.post("/api/fscheck")
+        self.assertEqual(resp.status_code, 200)
+        job_id = resp.get_json()["job_id"]
+        body = self.client.get(f"/api/progress/{job_id}").get_data(as_text=True)
+        self.assertIn("m -u", body)
+        # No fsck was sent to the agent (only the status guard).
+        self.assertNotIn("fsck", [r["action"] for r in self.agent.requests])
 
 
 if __name__ == "__main__":

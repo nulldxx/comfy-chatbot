@@ -7,10 +7,12 @@ zuluCrypt-cli mount/unmount over a Unix domain socket. One newline-delimited
 JSON request per connection, one JSON reply.
 
 Requests:
-  {"action": "mount",   "volume": "<host path>", "password": "<passphrase>"}
-  {"action": "unmount", "volume": "<host path>"}
-  {"action": "fsck",    "volume": "<host path>", "password": "<passphrase>"}
-  {"action": "status"}
+  {"action": "mount",        "volume": "<host path>", "password": "<passphrase>"}
+  {"action": "unmount",      "volume": "<host path>"}
+  {"action": "host-mount",   "volume": "<host path>", "password": "<passphrase>"}
+  {"action": "host-unmount", "volume": "<host path>"}
+  {"action": "fsck",         "volume": "<host path>", "password": "<passphrase>"}
+  {"action": "status",       "volume": "<host path>"}
 
 mount/unmount/fsck take an optional "target": "archive" (default) or "output". The
 output target is a second, persistently mounted volume the container uses for its
@@ -18,6 +20,14 @@ live image output; it has its own mount name + dir (see OUTPUT_MOUNT_* config) s
 it never collides with the on-demand archive mount. A mount request may also pass
 "create": true (+ optional "size", e.g. "20G") to auto-provision the volume on
 first deploy if its file does not yet exist.
+
+host-mount/host-unmount expose the archive volume at HOST_MOUNT_DIR for external
+host tools (e.g. samba). They reuse the single archive zulu mount as a bind — never
+a second decrypt — so the container stays the sole owner of the physical volume.
+The container mediates them (see /api/host-mount) so they never race an archive or
+fsck op. status reports mount state ({"open", "host_mounted", "archive_bound"}) so
+the container can gate those ops without tracking state that would drift across its
+own restarts.
 
 A fsck request runs `e2fsck -f -y` on the volume's ext4 filesystem, opened via
 cryptsetup WITHOUT mounting (e2fsck refuses a mounted fs). It auto-repairs any
@@ -69,6 +79,13 @@ DEFAULTS = {
     # mount name + dir so it never collides with the on-demand archive mount.
     "OUTPUT_MOUNT_DIR": "/var/lib/archive-agent/output",
     "OUTPUT_MOUNT_NAME": "comfy-output",
+    # Host-facing bind for the archive volume: where external host tools (samba)
+    # see the decrypted archive when the container exposes it (the {"target":
+    # "host"} mount). Same zulu mount as the archive — a bind, never a second
+    # decrypt. Server-owned so the API can't bind decrypted data to an arbitrary
+    # path. HOST_MOUNT_USER owns the mount root so that user can manage it directly.
+    "HOST_MOUNT_DIR": "/run/media/private/ben/secure",
+    "HOST_MOUNT_USER": "ben",
 }
 
 log = logging.getLogger("archive-agent")
@@ -127,6 +144,17 @@ def _zulu_mountpoint(name):
     return f"/run/media/private/{user}/{name}"
 
 
+def _volume_in_use(volume):
+    """True if the backing file `volume` is attached to any loop device — i.e. it
+    is currently decrypted/mounted somewhere (the archive bind, the host bind, or a
+    stray mapper). Used to gate fsck (e2fsck must run on an unmounted fs) and to
+    report status. Catches uses the agent's own mountpoint checks can't see."""
+    if not volume:
+        return False
+    rc, out = _run(["losetup", "-j", volume])
+    return rc == 0 and bool(out.strip())
+
+
 def _ensure_bind(src, mount_dir, volume, rollback):
     """Bind the decrypted filesystem at `src` onto `mount_dir` and make its root
     writable for the unprivileged container user. Idempotent: if `mount_dir`
@@ -172,9 +200,14 @@ def _ensure_bind(src, mount_dir, volume, rollback):
 
 def _resolve_target(cfg, req):
     """Map a request's logical target to its (mount name, host mount dir) pair.
-    'output' is the persistent live-output volume; anything else is the archive."""
-    if req.get("target") == "output":
+    'output' is the persistent live-output volume; 'host' exposes the archive
+    volume at the host-facing directory (same zulu mount as the archive, different
+    bind target); anything else is the archive."""
+    target = req.get("target")
+    if target == "output":
         return cfg["OUTPUT_MOUNT_NAME"], cfg["OUTPUT_MOUNT_DIR"]
+    if target == "host":
+        return cfg["MOUNT_NAME"], cfg["HOST_MOUNT_DIR"]
     return cfg["MOUNT_NAME"], cfg["MOUNT_DIR"]
 
 
@@ -342,6 +375,12 @@ def handle_fsck(cfg, req):
     # archive volume is checked under the app's archive_lock while unmounted.
     if os.path.ismount(_zulu_mountpoint(name)) or os.path.ismount(mount_dir):
         return {"ok": False, "error": "volume is mounted; unmount before fsck"}
+    # Belt-and-suspenders: refuse if the backing file is decrypted/attached at all
+    # (e.g. exposed via the host bind under a different mountpoint the checks above
+    # can't see). This closes the historic data-loss path where a second mapper was
+    # opened over a filesystem another tool had mounted read-write.
+    if _volume_in_use(volume):
+        return {"ok": False, "error": "volume is open/in use elsewhere; unmount before fsck"}
 
     mapper = f"comfy-fsck-{os.getpid()}"
     err = _cryptsetup_open(volume, password, mapper)
@@ -372,21 +411,11 @@ def handle_fsck(cfg, req):
     return result
 
 
-def handle_mount(cfg, req):
-    volume = req.get("volume")
-    password = req.get("password")
-    if not volume or password is None:
-        return {"ok": False, "error": "mount requires 'volume' and 'password'"}
-
-    name, mount_dir = _resolve_target(cfg, req)
-    Path(mount_dir).mkdir(parents=True, exist_ok=True)
-
-    # First-deploy auto-provisioning: create the volume if asked and it's absent.
-    if req.get("create") and not os.path.exists(volume):
-        err = _create_volume(volume, req.get("size") or "20G", password)
-        if err is not None:
-            return {"ok": False, "error": err}
-
+def _open_volume(name, volume, password):
+    """Ensure the LUKS `volume` is decrypted and mounted at its zulu mountpoint
+    (/run/media/private/<user>/<name>), reusing an existing open if one is up.
+    Returns (src, opened_now, err): on failure err is an error dict the caller
+    should return; otherwise err is None and `src` is the decrypted mountpoint."""
     src = _zulu_mountpoint(name)
 
     # zuluCrypt-cli open, read-write (default is ro). Format (LUKS/VeraCrypt/PLAIN)
@@ -397,26 +426,82 @@ def handle_mount(cfg, req):
 
     opened_now = rc == 0
     if not opened_now:
-        # `-o` fails if the volume is already open — typically a leftover mount
-        # from a run that was killed before it could unmount. That's
-        # recoverable: if the decrypted filesystem is already mounted at `src`,
-        # treat the mount as idempotent and just (re)establish the bind. Any
-        # other failure (e.g. wrong password) leaves nothing mounted at `src`.
+        # `-o` fails if the volume is already open — either a leftover mount from a
+        # killed run, or the same single archive mount already exposed under
+        # another bind. That's recoverable: if the decrypted filesystem is already
+        # mounted at `src`, treat the open as idempotent so the caller just
+        # (re)establishes its bind. Any other failure (e.g. wrong password) leaves
+        # nothing mounted at `src`.
         if os.path.ismount(src):
             log.warning("volume already open (rc=%s: %s); recovering existing mount",
                         rc, out)
         else:
             log.error("open failed (rc=%s): %s", rc, out)
-            return {"ok": False, "error": f"zuluCrypt-cli open failed: {out}"}
+            return src, False, {"ok": False, "error": f"zuluCrypt-cli open failed: {out}"}
     elif not os.path.ismount(src):
         log.error("expected mount %s not found after open", src)
-        return {"ok": False, "error": f"volume opened but {src} is not mounted"}
+        return src, True, {"ok": False, "error": f"volume opened but {src} is not mounted"}
+    return src, opened_now, None
+
+
+def _mount_target(cfg, req):
+    """Shared body for mount and host-mount: resolve the target, auto-provision if
+    asked, open the volume (once) and bind it onto the target dir. Returns
+    (mount_dir, opened_now, err); err is an error dict on failure else None."""
+    volume = req.get("volume")
+    password = req.get("password")
+    if not volume or password is None:
+        return None, False, {"ok": False, "error": "mount requires 'volume' and 'password'"}
+
+    name, mount_dir = _resolve_target(cfg, req)
+    Path(mount_dir).mkdir(parents=True, exist_ok=True)
+
+    # First-deploy auto-provisioning: create the volume if asked and it's absent.
+    if req.get("create") and not os.path.exists(volume):
+        err = _create_volume(volume, req.get("size") or "20G", password)
+        if err is not None:
+            return mount_dir, False, {"ok": False, "error": err}
+
+    src, opened_now, err = _open_volume(name, volume, password)
+    if err is not None:
+        return mount_dir, opened_now, err
 
     err = _ensure_bind(src, mount_dir, volume, rollback=opened_now)
     if err is not None:
-        return err
+        return mount_dir, opened_now, err
 
     log.info("mounted %s -> %s -> %s", volume, src, mount_dir)
+    return mount_dir, opened_now, None
+
+
+def handle_mount(cfg, req):
+    mount_dir, _opened_now, err = _mount_target(cfg, req)
+    if err is not None:
+        return err
+    return {"ok": True, "mountpoint": mount_dir}
+
+
+def handle_host_mount(cfg, req):
+    """Expose the archive volume at the host-facing directory (HOST_MOUNT_DIR) for
+    external host tools (e.g. samba). Reuses the single archive zulu mount — never
+    a second decrypt — and binds it to the host dir, then hands the mount root to
+    HOST_MOUNT_USER so that user can manage files directly. The container mediates
+    this (see /api/host-mount) so it never races an archive/fsck op."""
+    req = dict(req, target="host")
+    mount_dir, _opened_now, err = _mount_target(cfg, req)
+    if err is not None:
+        return err
+
+    # 0777 (set by _ensure_bind) already permits traversal; hand ownership of the
+    # mount root to the configured host user too. Best-effort.
+    user = cfg.get("HOST_MOUNT_USER")
+    if user:
+        try:
+            pw = pwd.getpwnam(user)
+            os.chown(mount_dir, pw.pw_uid, pw.pw_gid)
+        except (KeyError, OSError) as exc:
+            log.warning("could not chown %s to %s: %s", mount_dir, user, exc)
+
     return {"ok": True, "mountpoint": mount_dir}
 
 
@@ -446,16 +531,41 @@ def handle_unmount(cfg, req):
     return {"ok": True}
 
 
+def handle_host_unmount(cfg, req):
+    """Tear down the host-facing bind (HOST_MOUNT_DIR) and close the archive volume
+    so it returns to the unmounted-at-rest state (so /fscheck works again). Same
+    mechanics as unmount, keyed to the 'host' target."""
+    return handle_unmount(cfg, dict(req, target="host"))
+
+
+def handle_status(cfg, req):
+    """Report mount state so the container can gate archive/fsck ops (see
+    /api/host-status) without tracking state itself — which would drift across
+    container restarts, since the mounts live in the host namespace. `open`
+    reflects whether the backing file is currently decrypted/in use anywhere."""
+    host_mount_dir = cfg.get("HOST_MOUNT_DIR", "")
+    return {
+        "ok": True,
+        "open": _volume_in_use(req.get("volume")),
+        "host_mounted": bool(host_mount_dir) and os.path.ismount(host_mount_dir),
+        "archive_bound": os.path.ismount(cfg["MOUNT_DIR"]),
+    }
+
+
 def handle(cfg, req):
     action = req.get("action")
     if action == "mount":
         return handle_mount(cfg, req)
     if action == "unmount":
         return handle_unmount(cfg, req)
+    if action == "host-mount":
+        return handle_host_mount(cfg, req)
+    if action == "host-unmount":
+        return handle_host_unmount(cfg, req)
     if action == "fsck":
         return handle_fsck(cfg, req)
     if action == "status":
-        return {"ok": True}
+        return handle_status(cfg, req)
     return {"ok": False, "error": f"unknown action: {action!r}"}
 
 

@@ -1250,6 +1250,27 @@ def _agent_request(payload: dict, timeout: float = 120.0) -> dict:
     return agent_send(payload, ARCHIVE_AGENT_SOCKET, timeout)
 
 
+def _host_mount_active() -> bool:
+    """True if the archive volume is currently exposed to the host (via `m`).
+    While it is, archive/fsck ops must not run — they share the one physical
+    volume, and fsck needs it unmounted. Derived from the agent's status so it
+    can't drift across container restarts. Fails safe: an unreachable agent or a
+    malformed reply is treated as 'not host-mounted' so normal ops aren't blocked
+    by a transient error (the agent enforces its own mount/fsck preconditions)."""
+    if not ARCHIVE_VOLUME:
+        return False
+    try:
+        resp = _agent_request({"action": "status", "volume": ARCHIVE_VOLUME})
+    except RuntimeError:
+        return False
+    return bool(resp.get("host_mounted"))
+
+
+# Message shown when an op is refused because the host has the archive mounted.
+_HOST_MOUNT_BUSY = ("archive volume is mounted for host access; "
+                    "run `m -u` on the host first")
+
+
 @app.route("/api/archive", methods=["POST"])
 @login_required
 def api_archive():
@@ -1270,6 +1291,10 @@ def api_archive():
     # random guid when no usable name was supplied.
     folder = slugify(body.get("name")) or uuid.uuid4().hex
     with archive_lock:
+        # Refuse if the host currently has the volume mounted (via `m`): it's one
+        # physical volume, and archiving under it would fight the host's bind.
+        if _host_mount_active():
+            return jsonify({"error": _HOST_MOUNT_BUSY}), 409
         try:
             resp = _agent_request({
                 "action": "mount",
@@ -1361,6 +1386,12 @@ def api_fscheck():
         else:
             emit("Checking archive volume… (this may take a few minutes)")
             with archive_lock:
+                # Refuse while the host has the volume mounted (via `m`): e2fsck
+                # must run on an unmounted fs, and a live host bind + a second
+                # mapper is the exact data-loss path this design removes.
+                if _host_mount_active():
+                    result["archive"] = {"ok": False, "error": _HOST_MOUNT_BUSY}
+                    return result
                 # Clear any stale mount left by a killed archive op — e2fsck needs
                 # an unmounted fs. archive_lock guarantees no concurrent archive
                 # op; a "not mounted" reply (the normal case) is ignored.
@@ -1382,6 +1413,79 @@ def api_fscheck():
 
     job_id = start_background_job(job, kind="fscheck", summary="Filesystem check")
     return jsonify({"job_id": job_id})
+
+
+@app.route("/api/host-mount", methods=["POST"])
+@login_required
+def api_host_mount():
+    """Expose the encrypted archive volume on the host (for `m` → samba). The
+    container is the sole owner of the physical volume; the host no longer mounts
+    it directly. Serialised with archive_lock so it never races an archive/fsck op
+    (returns 409 if one holds the lock). The agent binds the single archive mount
+    onto its server-configured HOST_MOUNT_DIR — never a second decrypt."""
+    if not ARCHIVE_VOLUME:
+        return jsonify({"error": "Archiving is not configured on the server."}), 503
+
+    if not archive_lock.acquire(blocking=False):
+        return jsonify({"error": "an archive operation is in progress; try again"}), 409
+    try:
+        try:
+            resp = _agent_request({
+                "action": "host-mount",
+                "target": "host",
+                "volume": ARCHIVE_VOLUME,
+                "password": SECRET_KEY,
+                "create": True,
+                "size": ARCHIVE_SIZE,
+            })
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 502
+        if not resp.get("ok"):
+            return jsonify({"error": resp.get("error", "host-mount failed")}), 502
+        return jsonify({"ok": True, "mountpoint": resp.get("mountpoint")})
+    finally:
+        archive_lock.release()
+
+
+@app.route("/api/host-unmount", methods=["POST"])
+@login_required
+def api_host_unmount():
+    """Tear down the host-facing archive mount and close the volume so it returns
+    to the unmounted-at-rest state (and /fscheck works again). Serialised with
+    archive_lock."""
+    if not ARCHIVE_VOLUME:
+        return jsonify({"error": "Archiving is not configured on the server."}), 503
+
+    with archive_lock:
+        try:
+            resp = _agent_request({
+                "action": "host-unmount",
+                "target": "host",
+                "volume": ARCHIVE_VOLUME,
+            })
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 502
+    if not resp.get("ok"):
+        return jsonify({"error": resp.get("error", "host-unmount failed")}), 502
+    return jsonify({"ok": True})
+
+
+@app.route("/api/host-status", methods=["GET"])
+@login_required
+def api_host_status():
+    """Report whether the archive volume is currently exposed to the host, so `m`
+    can be idempotent and report state."""
+    if not ARCHIVE_VOLUME:
+        return jsonify({"configured": False})
+    try:
+        resp = _agent_request({"action": "status", "volume": ARCHIVE_VOLUME})
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({
+        "configured": True,
+        "host_mounted": bool(resp.get("host_mounted")),
+        "open": bool(resp.get("open")),
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -256,6 +256,42 @@ The agent's `fsck` action needs `e2fsprogs` (declared in `packaging/deb/control.
 corruption can mean data loss without a prompt. This is the deliberate, chosen policy
 for an unattended appliance.
 
+## Host access to the archive volume (`m` → `/api/host-mount`)
+
+The container is the **sole owner** of the encrypted archive volume. External host
+access (to manage the archive over samba) goes **through the container**, never by
+mounting the volume directly — two independent mounts of one ext4 filesystem
+corrupt it and lose data (the historic `m` bug).
+
+The host script `~/dot-files/scripts/m` (in the **dot-files** repo) is now a thin
+API client: it reads `APP_USERNAME`/`APP_PASSWORD` and the published port from
+`~/dot-files/docker-compose/comfy-chatbot.yml`, logs in for a session cookie, then
+calls:
+
+- `POST /api/host-mount` — under `archive_lock`, asks the agent (`host-mount`
+  action) to bind the **single** archive mount onto the agent-configured
+  `HOST_MOUNT_DIR` (`/run/media/private/ben/secure`, owned by `HOST_MOUNT_USER`).
+  Returns `{ok, mountpoint}`. `m` then starts `samba` / `docker-snap-alt`.
+- `POST /api/host-unmount` — pops the host bind and closes the volume (back to
+  unmounted-at-rest, so `/fscheck` works). `m -u` stops the containers first.
+- `GET /api/host-status` — reports `{configured, host_mounted, open}`.
+
+**Exclusive mode:** while the host mount is active, `/api/archive` and `/api/fscheck`
+refuse (HTTP 409, "run `m -u` first"), gated by `_host_mount_active()` in `app.py`
+which reads the agent's enhanced `status` action (`host_mounted`). Belt-and-suspenders:
+the agent's `fsck` also refuses whenever the backing file is attached to a loop
+device (`losetup -j`), catching any use its own mountpoint checks can't see.
+
+The invariant that makes this safe: the LUKS volume is decrypted and ext4-mounted
+**exactly once**; the container (`/app/archive`) and host samba (`HOST_MOUNT_DIR`)
+are both **bind mounts** of that one mount — never a second `cryptsetup`/`zuluCrypt`
+open. Consequence: host access **requires the container running** (`m` preflights
+`/health`); the passphrase (`SECRET_KEY`) never leaves the container/agent.
+
+Deploying this needs the updated `archive-agent` on the host (the `host-mount`/
+`host-unmount`/`status` actions ship in `packaging/agent/archive-agent`; the
+`HOST_MOUNT_*` keys have safe defaults so `/etc/archive-agent.conf` need not change).
+
 ## Live Configuration (Host Machine)
 
 The `docker-compose.yml` in this repo is an **example only**. The live deployment uses:
