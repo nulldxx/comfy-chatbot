@@ -502,6 +502,20 @@ def handle_host_mount(cfg, req):
         except (KeyError, OSError) as exc:
             log.warning("could not chown %s to %s: %s", mount_dir, user, exc)
 
+    # Make the whole archive recursively accessible to host tools (samba, and the
+    # host user editing files directly). Files written by the container are owned
+    # by its uid, so without this the host user couldn't rewrite them. This
+    # replaces the `sudo chmod -R a+rwx` the old `m` script ran after mounting;
+    # done here (as root) it keeps `m` unprivileged. Best-effort, and it skips
+    # lost+found (owned by the filesystem).
+    try:
+        subprocess.run(
+            ["chmod", "-R", "a+rwx", mount_dir],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        log.warning("could not chmod -R %s: %s", mount_dir, exc)
+
     return {"ok": True, "mountpoint": mount_dir}
 
 
