@@ -23,6 +23,7 @@ export const state = {
   // Prompt overrides
   lastFaceDetailPrompt:        null,
   lastInpaintingPrompt:        null,
+  extraPrompt:                 null,
 
   // Generation settings
   currentResolution:           { width: 1365, height: 768 },

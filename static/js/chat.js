@@ -1068,6 +1068,7 @@ function doRecordSave() {
         image2videoOverridePrompt: state.image2videoOverridePrompt,
         lastFaceDetailPrompt: state.lastFaceDetailPrompt,
         lastInpaintingPrompt: state.lastInpaintingPrompt,
+        extraPrompt: state.extraPrompt,
         currentDenoise: { ...state.currentDenoise },
         videoSettings: { ...state.currentVideoSettings },
         videoLock: state.videoLock,
@@ -1114,6 +1115,7 @@ function restoreSession(data) {
   if (s.image2videoOverridePrompt !== undefined) state.image2videoOverridePrompt = s.image2videoOverridePrompt;
   if (s.lastFaceDetailPrompt    !== undefined) state.lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastInpaintingPrompt    !== undefined) state.lastInpaintingPrompt    = s.lastInpaintingPrompt;
+  if (s.extraPrompt             !== undefined) state.extraPrompt             = s.extraPrompt;
   if (s.currentDenoise          !== undefined) state.currentDenoise          = { ...DEFAULT_DENOISE, ...s.currentDenoise };
   if (s.videoSettings           !== undefined) state.currentVideoSettings    = { ...DEFAULT_VIDEO_SETTINGS, ...s.videoSettings };
   if (s.videoLock               !== undefined) state.videoLock               = s.videoLock;
@@ -1356,11 +1358,14 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   botBubble.appendChild(cancelBtn);
 
   const wf = job ? job.workflow : (workflowOverride || state.currentWorkflow);
+  const finalPrompt = (!job && state.extraPrompt)
+    ? `${raw} ${state.extraPrompt}`.trim()
+    : raw;
   fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      prompt: raw,
+      prompt: finalPrompt,
       ...(state.currentServer ? { server: state.currentServer.address, server_os: state.currentServer.os } : {}),
       ...(wf ? { workflow: wf } : {}),
       ...(!job && state.currentResolution ? { width: state.currentResolution.width, height: state.currentResolution.height } : {}),

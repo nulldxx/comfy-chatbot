@@ -209,6 +209,10 @@ function showSessionSummary() {
     rows.push({ label: 'Inpainting prompt', value: `<code>${escapeHtml(state.lastInpaintingPrompt)}</code>` });
   }
 
+  if (state.extraPrompt) {
+    rows.push({ label: 'Extra generation prompt', value: `<code>${escapeHtml(state.extraPrompt)}</code>` });
+  }
+
   if (state.sequenceReplacements.length) {
     const list = state.sequenceReplacements
       .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
@@ -1038,6 +1042,19 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/generation-add-prompt') {
+      const prompt = raw.slice('/generation-add-prompt'.length).trim();
+      addMessage('user', escapeHtml(raw), raw);
+      if (!prompt) {
+        state.extraPrompt = null;
+        addMessage('bot', 'Extra generation prompt cleared — prompts are sent as typed.');
+        return;
+      }
+      state.extraPrompt = prompt;
+      addMessage('bot', `Extra generation prompt set — <code>${escapeHtml(prompt)}</code> will be appended to every image generation (LoRA tags included).`);
+      return;
+    }
+
     if (cmd === '/removal-workflow') {
       const wfArg = raw.slice('/removal-workflow'.length).trim();
       if (wfArg) {
@@ -1313,6 +1330,7 @@ export function makeCommandHandler(deps) {
         { sig: '/face-detail-workflow [name]', desc: 'choose which face-detailer workflow the face icons use (no arg = picker)' },
         { sig: '/face-detail-workflow-reset', desc: 'reset the face-detailer workflow to its default' },
         { sig: '/fscheck', desc: 'check and auto-repair the encrypted volumes (archive checked now; output volume checked at container startup)', notes: 'needs the <code>archive-agent</code> running on the host; runs <code>e2fsck -fy</code>' },
+        { sig: '/generation-add-prompt <prompt>', desc: 'silently append extra text to every image generation prompt before it is sent (may include <code>&lt;lora:…&gt;</code> tags); no args clears it', notes: 'applies only to base image generation, not face-detail/upscale/inpaint/image2image/image2video; saved with the session' },
         { sig: '/help', desc: 'show this message' },
         { sig: '/image2image [N]', desc: 're-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set' },
         { sig: '/image2image-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)' },
@@ -2008,6 +2026,7 @@ export function makeCommandHandler(deps) {
       state.currentInpaintingWorkflow = null;
       state.lastFaceDetailPrompt = null;
       state.lastInpaintingPrompt = null;
+      state.extraPrompt = null;
       state.currentResolution = { width: 1365, height: 768 };
       state.currentGenerationSteps = null;
       state.currentDenoise = { ...DEFAULT_DENOISE };
@@ -2050,6 +2069,7 @@ export function makeCommandHandler(deps) {
           image2videoOverridePrompt: state.image2videoOverridePrompt,
           lastFaceDetailPrompt: state.lastFaceDetailPrompt,
           lastInpaintingPrompt: state.lastInpaintingPrompt,
+          extraPrompt: state.extraPrompt,
           currentDenoise: { ...state.currentDenoise },
           videoSettings: { ...state.currentVideoSettings },
           videoLock: state.videoLock,
@@ -2220,6 +2240,7 @@ export function makeCommandHandler(deps) {
         image2videoOverridePrompt: state.image2videoOverridePrompt,
         lastFaceDetailPrompt:      state.lastFaceDetailPrompt,
         lastInpaintingPrompt:      state.lastInpaintingPrompt,
+        extraPrompt:               state.extraPrompt,
       });
       addMessage('bot', `Settings snapshot saved (stack depth: ${state.settingsStack.length}).`);
       return;
@@ -2252,6 +2273,7 @@ export function makeCommandHandler(deps) {
       state.image2videoOverridePrompt   = s.image2videoOverridePrompt;
       state.lastFaceDetailPrompt        = s.lastFaceDetailPrompt;
       state.lastInpaintingPrompt        = s.lastInpaintingPrompt;
+      state.extraPrompt                 = s.extraPrompt;
       deps.updateHeaderStatus();
       addMessage('bot', `Settings restored from snapshot (stack depth: ${state.settingsStack.length}).`);
       return;

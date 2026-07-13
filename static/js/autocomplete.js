@@ -22,6 +22,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/face-detail-workflow',         desc: 'choose a face-detailer workflow (no arg = picker)',                                  args: ' ' },
   { cmd: '/face-detail-workflow-reset',   desc: 'reset the face-detailer workflow to its default',                                     args: ''  },
   { cmd: '/fscheck',                      desc: 'check & auto-repair the encrypted volumes',                                          args: ''  },
+  { cmd: '/generation-add-prompt',        desc: 'append extra text/LoRAs to every image generation (no arg = clear)',                 args: ' ' },
   { cmd: '/help',                         desc: 'show available commands; add a word to filter (e.g. /help prompt)',                args: '[filter]'  },
   { cmd: '/image-settings',               desc: 'set image resolution & generation steps (presets, flip, use workflow default)',     args: ''  },
   { cmd: '/image2image',                  desc: 'image2image the last N images (default 1)',                                          args: ' ' },
