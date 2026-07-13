@@ -1231,6 +1231,222 @@ def api_settings_backup():
     )
 
 
+_MAX_RESTORE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _load_json_bytes(b):
+    """Parse bytes as a JSON object, or return None if it isn't valid JSON."""
+    try:
+        return json.loads(b.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def classify_settings_json(data, filename=""):
+    """Classify a parsed settings JSON object as one of the known kinds.
+
+    Returns 'servers', 'session', 'macros', 'aliases' or 'unknown'. Uses the
+    JSON shape first and the filename only as a tiebreaker for empty/ambiguous
+    dicts. This is the detection half of the drag-to-restore feature and is kept
+    pure so it can be unit-tested.
+    """
+    name = (filename or "").lower()
+    if not isinstance(data, dict):
+        return "unknown"
+    if isinstance(data.get("servers"), list):
+        return "servers"
+    if any(k in data for k in ("sessionImages", "messages", "saved_at", "recordingName")):
+        return "session"
+    if name.endswith("macros.json"):
+        return "macros"
+    if name.endswith("aliases.json"):
+        return "aliases"
+    if name.endswith("servers.json"):
+        return "servers"
+    if data and all(isinstance(v, list) for v in data.values()):
+        return "macros"
+    if data and all(isinstance(v, str) for v in data.values()):
+        return "aliases"
+    return "unknown"
+
+
+def _restore_macros(data):
+    """Full-replace macros.json with the dropped file's contents."""
+    macros = {k: [s for s in v if isinstance(s, str)]
+              for k, v in data.items() if isinstance(v, list)}
+    save_macros(macros)
+    return len(macros)
+
+
+def _restore_aliases(data):
+    """Full-replace aliases.json with the dropped file's contents."""
+    aliases = {k: v for k, v in data.items() if isinstance(v, str)}
+    save_aliases(aliases)
+    return len(aliases)
+
+
+def _restore_servers(data):
+    """Full-replace servers.json, validating each entry the same way
+    /api/add-server does; invalid entries are dropped."""
+    clean = []
+    for s in (data.get("servers", []) if isinstance(data, dict) else []):
+        if not isinstance(s, dict):
+            continue
+        sname = (s.get("name") or "").strip()
+        host = (s.get("host") or "").strip()
+        os_type = (s.get("os") or "").strip().lower()
+        try:
+            port = int(s.get("port", 0))
+        except (ValueError, TypeError):
+            continue
+        if not sname or not host or os_type not in ("unix", "windows"):
+            continue
+        if not (1 <= port <= 65535):
+            continue
+        clean.append({"name": sname, "host": host, "port": port, "os": os_type})
+    (COMFY_WORKFLOW_DIR / "servers.json").write_text(
+        json.dumps({"servers": clean}, indent=2))
+    return len(clean)
+
+
+def _restore_session(data, stem):
+    """Write one session file under sessions_dir, named from its filename stem
+    (the original slug) or its recordingName. Returns the slug, or None."""
+    name = slugify(secure_filename(stem or "")) or slugify(data.get("recordingName") or "")
+    if not name:
+        return None
+    save_session(name, data)
+    return name
+
+
+@app.route("/api/settings-restore", methods=["POST"])
+@login_required
+def api_settings_restore():
+    """Detect and (on apply) restore a dropped settings file.
+
+    Accepts either a full backup ZIP (from /api/settings-backup) or an individual
+    macros.json / aliases.json / servers.json / saved-session JSON. Without an
+    ``apply`` form field it only detects and reports what the file is (a dry run
+    that writes nothing); with ``apply=1`` it performs a replace-that-category
+    restore. macros/aliases/servers replace their whole file; sessions are
+    written/overwritten by name and never bulk-deleted.
+    """
+    err = output_storage_error()
+    if err:
+        return err
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+    raw = f.read()
+    if not raw:
+        return jsonify({"error": "Empty file"}), 400
+    if len(raw) > _MAX_RESTORE_BYTES:
+        return jsonify({"error": "File too large (50 MB limit)"}), 413
+
+    apply = request.form.get("apply") in ("1", "true", "yes", "on")
+    fname = f.filename
+
+    is_zip = raw[:4] == b"PK\x03\x04" or fname.lower().endswith(".zip")
+    try:
+        if is_zip:
+            return _handle_restore_zip(raw, fname, apply)
+        return _handle_restore_json(raw, fname, apply)
+    except Exception as e:  # noqa: BLE001 — surface any restore failure as 500
+        return jsonify({"error": str(e)}), 500
+
+
+def _handle_restore_zip(raw, fname, apply):
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile:
+        return jsonify({"error": "Not a valid ZIP file"}), 400
+
+    macros = aliases = servers = None
+    sessions = []  # list of (stem, data)
+    for member in zf.namelist():
+        base = member.rsplit("/", 1)[-1]
+        if "/" not in member and base == "macros.json":
+            macros = _load_json_bytes(zf.read(member))
+        elif "/" not in member and base == "aliases.json":
+            aliases = _load_json_bytes(zf.read(member))
+        elif "/" not in member and base == "servers.json":
+            servers = _load_json_bytes(zf.read(member))
+        elif member.startswith("sessions/") and base.endswith(".json"):
+            data = _load_json_bytes(zf.read(member))
+            if isinstance(data, dict):
+                sessions.append((base[:-5], data))
+
+    counts = {
+        "macros": len(macros) if isinstance(macros, dict) else 0,
+        "aliases": len(aliases) if isinstance(aliases, dict) else 0,
+        "servers": len(servers.get("servers", [])) if isinstance(servers, dict) else 0,
+        "sessions": len(sessions),
+    }
+    if not any(counts.values()):
+        return jsonify({"detected": {"kind": "unknown", "name": fname}})
+
+    summary = (f"a settings backup ({counts['macros']} macros, "
+               f"{counts['aliases']} aliases, {counts['servers']} servers, "
+               f"{counts['sessions']} sessions)")
+    if not apply:
+        return jsonify({"detected": {"kind": "backup", "counts": counts,
+                                     "summary": summary, "name": fname}})
+
+    restored = {"macros": 0, "aliases": 0, "servers": 0, "sessions": []}
+    if isinstance(macros, dict):
+        restored["macros"] = _restore_macros(macros)
+    if isinstance(aliases, dict):
+        restored["aliases"] = _restore_aliases(aliases)
+    if isinstance(servers, dict):
+        restored["servers"] = _restore_servers(servers)
+    for stem, data in sessions:
+        name = _restore_session(data, stem)
+        if name:
+            restored["sessions"].append(name)
+    return jsonify({"restored": restored,
+                    "summary": summary, "kind": "backup"})
+
+
+def _handle_restore_json(raw, fname, apply):
+    data = _load_json_bytes(raw)
+    if data is None:
+        return jsonify({"error": "Not a settings file (couldn't parse as JSON)"}), 400
+    kind = classify_settings_json(data, fname)
+    if kind == "unknown":
+        return jsonify({"detected": {"kind": "unknown", "name": fname}})
+
+    if kind == "macros":
+        n = len(data)
+        summary = f"a macros file ({n} macros)"
+    elif kind == "aliases":
+        n = len(data)
+        summary = f"an aliases file ({n} aliases)"
+    elif kind == "servers":
+        n = len(data.get("servers", []))
+        summary = f"a server list ({n} servers)"
+    else:  # session
+        label = data.get("recordingName") or Path(fname).stem
+        summary = f"a saved session '{label}'"
+
+    if not apply:
+        return jsonify({"detected": {"kind": kind, "summary": summary, "name": fname}})
+
+    if kind == "macros":
+        restored = {"macros": _restore_macros(data)}
+    elif kind == "aliases":
+        restored = {"aliases": _restore_aliases(data)}
+    elif kind == "servers":
+        restored = {"servers": _restore_servers(data)}
+    else:
+        name = _restore_session(data, Path(fname).stem)
+        if not name:
+            return jsonify({"error": "Could not derive a name for this session"}), 400
+        restored = {"sessions": [name]}
+    return jsonify({"restored": restored, "summary": summary, "kind": kind})
+
+
 @app.route("/api/images/<filename>", methods=["DELETE"])
 @login_required
 def api_delete_image(filename):

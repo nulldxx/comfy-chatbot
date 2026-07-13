@@ -192,11 +192,21 @@ messagesEl.addEventListener('click', e => {
     e.preventDefault();
     dragDepth = 0;
     overlay.classList.remove('open');
-    const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith('image/'));
-    if (!files.length) return;
-    files.forEach(importDroppedImage);
+    const all = Array.from(e.dataTransfer.files || []);
+    all.filter(f => f.type.startsWith('image/')).forEach(importDroppedImage);
+    all.filter(isSettingsFile).forEach(importSettingsFile);
   });
 })();
+
+// A dropped/selected file is a settings file (macros/aliases/servers/session
+// JSON, or a full backup zip) when its name or MIME type says so.
+function isSettingsFile(file) {
+  const name = (file.name || '').toLowerCase();
+  const type = file.type || '';
+  return name.endsWith('.json') || name.endsWith('.zip')
+    || type === 'application/json' || type === 'application/zip'
+    || type === 'application/x-zip-compressed';
+}
 
 // ---------------------------------------------------------------------------
 // Clipboard paste (Ctrl+V) image import
@@ -224,7 +234,10 @@ document.addEventListener('paste', e => {
   btn.addEventListener('click', () => input.click());
   input.addEventListener('change', e => {
     const file = e.target.files[0];
-    if (file) importDroppedImage(file);
+    if (file) {
+      if (isSettingsFile(file)) importSettingsFile(file);
+      else importDroppedImage(file);
+    }
     e.target.value = '';  // reset so the same file can be re-selected
   });
 })();
@@ -244,6 +257,70 @@ function importDroppedImage(file) {
     })
     .catch(err => {
       bubble.innerHTML = `<span style="color:#f87171">⚠ Could not import image: ${escapeHtml(err.message)}</span>`;
+    });
+}
+
+// Restore server-side settings from a dropped/selected file (a full backup zip,
+// or a lone macros/aliases/servers/session JSON). We POST the raw file to detect
+// what it is, offer to restore behind a y/n confirmation, then POST again with
+// apply=1. Detection and restore both live server-side (see /api/settings-restore).
+function importSettingsFile(file) {
+  const bubble = addMessage('bot', `<div class="status-text">Inspecting <code>${escapeHtml(file.name)}</code>…</div>`);
+  const detectFd = new FormData();
+  detectFd.append('file', file);
+  fetch('/api/settings-restore', { method: 'POST', body: detectFd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      const det = data.detected || {};
+      if (det.kind === 'unknown' || !det.kind) {
+        bubble.innerHTML = `<span style="color:#f87171">⚠ <code>${escapeHtml(file.name)}</code> isn't a recognised settings backup.</span>`;
+        scrollBottom();
+        return;
+      }
+      const summary = det.summary || det.kind;
+      let warn = '';
+      if (det.kind === 'macros')  warn = ' This will replace all your macros.';
+      else if (det.kind === 'aliases') warn = ' This will replace all your prompt aliases.';
+      else if (det.kind === 'servers') warn = ' This will replace your server list.';
+      else if (det.kind === 'backup')  warn = ' This will replace your macros, aliases and servers.';
+      bubble.innerHTML = `Detected ${escapeHtml(summary)} in <code>${escapeHtml(file.name)}</code>.${escapeHtml(warn)}<br>Type <code>y</code> to restore or <code>n</code> to cancel.`;
+      scrollBottom();
+      state.pendingConfirm = (answer) => {
+        if (!/^y(es)?$/i.test(answer)) {
+          addMessage('bot', 'Restore cancelled.');
+          return;
+        }
+        const applyBubble = addMessage('bot', '<div class="status-text">Restoring…</div>');
+        const applyFd = new FormData();
+        applyFd.append('file', file);
+        applyFd.append('apply', '1');
+        fetch('/api/settings-restore', { method: 'POST', body: applyFd })
+          .then(r => r.json())
+          .then(res => {
+            if (res.error) throw new Error(res.error);
+            const r = res.restored || {};
+            const parts = [];
+            if (r.macros != null)  parts.push(`${r.macros} macros`);
+            if (r.aliases != null) parts.push(`${r.aliases} aliases`);
+            if (r.servers != null) parts.push(`${r.servers} servers`);
+            if (r.sessions && r.sessions.length) parts.push(`${r.sessions.length} sessions`);
+            const kind = res.kind;
+            const needsReload = kind === 'backup' || kind === 'servers' || kind === 'session';
+            applyBubble.innerHTML =
+              `✓ Restored ${escapeHtml(parts.join(', ') || 'settings')}.`
+              + (needsReload ? '<br><span style="color:#94a3b8;font-size:0.85rem">Reload the page to pick up restored servers, and use <code>/session-load</code> for restored sessions.</span>' : '');
+            scrollBottom();
+          })
+          .catch(err => {
+            applyBubble.innerHTML = `<span style="color:#f87171">⚠ Restore failed: ${escapeHtml(err.message)}</span>`;
+            scrollBottom();
+          });
+      };
+    })
+    .catch(err => {
+      bubble.innerHTML = `<span style="color:#f87171">⚠ Could not read settings file: ${escapeHtml(err.message)}</span>`;
+      scrollBottom();
     });
 }
 

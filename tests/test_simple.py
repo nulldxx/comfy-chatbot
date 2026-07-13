@@ -159,6 +159,135 @@ class TestSettingsBackup(unittest.TestCase):
                 macros_path.write_text(original_macros)
 
 
+class TestSettingsRestore(unittest.TestCase):
+    """The /api/settings-restore detect-and-restore endpoint."""
+
+    def setUp(self):
+        app.testing = True
+        self.client = app.test_client()
+        with self.client.session_transaction() as sess:
+            sess['authenticated'] = True
+
+    def _post(self, filename, raw, apply=False):
+        import io
+        data = {'file': (io.BytesIO(raw), filename)}
+        if apply:
+            data['apply'] = '1'
+        return self.client.post('/api/settings-restore', data=data,
+                                content_type='multipart/form-data')
+
+    def test_requires_auth(self):
+        response = app.test_client().post('/api/settings-restore')
+        self.assertEqual(response.status_code, 302)
+
+    def test_detect_macros_is_dry_run(self):
+        import json
+        import persistence
+        before = persistence.load_macros()
+        raw = json.dumps({'a': ['x'], 'b': ['y', 'z']}).encode()
+        response = self._post('macros.json', raw, apply=False)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['detected']['kind'], 'macros')
+        # A dry-run detection must not write anything.
+        self.assertEqual(persistence.load_macros(), before)
+
+    def test_detect_session(self):
+        import json
+        raw = json.dumps({'recordingName': 'My Sess',
+                          'sessionImages': [], 'messages': []}).encode()
+        det = self._post('my-sess.json', raw).get_json()['detected']
+        self.assertEqual(det['kind'], 'session')
+
+    def test_detect_servers(self):
+        import json
+        raw = json.dumps({'servers': [{'name': 's', 'host': 'h',
+                                       'port': 8188, 'os': 'unix'}]}).encode()
+        det = self._post('servers.json', raw).get_json()['detected']
+        self.assertEqual(det['kind'], 'servers')
+
+    def test_unrecognised_json_is_unknown(self):
+        import json
+        raw = json.dumps({'foo': 123, 'bar': True}).encode()
+        det = self._post('whatever.json', raw).get_json()['detected']
+        self.assertEqual(det['kind'], 'unknown')
+
+    def test_apply_macros(self):
+        import json
+        import persistence
+        macros_path = persistence.macros_file()
+        original = macros_path.read_text() if macros_path.is_file() else None
+        try:
+            raw = json.dumps({'greet': ['hello', 'hi']}).encode()
+            response = self._post('macros.json', raw, apply=True)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()['restored']['macros'], 1)
+            self.assertEqual(persistence.load_macros(), {'greet': ['hello', 'hi']})
+        finally:
+            if original is None:
+                if macros_path.is_file():
+                    macros_path.unlink()
+            else:
+                macros_path.write_text(original)
+
+    def test_apply_full_backup_zip(self):
+        import io
+        import json
+        import shutil
+        import tempfile
+        import zipfile
+        from pathlib import Path
+        import app as app_module
+        import persistence
+
+        macros_path = persistence.macros_file()
+        aliases_path = persistence.aliases_file()
+        orig_macros = macros_path.read_text() if macros_path.is_file() else None
+        orig_aliases = aliases_path.read_text() if aliases_path.is_file() else None
+        orig_wf = app_module.COMFY_WORKFLOW_DIR
+        tmp = tempfile.mkdtemp()
+        app_module.COMFY_WORKFLOW_DIR = Path(tmp)
+        session_created = None
+        try:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w') as zf:
+                zf.writestr('macros.json', json.dumps({'m1': ['step']}))
+                zf.writestr('aliases.json', json.dumps({'hq': 'high quality'}))
+                zf.writestr('servers.json', json.dumps(
+                    {'servers': [{'name': 's', 'host': 'h', 'port': 8188, 'os': 'unix'}]}))
+                zf.writestr('sessions/restoreziptest.json',
+                            json.dumps({'messages': [], 'sessionImages': []}))
+
+            response = self._post('comfy-settings-backup.zip', buf.getvalue(), apply=True)
+            self.assertEqual(response.status_code, 200)
+            restored = response.get_json()['restored']
+
+            self.assertEqual(restored['macros'], 1)
+            self.assertEqual(restored['aliases'], 1)
+            self.assertEqual(restored['servers'], 1)
+            self.assertEqual(len(restored['sessions']), 1)
+            session_created = persistence.sessions_dir() / f"{restored['sessions'][0]}.json"
+
+            self.assertEqual(persistence.load_macros(), {'m1': ['step']})
+            self.assertEqual(persistence.load_aliases(), {'hq': 'high quality'})
+            self.assertTrue((Path(tmp) / 'servers.json').is_file())
+            self.assertTrue(session_created.is_file())
+        finally:
+            app_module.COMFY_WORKFLOW_DIR = orig_wf
+            shutil.rmtree(tmp, ignore_errors=True)
+            if session_created and session_created.is_file():
+                session_created.unlink()
+            if orig_macros is None:
+                if macros_path.is_file():
+                    macros_path.unlink()
+            else:
+                macros_path.write_text(orig_macros)
+            if orig_aliases is None:
+                if aliases_path.is_file():
+                    aliases_path.unlink()
+            else:
+                aliases_path.write_text(orig_aliases)
+
+
 def _load_archive_agent():
     """Load the archive-agent script (no .py extension) as a module so its pure
     helpers can be unit-tested. The extensionless filename means we must hand
