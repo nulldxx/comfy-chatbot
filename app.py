@@ -21,7 +21,7 @@ from catalogue import (
     list_facedetailer_workflows, list_image2image_workflows,
     list_image2video_workflows, list_inpainting_workflows,
     list_removal_workflows, list_upscaler_workflows, list_workflow_names,
-    load_loras, load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
+    load_loras_result, load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
 )
 from ComfyServer import ComfyServer
 from config import (
@@ -121,7 +121,7 @@ def index():
 @app.route("/api/loras")
 @login_required
 def api_loras():
-    return jsonify(load_loras())
+    return jsonify(load_loras_result())
 
 
 @app.route("/api/servers")

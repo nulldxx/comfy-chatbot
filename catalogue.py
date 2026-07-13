@@ -20,21 +20,71 @@ def load_server_catalogue():
         return []
 
 
-def load_loras():
+def parse_strength(value, default=0.8):
+    """Coerce a suggested_strength into a float.
+
+    Accepts a number, a numeric string (``"0.8"``), or a hyphenated range
+    (``"0.8-1.2"``), which resolves to the average of its endpoints. Falsy
+    values (None, ``""``, 0) fall back to ``default``. Raises ``ValueError``
+    on anything unparseable.
+    """
+    if not value:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return default
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    m = re.match(r'^(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)$', text)
+    if m:
+        return round((float(m.group(1)) + float(m.group(2))) / 2, 4)
+    raise ValueError(f"invalid strength value: {value!r}")
+
+
+def load_loras_result():
+    """Load the LoRA catalogue, returning ``{"loras": [...], "error": str|None}``.
+
+    A missing file is not an error — LoRAs are optional. A present-but-broken
+    file (unreadable, not valid JSON, or an entry with an unparseable
+    ``suggested_strength``) yields whatever entries did parse plus a
+    human-readable error for the UI to surface at session start. Individual
+    bad entries are skipped rather than wiping out the whole catalogue.
+    """
     if not COMFY_LORAS_FILE.is_file():
-        return []
+        return {"loras": [], "error": None}
     try:
         data = json.loads(COMFY_LORAS_FILE.read_text())
-        return [
-            {
-                "name": name,
-                "strength": float(meta.get("suggested_strength") or 0.8),
-                "triggers": meta.get("active_triggers") or "",
-            }
-            for name, meta in data.items()
-        ]
-    except Exception:
-        return []
+    except Exception as exc:
+        return {"loras": [], "error": f"Could not read LoRA file {COMFY_LORAS_FILE.name}: {exc}"}
+    if not isinstance(data, dict):
+        return {"loras": [], "error": f"LoRA file {COMFY_LORAS_FILE.name} must be a JSON object of name → metadata."}
+
+    loras, bad = [], []
+    for name, meta in data.items():
+        meta = meta if isinstance(meta, dict) else {}
+        try:
+            strength = parse_strength(meta.get("suggested_strength"))
+        except (ValueError, TypeError):
+            bad.append(f"{name} ({meta.get('suggested_strength')!r})")
+            continue
+        loras.append({
+            "name": name,
+            "strength": strength,
+            "triggers": meta.get("active_triggers") or "",
+        })
+
+    error = None
+    if bad:
+        error = f"{len(bad)} LoRA(s) had an invalid suggested_strength and were skipped: {', '.join(bad)}"
+    return {"loras": loras, "error": error}
+
+
+def load_loras():
+    return load_loras_result()["loras"]
 
 
 def lora_catalogue_strength(name):

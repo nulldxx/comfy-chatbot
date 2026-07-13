@@ -66,7 +66,9 @@ class TestComfyChatbot(unittest.TestCase):
         response = self.client.get('/api/loras')
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
-        self.assertIsInstance(data, list)
+        self.assertIsInstance(data, dict)
+        self.assertIsInstance(data['loras'], list)
+        self.assertIn('error', data)
 
     def test_generate_requires_auth(self):
         response = self.client.post('/api/generate',

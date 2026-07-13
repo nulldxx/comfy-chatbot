@@ -97,6 +97,101 @@ class TestLoadLoras(unittest.TestCase):
             with patch.object(catalogue, "COMFY_LORAS_FILE", f):
                 self.assertEqual(catalogue.load_loras(), [])
 
+    def test_range_strength_uses_average(self):
+        data = {"my-lora": {"active_triggers": "", "suggested_strength": "0.8-1.2"}}
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps(data))
+            with patch.object(catalogue, "COMFY_LORAS_FILE", f):
+                result = catalogue.load_loras()
+        self.assertAlmostEqual(result[0]["strength"], 1.0)
+
+    def test_range_strength_does_not_wipe_catalogue(self):
+        # A range value used to raise ValueError and blow away every entry.
+        data = {
+            "ranged": {"suggested_strength": "0.5-0.9"},
+            "plain": {"suggested_strength": "0.7"},
+        }
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps(data))
+            with patch.object(catalogue, "COMFY_LORAS_FILE", f):
+                result = catalogue.load_loras()
+        self.assertEqual(len(result), 2)
+
+
+class TestParseStrength(unittest.TestCase):
+    def test_plain_float(self):
+        self.assertEqual(catalogue.parse_strength(0.6), 0.6)
+
+    def test_numeric_string(self):
+        self.assertEqual(catalogue.parse_strength("0.75"), 0.75)
+
+    def test_range_averages(self):
+        self.assertAlmostEqual(catalogue.parse_strength("0.8-1.2"), 1.0)
+
+    def test_range_with_spaces(self):
+        self.assertAlmostEqual(catalogue.parse_strength("0.8 - 1.2"), 1.0)
+
+    def test_none_uses_default(self):
+        self.assertEqual(catalogue.parse_strength(None), 0.8)
+        self.assertEqual(catalogue.parse_strength(None, default=0.5), 0.5)
+
+    def test_empty_string_uses_default(self):
+        self.assertEqual(catalogue.parse_strength(""), 0.8)
+
+    def test_garbage_raises(self):
+        with self.assertRaises(ValueError):
+            catalogue.parse_strength("not-a-number")
+
+
+class TestLoadLorasResult(unittest.TestCase):
+    def test_missing_file_no_error(self):
+        with patch.object(catalogue, "COMFY_LORAS_FILE", Path("/no/such/loras-new.json")):
+            result = catalogue.load_loras_result()
+        self.assertEqual(result, {"loras": [], "error": None})
+
+    def test_malformed_json_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "loras-new.json"
+            f.write_text("oops")
+            with patch.object(catalogue, "COMFY_LORAS_FILE", f):
+                result = catalogue.load_loras_result()
+        self.assertEqual(result["loras"], [])
+        self.assertIsNotNone(result["error"])
+
+    def test_non_object_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps([1, 2, 3]))
+            with patch.object(catalogue, "COMFY_LORAS_FILE", f):
+                result = catalogue.load_loras_result()
+        self.assertEqual(result["loras"], [])
+        self.assertIsNotNone(result["error"])
+
+    def test_bad_entry_skipped_and_reported(self):
+        data = {
+            "good": {"suggested_strength": "0.7"},
+            "bad": {"suggested_strength": "wat"},
+        }
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps(data))
+            with patch.object(catalogue, "COMFY_LORAS_FILE", f):
+                result = catalogue.load_loras_result()
+        self.assertEqual([l["name"] for l in result["loras"]], ["good"])
+        self.assertIn("bad", result["error"])
+
+    def test_valid_file_no_error(self):
+        data = {"my-lora": {"active_triggers": "t", "suggested_strength": "0.8-1.2"}}
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "loras-new.json"
+            f.write_text(json.dumps(data))
+            with patch.object(catalogue, "COMFY_LORAS_FILE", f):
+                result = catalogue.load_loras_result()
+        self.assertIsNone(result["error"])
+        self.assertAlmostEqual(result["loras"][0]["strength"], 1.0)
+
 
 class TestLoraCatalogueStrength(unittest.TestCase):
     def _patch_loras(self, entries):

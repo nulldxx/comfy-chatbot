@@ -23,13 +23,18 @@ import { makeCommandHandler } from './commands.js';
 
 fetch('/api/loras')
   .then(r => r.json())
-  .then(loras => {
+  .then(data => {
+    // Endpoint returns { loras: [...], error: str|null }.
+    const loras = Array.isArray(data) ? data : (data.loras || []);
     state.LORAS = loras.map(entry => ({
       name:     entry.name,
       strength: entry.strength ?? 0.8,
       triggers: entry.triggers || '',
       label:    entry.name.split('/').pop().replace(/\.safetensors$/i, ''),
     }));
+    if (data && data.error) {
+      addMessage('bot', `<span style="color:#f87171">⚠ LoRA catalogue: ${escapeHtml(data.error)}</span>`);
+    }
   })
   .catch(() => {});
 
