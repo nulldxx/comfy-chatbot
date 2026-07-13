@@ -1,16 +1,18 @@
 import base64
+import io
 import json
 import shutil
 import subprocess
 import threading
 import uuid
+import zipfile
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
 from flask import (
     Flask, Response, jsonify, redirect, render_template,
-    request, send_from_directory, session, url_for,
+    request, send_file, send_from_directory, session, url_for,
 )
 from werkzeug.utils import secure_filename
 
@@ -48,8 +50,9 @@ from image_store import (
     select_images,
 )
 from persistence import (
-    delete_session, list_sessions, load_aliases, load_macros, load_session,
-    save_aliases, save_macros, save_session, slugify,
+    aliases_file, delete_session, list_sessions, load_aliases, load_macros,
+    load_session, macros_file, save_aliases, save_macros, save_session,
+    sessions_dir, slugify,
 )
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -1195,6 +1198,37 @@ def serve_image(filename):
     response = send_from_directory(str(IMAGES_DIR), filename)
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.route("/api/settings-backup", methods=["GET"])
+@login_required
+def api_settings_backup():
+    """Stream a ZIP of every server-side settings file for backup.
+
+    Bundles macros.json, aliases.json and servers.json (top-level) plus the
+    entire sessions/ directory. Absent files are skipped — each may legitimately
+    not exist yet. The zip is built in memory and returned as an attachment.
+    """
+    try:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path, arcname in [
+                (macros_file(), "macros.json"),
+                (aliases_file(), "aliases.json"),
+                (COMFY_WORKFLOW_DIR / "servers.json", "servers.json"),
+            ]:
+                if Path(path).is_file():
+                    zf.write(path, arcname)
+            for f in sorted(sessions_dir().glob("*.json")):
+                zf.write(f, f"sessions/{f.name}")
+        buf.seek(0)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return send_file(
+        buf, mimetype="application/zip", as_attachment=True,
+        download_name=f"comfy-settings-backup-{stamp}.zip",
+    )
 
 
 @app.route("/api/images/<filename>", methods=["DELETE"])

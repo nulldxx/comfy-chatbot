@@ -1357,6 +1357,7 @@ export function makeCommandHandler(deps) {
         { sig: '/session-record <name>', desc: 'start auto-saving the session after every image; omit the name to pick an existing session to record into; run again (no name, or same name) to stop recording' },
         { sig: '/session-save <name>', desc: 'save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete' },
         { sig: '/session-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
+        { sig: '/settings-backup', desc: 'download a ZIP of all server-side settings for backup — macros, prompt aliases, saved sessions and the server catalogue (<code>servers.json</code>)', notes: 'server-side files only; per-tab generation settings live in a saved session' },
         { sig: '/settings-save', desc: 'push a snapshot of all generation settings (workflows, resolution, denoise, video settings, override prompts, replacements) onto an in-memory stack; pair with <code>/settings-restore</code> to bracket a macro so it leaves settings unchanged' },
         { sig: '/settings-restore', desc: 'pop and reapply the most recent <code>/settings-save</code> snapshot; warns if the stack is empty; stack-based so nested macros work correctly without cross-contaminating each other' },
         { sig: '/slideshow <n>', desc: 'browse the last N images, oldest first' },
@@ -1684,6 +1685,40 @@ export function makeCommandHandler(deps) {
             </a>
             <pre style="background:#0f172a;border:1px solid #1e293b;border-radius:4px;padding:8px;font-size:0.72rem;color:#94a3b8;max-height:320px;overflow:auto;white-space:pre;margin:0">${escapeHtml(pretty.slice(0, 8000))}${pretty.length > 8000 ? '\n… (truncated — download for full JSON)' : ''}</pre>
           `;
+          scrollBottom();
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
+      return;
+    }
+
+    if (cmd === '/settings-backup') {
+      const bubble = addMessage('bot', '<div class="status-text">Building settings backup…</div>').parentElement.querySelector('.bubble');
+      let filename = 'comfy-settings-backup.zip';
+      fetch('/api/settings-backup')
+        .then(res => {
+          if (!res.ok) {
+            return res.json().then(d => { throw new Error(d.error || ('HTTP ' + res.status)); });
+          }
+          const cd = res.headers.get('Content-Disposition') || '';
+          const m = cd.match(/filename="?([^"]+)"?/);
+          if (m) filename = m[1];
+          return res.blob();
+        })
+        .then(blob => {
+          const url = URL.createObjectURL(blob);
+          const kb = (blob.size / 1024).toFixed(1);
+          bubble.innerHTML = `
+            <div style="margin-bottom:8px">
+              <strong>Settings backup ready</strong>
+              <span style="color:#475569;font-size:0.8rem;margin-left:8px">${escapeHtml(kb)} KB · macros, aliases, sessions, servers</span>
+            </div>
+            <a href="${escapeHtml(url)}" download="${escapeHtml(filename)}"
+               style="display:inline-block;padding:4px 12px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#a78bfa;font-size:0.82rem;text-decoration:none">
+              ⬇ Download ${escapeHtml(filename)}
+            </a>`;
           scrollBottom();
         })
         .catch(err => {

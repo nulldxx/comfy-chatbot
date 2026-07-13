@@ -112,6 +112,53 @@ class TestComfyChatbot(unittest.TestCase):
         self.assertIsNotNone(session)
 
 
+class TestSettingsBackup(unittest.TestCase):
+    """The /api/settings-backup ZIP endpoint."""
+
+    def setUp(self):
+        app.testing = True
+        self.client = app.test_client()
+
+    def test_requires_auth(self):
+        response = self.client.get('/api/settings-backup')
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/login', response.location)
+
+    def test_returns_zip_with_settings(self):
+        import io
+        import zipfile
+        import persistence
+
+        # Seed a macro and a session; restore/remove them afterwards so the
+        # test leaves the output folder as it found it.
+        macros_path = persistence.macros_file()
+        original_macros = macros_path.read_text() if macros_path.is_file() else None
+        session_path = persistence.sessions_dir() / '__backup_test__.json'
+        try:
+            persistence.save_macros({'greet': ['hello']})
+            persistence.save_session('__backup_test__', {'messages': []})
+
+            with self.client.session_transaction() as sess:
+                sess['authenticated'] = True
+            response = self.client.get('/api/settings-backup')
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.mimetype, 'application/zip')
+            self.assertIn('attachment', response.headers.get('Content-Disposition', ''))
+
+            names = zipfile.ZipFile(io.BytesIO(response.data)).namelist()
+            self.assertIn('macros.json', names)
+            self.assertIn('sessions/__backup_test__.json', names)
+        finally:
+            if session_path.is_file():
+                session_path.unlink()
+            if original_macros is None:
+                if macros_path.is_file():
+                    macros_path.unlink()
+            else:
+                macros_path.write_text(original_macros)
+
+
 def _load_archive_agent():
     """Load the archive-agent script (no .py extension) as a module so its pure
     helpers can be unit-tested. The extensionless filename means we must hand
