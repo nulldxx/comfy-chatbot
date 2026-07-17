@@ -216,7 +216,7 @@ export function createSlideshow(bubble, images) {
     if (Math.abs(dx) > 40) { navigate(dx < 0 ? 1 : -1); }
     else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
       const url = currentUrl();
-      if (!isVideoUrl(url)) openLightbox(url);
+      if (!isVideoUrl(url)) openLightbox(url, images.slice());
     }
   });
   wrap.addEventListener('click', () => {
@@ -233,7 +233,7 @@ export function createSlideshow(bubble, images) {
         video.pause();
       }
     } else {
-      openLightbox(url);
+      openLightbox(url, images.slice());
     }
   });
 

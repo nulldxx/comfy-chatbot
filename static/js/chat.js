@@ -9,7 +9,7 @@ import {
   scrollBottom, addMessage, createMediaElement,
   deleteImageFile, removeImageFromChat,
 } from './dom.js';
-import { openLightbox, closeLightbox } from './lightbox.js';
+import { openLightbox, closeLightbox, navigateLightbox, isLightboxOpen } from './lightbox.js';
 import {
   updateSlashAc, hideSlashAc, selectSlashAcItem, tryExpandAlias,
   renderSlashAc, getAcState, setAcFocused, tabCompleteSlashAc,
@@ -75,6 +75,14 @@ inputEl.addEventListener('input', () => {
 // ---------------------------------------------------------------------------
 
 document.addEventListener('keydown', e => {
+  // While fullscreen, arrows browse the lightbox's collection and Escape closes
+  // it; swallow these so the slideshow controller doesn't also react.
+  if (isLightboxOpen()) {
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); navigateLightbox(-1); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); navigateLightbox(1);  return; }
+    if (e.key === 'Escape')     { e.preventDefault(); closeLightbox();      return; }
+    return;
+  }
   if (!state.activeSlideshowCtrl) return;
   if (document.activeElement === inputEl) return;
   if (e.key === 'ArrowLeft')  { e.preventDefault(); state.activeSlideshowCtrl.navigate(-1); }
@@ -141,8 +149,11 @@ sendBtn.addEventListener('click', sendMessage);
 
 // Lightbox: click image to open, click close or outside to close
 document.addEventListener('click', e => {
-  if (e.target.tagName === 'IMG' && e.target.closest('.bubble') && !e.target.closest('.slideshow')) {
-    openLightbox(e.target.src);
+  if (e.target.tagName === 'IMG' && e.target.closest('.bubble')
+      && !e.target.closest('.slideshow') && !e.target.closest('.review-grid')) {
+    // Inline session image: browse the session collection. (Review-grid thumbs
+    // handle their own open in grids.js so they browse that grid's list.)
+    openLightbox(e.target.src, state.sessionImages);
   }
 });
 document.getElementById('lightbox-close').addEventListener('click', closeLightbox);

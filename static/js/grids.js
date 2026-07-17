@@ -113,7 +113,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
       media.muted = true;
       media.preload = 'metadata';
     } else {
-      media.addEventListener('click', () => openLightbox(url));
+      media.addEventListener('click', () => openLightbox(url, order.slice()));
     }
 
     const del = document.createElement('button');
