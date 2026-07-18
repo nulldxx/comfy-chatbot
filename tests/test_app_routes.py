@@ -736,6 +736,72 @@ class TestSequenceRoutes(_AppFixture):
         self.assertEqual(self._job.call_args[0][1], 64)
 
 
+class TestSequenceRunRoute(_AppFixture):
+    """/api/sequence-run drives the whole run server-side; the route validates
+    input and starts the job (mocked here — the loop is in test_generation_service)."""
+
+    def setUp(self):
+        super().setUp()
+        self._job_patcher = patch.object(
+            app_module, "start_sequence_run_job", return_value="run-job-id"
+        )
+        self._job = self._job_patcher.start()
+
+    def tearDown(self):
+        self._job_patcher.stop()
+        super().tearDown()
+
+    def test_returns_job_id(self):
+        resp = self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "count": 2, "recordingName": "My Run",
+            "settings": {"workflow": "wf", "width": 512, "height": 512},
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["job_id"], "run-job-id")
+        args = self._job.call_args[0]
+        # (master, count, replacements, video, recording_name, gen_settings)
+        self.assertEqual(args[0], "pets")
+        self.assertEqual(args[3], False)
+        self.assertEqual(args[4], "my-run")  # slugified
+        self.assertEqual(args[5]["width"], 512)
+
+    def test_requires_recording_name(self):
+        resp = self.client.post("/api/sequence-run", json={"prompt": "pets"})
+        self.assertEqual(resp.status_code, 400)
+        self._job.assert_not_called()
+
+    def test_requires_master_prompt(self):
+        resp = self.client.post("/api/sequence-run", json={"prompt": "  ", "recordingName": "r"})
+        self.assertEqual(resp.status_code, 400)
+        self._job.assert_not_called()
+
+    def test_video_flag_passed_through(self):
+        self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "recordingName": "r", "video": True,
+        })
+        self.assertTrue(self._job.call_args[0][3])
+
+    def test_bad_width_returns_400(self):
+        resp = self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "recordingName": "r", "settings": {"width": "big"},
+        })
+        self.assertEqual(resp.status_code, 400)
+        self._job.assert_not_called()
+
+    def test_extra_prompt_passed_through(self):
+        self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "recordingName": "r",
+            "settings": {"extraPrompt": "  in the style of monet  "},
+        })
+        gen_settings = self._job.call_args[0][5]
+        self.assertEqual(gen_settings["extraPrompt"], "in the style of monet")
+
+    def test_extra_prompt_absent_is_none(self):
+        self.client.post("/api/sequence-run", json={"prompt": "pets", "recordingName": "r"})
+        gen_settings = self._job.call_args[0][5]
+        self.assertIsNone(gen_settings["extraPrompt"])
+
+
 # ---------------------------------------------------------------------------
 # Session endpoints
 # ---------------------------------------------------------------------------
@@ -781,6 +847,32 @@ class TestSessionEndpoints(_AppFixture):
     def test_delete_session_not_found(self):
         resp = self.client.delete("/api/sessions/nope")
         self.assertEqual(resp.status_code, 404)
+
+    def test_rename_session(self):
+        self.client.post("/api/sessions", json={"name": "temp-1", "messages": []})
+        resp = self.client.post("/api/sessions/rename", json={"from": "temp-1", "to": "Sunsets"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["name"], "sunsets")
+        # old gone, new present
+        self.assertEqual(self.client.get("/api/sessions/temp-1").status_code, 404)
+        self.assertEqual(self.client.get("/api/sessions/sunsets").status_code, 200)
+
+    def test_rename_missing_names_returns_400(self):
+        resp = self.client.post("/api/sessions/rename", json={"from": "temp-1"})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rename_to_existing_returns_409(self):
+        self.client.post("/api/sessions", json={"name": "a", "messages": []})
+        self.client.post("/api/sessions", json={"name": "b", "messages": []})
+        resp = self.client.post("/api/sessions/rename", json={"from": "a", "to": "b"})
+        self.assertEqual(resp.status_code, 409)
+
+    def test_rename_missing_source_ok_when_not_yet_written(self):
+        # A temp session with no images/save yet has no file; rename still succeeds
+        # (live jobs are retargeted regardless).
+        resp = self.client.post("/api/sessions/rename", json={"from": "temp-x", "to": "named"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["name"], "named")
 
 
 # ---------------------------------------------------------------------------

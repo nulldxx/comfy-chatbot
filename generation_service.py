@@ -12,6 +12,8 @@ from werkzeug.utils import secure_filename
 
 from config import COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS
 from ComfyServer import ComfyServer, JobCancelled
+from catalogue import parse_loras_from_prompt
+from persistence import append_session_image, append_session_note, rename_session
 from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequence
 from workflow import (
     LORA_PLACEHOLDER_RE,
@@ -22,8 +24,9 @@ from workflow import (
 
 # In-memory job tracking. Each job record carries:
 #   status:          "pending" | "running" | "done" | "error" | "cancelled"
-#   kind:            "image" | "video" | "sequence"
+#   kind:            "image" | "video" | "sequence" | "sequence-run" | "task"
 #   workflow_name:   filename of the workflow template (None for sequence jobs)
+#   recording_name:  session file a sequence-run appends images to (that kind only)
 #   prompt:          user prompt (empty string for upscale/sequence)
 #   summary:         short human label for /jobs cards
 #   server:          ComfyUI server address (None for sequence jobs)
@@ -219,17 +222,23 @@ def cancel_auto_purge(server_address):
 # Background generation thread
 # ---------------------------------------------------------------------------
 
-def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name,
-                   width=None, height=None, steps=None, denoise=None, workflow_dir=None,
-                   input_image=None, input_mask=None, input_last_frame=None,
-                   preserve_mtime_from=None,
-                   cleanup_input_image=False, duration=None, frames=None, fps=None,
-                   video_width=None, video_height=None):
-    with jobs_lock:
-        channel = jobs[job_id]["channel"]
-        cancel_event = jobs[job_id]["cancel"]
-        jobs[job_id]["status"] = "running"
+def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
+                         server_address, server_os, workflow_name,
+                         width=None, height=None, steps=None, denoise=None, workflow_dir=None,
+                         input_image=None, input_mask=None, input_last_frame=None,
+                         preserve_mtime_from=None,
+                         cleanup_input_image=False, duration=None, frames=None, fps=None,
+                         video_width=None, video_height=None):
+    """Core generation pipeline shared by run_generation and run_sequence_run.
 
+    Runs everything from placeholder substitution through downloading the output,
+    emitting progress on the given ``channel`` and honouring ``cancel_event``, and
+    returns the list of ``/images/...`` URLs. It writes ``jobs[job_id]["prompt_id"]``
+    (so /api/cancel can interrupt the in-flight ComfyUI job) and brackets the
+    auto-purge counters, but it does NOT set terminal job status or close the
+    channel — the caller owns the job lifecycle. Raises JobCancelled on
+    cancellation and other exceptions on failure.
+    """
     def send(msg_type, **kwargs):
         channel.send(json.dumps({"type": msg_type, **kwargs}))
 
@@ -427,11 +436,34 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
                     except OSError:
                         pass
 
+        return image_urls
+    finally:
+        purge_generation_finished(server_address)
+
+
+def run_generation(job_id, prompt, loras, server_address, server_os, workflow_name, **kwargs):
+    """Run one generation as its own tracked job.
+
+    Thin wrapper over _run_generation_core: reads the job's channel/cancel from the
+    record, runs the core pipeline, and owns the terminal lifecycle (mark
+    done/cancelled/error, close the channel). External behaviour is unchanged.
+    """
+    with jobs_lock:
+        channel = jobs[job_id]["channel"]
+        cancel_event = jobs[job_id]["cancel"]
+        jobs[job_id]["status"] = "running"
+
+    def send(msg_type, **kwargs2):
+        channel.send(json.dumps({"type": msg_type, **kwargs2}))
+
+    try:
+        image_urls = _run_generation_core(
+            job_id, channel, cancel_event, prompt, loras,
+            server_address, server_os, workflow_name, **kwargs,
+        )
         with jobs_lock:
             _mark_terminal_locked(job_id, "done", images=image_urls, assets=image_urls)
-
         send("done", images=image_urls)
-
     except JobCancelled:
         with jobs_lock:
             _mark_terminal_locked(job_id, "cancelled")
@@ -442,7 +474,6 @@ def run_generation(job_id, prompt, loras, server_address, server_os, workflow_na
         send("error", message=str(e))
     finally:
         channel.close()
-        purge_generation_finished(server_address)
 
 
 def start_generation_job(prompt, loras, server_address, server_os, workflow_name, **kwargs):
@@ -622,6 +653,257 @@ def start_sequence_job(master, count, replacements, video):
     )
     t.start()
     return job_id
+
+
+# ---------------------------------------------------------------------------
+# Server-side sequence runs
+# ---------------------------------------------------------------------------
+#
+# Unlike start_sequence_job (which only expands the master prompt via Grok and
+# hands the prompt list back to the browser to generate one-by-one), a sequence
+# *run* drives the whole loop server-side in one job: expand, then generate each
+# image sequentially on this thread via _run_generation_core, appending every
+# finished image to the recording session file. Because the loop and the
+# persistence live on the server, a run keeps going — and stays recoverable via
+# /session-load — after the browser disconnects. A connected browser watches the
+# same job over SSE and sees each image arrive through an "image" event.
+
+def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
+    with jobs_lock:
+        channel = jobs[job_id]["channel"]
+        cancel_event = jobs[job_id]["cancel"]
+        session = jobs[job_id]["session"]
+        jobs[job_id]["status"] = "running"
+
+    def send(msg_type, **kwargs):
+        channel.send(json.dumps({"type": msg_type, **kwargs}))
+
+    all_urls = []
+    failed = []
+    try:
+        if cancel_event.is_set():
+            raise JobCancelled()
+
+        send("progress", message=f"Asking Grok for {count} {'shot' if video else 'prompt'}(s)…")
+
+        if video:
+            shots = generate_video_prompt_sequence(
+                master, count, cancel_event=cancel_event, session=session
+            )
+            out = []
+            for shot in shots:
+                item = {
+                    "prompt": shot.get("prompt", ""),
+                    "action": shot.get("action", ""),
+                    "audio": shot.get("audio", ""),
+                }
+                for src, dst in replacements:
+                    for key in ("prompt", "action", "audio"):
+                        item[key] = case_preserving_replace(item[key], src, dst)
+                out.append(item)
+        else:
+            prompts = generate_prompt_sequence(
+                master, count, cancel_event=cancel_event, session=session
+            )
+            out = []
+            for p in prompts:
+                for src, dst in replacements:
+                    p = case_preserving_replace(p, src, dst)
+                out.append(p)
+
+        # Let a connected browser render the plan (also drives /sequence-review).
+        send("prompts", prompts=out, video=video)
+
+        extra_prompt = (gen_settings.get("extraPrompt") or "").strip()
+        total = len(out)
+        for i, item in enumerate(out, start=1):
+            if cancel_event.is_set():
+                raise JobCancelled()
+
+            if video:
+                item_prompt = item.get("prompt", "")
+                video_meta = {"action": item.get("action", ""), "audio": item.get("audio", "")}
+            else:
+                item_prompt = item
+                video_meta = None
+            if not item_prompt:
+                continue
+
+            clean_prompt, loras = parse_loras_from_prompt(item_prompt)
+            if not clean_prompt:
+                send("progress", message=f"Shot {i}/{total}: empty after LoRA tags, skipping")
+                continue
+            # extraPrompt is appended for generation only, matching the client's
+            # old runGeneration behaviour — the stored/displayed prompt (used for
+            # append_image_to_recording and the "image" event below) stays the
+            # original item_prompt, without the suffix.
+            gen_prompt = f"{clean_prompt} {extra_prompt}".strip() if extra_prompt else clean_prompt
+
+            send("progress", message=f"Generating {i}/{total}…")
+            try:
+                urls = _run_generation_core(
+                    job_id, channel, cancel_event, gen_prompt, loras,
+                    gen_settings["server"], gen_settings["server_os"], gen_settings["workflow"],
+                    workflow_dir=COMFY_GENERATION_DIR,
+                    width=gen_settings.get("width"),
+                    height=gen_settings.get("height"),
+                    steps=gen_settings.get("steps"),
+                )
+            except JobCancelled:
+                raise
+            except Exception as e:
+                # Best-effort: one failed shot shouldn't sink the whole run, but
+                # the failure is still persisted and surfaced live so it isn't
+                # silently invisible in a session recovered after the fact.
+                send("progress", message=f"Shot {i}/{total} failed: {e}")
+                failed.append({"index": i, "prompt": item_prompt, "error": str(e)})
+                try:
+                    append_failure_to_recording(job_id, item_prompt, str(e))
+                except Exception:
+                    pass
+                send("failed", prompt=item_prompt, error=str(e), index=i, total=total)
+                continue
+
+            for url in urls:
+                all_urls.append(url)
+                try:
+                    append_image_to_recording(
+                        job_id, url, item_prompt, video_meta, gen_settings
+                    )
+                except Exception as e:
+                    send("progress", message=f"Warning: could not persist to session: {e}")
+                send("image", url=url, prompt=item_prompt, videoMeta=video_meta,
+                     index=i, total=total)
+
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "done", images=all_urls, assets=all_urls, failed=failed)
+        send("done", images=all_urls, prompts=out, video=video, failed=failed)
+
+    except JobCancelled:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls, failed=failed)
+        send("cancelled", message="Cancelled")
+    except GrokError as e:
+        # A cancel during the Grok call closes the session, surfacing as a
+        # GrokError from the aborted request — report it as a cancellation.
+        if cancel_event.is_set():
+            with jobs_lock:
+                _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls, failed=failed)
+            send("cancelled", message="Cancelled")
+        else:
+            with jobs_lock:
+                _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls, failed=failed)
+            send("error", message=str(e))
+    except Exception as e:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls, failed=failed)
+        send("error", message=str(e))
+    finally:
+        channel.close()
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+def start_sequence_run_job(master, count, replacements, video, recording_name, gen_settings):
+    """Create a tracked server-side sequence run; return its job_id.
+
+    The record carries both a requests.Session (so /api/cancel can abort the Grok
+    call) and, once generation starts, a prompt_id/server (so /api/cancel can
+    interrupt the in-flight ComfyUI job). recording_name is the session file the
+    run appends each image to; it may be retargeted mid-run by
+    rename_and_retarget_session (see append_image_to_recording).
+    """
+    job_id = str(uuid.uuid4())
+    summary = _build_summary(None, master, "video-sequence-run" if video else "sequence-run")
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "channel": _JobChannel(),
+            "images": [],
+            "assets": [],
+            "cancel": threading.Event(),
+            "server": gen_settings.get("server"),
+            "prompt_id": None,
+            "session": requests.Session(),
+            "recording_name": recording_name,
+            "kind": "sequence-run",
+            "workflow_name": gen_settings.get("workflow"),
+            "prompt": master,
+            "summary": summary,
+            "started_at": time.time(),
+            "finished_at": None,
+            "error": None,
+        }
+        _evict_old_jobs_locked()
+
+    t = threading.Thread(
+        target=run_sequence_run,
+        args=(job_id, master, count, replacements, video, gen_settings),
+        daemon=True,
+    )
+    t.start()
+    return job_id
+
+
+def append_image_to_recording(job_id, url, prompt, video_meta, settings):
+    """Append one image to whatever session this job is currently recording to.
+
+    Reads jobs[job_id]["recording_name"] and performs the append to persistence
+    in the SAME jobs_lock critical section as rename_and_retarget_session's file
+    move + retarget, so the two can never interleave: a rename can't complete
+    with a job's append landing on the just-vacated old filename (or vice versa).
+    A no-op if the job has no recording_name (shouldn't normally happen).
+    """
+    with jobs_lock:
+        rec = jobs.get(job_id)
+        name = rec.get("recording_name") if rec else None
+        if name:
+            append_session_image(name, url, prompt, video_meta, settings=settings)
+
+
+def append_failure_to_recording(job_id, prompt, error_text):
+    """Record a failed shot (no image) against whatever session this job is
+    recording to, under the same jobs_lock-guarded pattern as
+    append_image_to_recording — see its docstring for why."""
+    with jobs_lock:
+        rec = jobs.get(job_id)
+        name = rec.get("recording_name") if rec else None
+        if name:
+            append_session_note(name, prompt, f"⚠ Generation failed: {error_text}")
+
+
+def rename_and_retarget_session(src, dst):
+    """Rename a session file and repoint any live job recording to it — atomically.
+
+    Called by /api/sessions/rename. Holds jobs_lock across the file rename itself
+    (rename_session, which internally takes persistence's sessions_write_lock) so
+    it can't interleave with append_image_to_recording/append_failure_to_recording,
+    which read a job's recording_name and perform their persistence call under the
+    same lock. This closes two bugs the naive "retarget then rename" ordering had:
+    a live run's append landing on a filename mid-rename (TOCTOU), and a FAILED
+    rename (destination already exists) still permanently repointing the job
+    before the failure was known.
+
+    Raises FileExistsError if dst already exists (no job is retargeted in that
+    case — the exception propagates before the loop below runs). Raises
+    FileNotFoundError if src has no file yet (a temp session with no images
+    written) — any live job is still retargeted in that case, since there's
+    nothing on disk to conflict with; the exception is only informational for
+    the caller (a temp session with no file is a normal, harmless case to rename).
+    """
+    with jobs_lock:
+        try:
+            rename_session(src, dst)
+            missing = False
+        except FileNotFoundError:
+            missing = True
+        for rec in jobs.values():
+            if rec.get("status") not in TERMINAL_STATUSES and rec.get("recording_name") == src:
+                rec["recording_name"] = dst
+    if missing:
+        raise FileNotFoundError(src)
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ def _auth(client):
 
 def _make_record(status="running", kind="video", started_at=None,
                  finished_at=None, assets=None, prompt="a cat dancing",
-                 workflow_name="wan22_14B_i2v.json", error=None):
+                 workflow_name="wan22_14B_i2v.json", error=None, recording_name=None):
     return {
         "status": status,
         "channel": gs._JobChannel(),
@@ -39,6 +39,7 @@ def _make_record(status="running", kind="video", started_at=None,
         "started_at": started_at if started_at is not None else time.time(),
         "finished_at": finished_at,
         "error": error,
+        "recording_name": recording_name,
     }
 
 
@@ -57,14 +58,28 @@ class _JobsFixture(unittest.TestCase):
 
 
 class ApiJobsTests(_JobsFixture):
-    def test_lists_only_image_and_video_jobs(self):
+    def test_lists_image_video_and_sequence_run_jobs(self):
+        # "sequence" (Grok expansion only, not long-running) stays excluded, but
+        # "sequence-run" (the server-driven expand-and-generate loop) is included
+        # so it's visible/cancellable in /jobs and findable by reattachLiveSequenceRun.
         gs.jobs["a"] = _make_record(kind="image")
         gs.jobs["b"] = _make_record(kind="video")
         gs.jobs["c"] = _make_record(kind="sequence")
+        gs.jobs["d"] = _make_record(kind="sequence-run", recording_name="temp-1")
         resp = self.client.get("/api/jobs")
         self.assertEqual(resp.status_code, 200)
         ids = {item["job_id"] for item in resp.get_json()}
-        self.assertEqual(ids, {"a", "b"})
+        self.assertEqual(ids, {"a", "b", "d"})
+
+    def test_sequence_run_exposes_recording_name(self):
+        gs.jobs["a"] = _make_record(kind="sequence-run", recording_name="my-run")
+        item = self.client.get("/api/jobs").get_json()[0]
+        self.assertEqual(item["recording_name"], "my-run")
+
+    def test_image_job_recording_name_is_none(self):
+        gs.jobs["a"] = _make_record(kind="image")
+        item = self.client.get("/api/jobs").get_json()[0]
+        self.assertIsNone(item["recording_name"])
 
     def test_newest_first_and_capped_at_ten(self):
         for i in range(15):

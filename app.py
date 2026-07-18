@@ -41,7 +41,8 @@ from config import (
 )
 from generation_service import (
     cancel_auto_purge, get_last_sent_workflow, jobs, jobs_lock,
-    run_generation, start_background_job, start_generation_job, start_sequence_job,
+    rename_and_retarget_session, run_generation, start_background_job,
+    start_generation_job, start_sequence_job, start_sequence_run_job,
 )
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
@@ -51,8 +52,8 @@ from image_store import (
 )
 from persistence import (
     aliases_file, delete_session, list_sessions, load_aliases, load_macros,
-    load_session, macros_file, save_aliases, save_macros, save_session,
-    sessions_dir, slugify,
+    load_session, macros_file, save_aliases, save_macros,
+    save_session, sessions_dir, slugify,
 )
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -1049,6 +1050,91 @@ def api_video_sequence():
     return jsonify({"job_id": job_id})
 
 
+def _parse_gen_settings(data):
+    """Extract per-image generation settings for a sequence run from the request.
+
+    Every prompt in the run is generated with these shared settings. Falls back to
+    the server-configured defaults, mirroring api_generate. Returns
+    (settings_dict, None) or (None, error_response).
+    """
+    settings = data.get("settings") or {}
+    server_address = settings.get("server") or COMFY_SERVER
+    server_os      = settings.get("server_os") or COMFY_SERVER_OS
+    workflow_name  = settings.get("workflow") or COMFY_WORKFLOW
+
+    def _opt_int(raw, label, minimum=None):
+        if raw is None:
+            return None, None
+        try:
+            value = int(raw)
+        except (ValueError, TypeError):
+            return None, (jsonify({"error": f"{label} must be an integer"}), 400)
+        if minimum is not None and value < minimum:
+            return None, (jsonify({"error": f"{label} must be >= {minimum}"}), 400)
+        return value, None
+
+    width,  err = _opt_int(settings.get("width"),  "width")
+    if err:
+        return None, err
+    height, err = _opt_int(settings.get("height"), "height")
+    if err:
+        return None, err
+    steps,  err = _opt_int(settings.get("steps"),  "steps", minimum=1)
+    if err:
+        return None, err
+
+    return {
+        "server": server_address,
+        "server_os": server_os,
+        "workflow": workflow_name,
+        "width": width,
+        "height": height,
+        "steps": steps,
+        # Appended to every generated prompt server-side, matching the client's
+        # old per-image runGeneration behaviour for the (now-removed) client-driven
+        # sequence loop.
+        "extraPrompt": (settings.get("extraPrompt") or "").strip() or None,
+    }, None
+
+
+@app.route("/api/sequence-run", methods=["POST"])
+@login_required
+def api_sequence_run():
+    """Drive a whole /sequence (or /video-sequence) run server-side.
+
+    Unlike /api/sequence (Grok expansion only, browser generates each image), this
+    expands the master prompt AND generates every image on the server, appending
+    each finished image to the <recordingName> session file as it lands. The run
+    therefore survives the browser closing and is recoverable via /session-load.
+    Returns a job_id the client watches over /api/progress/<job_id>; each image
+    arrives as an SSE "image" event.
+    """
+    data = request.get_json(force=True)
+    try:
+        master, count, replacements = _parse_sequence_request(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    recording_name = slugify(data.get("recordingName") or "")
+    if not recording_name:
+        return jsonify({"error": "A recording session name is required"}), 400
+
+    video = bool(data.get("video"))
+
+    gen_settings, err = _parse_gen_settings(data)
+    if err:
+        return err
+
+    err = output_storage_error()
+    if err:
+        return err
+
+    job_id = start_sequence_run_job(
+        master, count, replacements, video, recording_name, gen_settings
+    )
+    return jsonify({"job_id": job_id})
+
+
 # ---------------------------------------------------------------------------
 # Job management
 # ---------------------------------------------------------------------------
@@ -1136,14 +1222,17 @@ def api_progress(job_id):
 def api_jobs():
     """Return the last 10 ComfyUI generation jobs the server is/was running.
 
-    Grok prompt-sequence jobs (kind == "sequence") are excluded — they're not
-    long-running enough to need a recovery UI and the user didn't ask for them.
-    Newest first.
+    Grok prompt-sequence jobs (kind == "sequence", expansion-only, not
+    long-running) are excluded. "sequence-run" jobs (the server-driven
+    expand-and-generate loop behind /api/sequence-run) ARE included, both so
+    they're visible/cancellable in the /jobs recovery UI and so the client's
+    reattachLiveSequenceRun can find a still-running one by recording_name after
+    a /session-load. Newest first.
     """
     with jobs_lock:
         items = []
         for job_id, rec in jobs.items():
-            if rec.get("kind") not in ("image", "video"):
+            if rec.get("kind") not in ("image", "video", "sequence-run"):
                 continue
             items.append({
                 "job_id": job_id,
@@ -1157,6 +1246,7 @@ def api_jobs():
                 "assets": list(rec.get("assets") or rec.get("images") or []),
                 "error": rec.get("error"),
                 "server": rec.get("server"),
+                "recording_name": rec.get("recording_name"),
             })
     items.sort(key=lambda r: r.get("started_at") or 0, reverse=True)
     return jsonify(items[:10])
@@ -1761,6 +1851,36 @@ def api_session_save():
     except OSError as e:
         return jsonify({"error": f"Could not save session: {e}"}), 500
     return jsonify({"ok": True, "name": name})
+
+
+@app.route("/api/sessions/rename", methods=["POST"])
+@login_required
+def api_session_rename():
+    """Rename a session file (used by /session-record to name the temp session).
+
+    Moves the file and retargets any live sequence run writing to the old name
+    atomically (rename_and_retarget_session), so a run in progress seamlessly
+    continues appending into the new file and a FAILED rename (destination
+    already exists) never leaves a job silently repointed at the wrong session.
+    """
+    body = request.get_json(force=True) or {}
+    src = slugify(body.get("from") or "")
+    dst = slugify(body.get("to") or "")
+    if not src or not dst:
+        return jsonify({"error": "Both 'from' and 'to' names are required"}), 400
+    if src == dst:
+        return jsonify({"ok": True, "name": dst})
+    try:
+        rename_and_retarget_session(src, dst)
+    except FileNotFoundError:
+        # The temp session may not have been written to disk yet (no image or
+        # save has landed). Any live job was still retargeted, so treat as success.
+        return jsonify({"ok": True, "name": dst})
+    except FileExistsError:
+        return jsonify({"error": "A session with that name already exists"}), 409
+    except OSError as e:
+        return jsonify({"error": f"Could not rename session: {e}"}), 500
+    return jsonify({"ok": True, "name": dst})
 
 
 @app.route("/api/sessions/<name>", methods=["GET"])

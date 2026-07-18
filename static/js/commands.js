@@ -41,7 +41,7 @@ function renderSessionPicker({ headerHtml, onSelect }) {
   .then(parseJsonResponse)
   .then(sessions => {
     if (!sessions.length) {
-      bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
+      bubble.innerHTML = 'No saved sessions yet — recording is always on, so <code>/session-record &lt;name&gt;</code> names the one in progress.';
       scrollBottom();
       return;
     }
@@ -77,7 +77,7 @@ function renderSessionPicker({ headerHtml, onSelect }) {
           if (data.error) throw new Error(data.error);
           row.remove();
           if (!selList.querySelector('.sel-row')) {
-            bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
+            bubble.innerHTML = 'No saved sessions yet — recording is always on, so <code>/session-record &lt;name&gt;</code> names the one in progress.';
           }
           scrollBottom();
         })
@@ -701,22 +701,11 @@ export function makeCommandHandler(deps) {
       const count = state.iterations === 1 ? 15 : state.iterations;
       state.iterationsFromSequence = true;
       sendBtn.disabled = true;
-      const statusBubble = addMessage('bot', `
-        <div class="status-text">Asking Grok for ${count} prompt(s)…</div>
-        <div class="dots"><span></span><span></span><span></span></div>
-      `);
+      // The whole run is driven server-side (/api/sequence-run): it expands the
+      // master prompt and generates every image, appending each to the recording
+      // session so the run survives the browser closing. We just watch it stream.
       return (async () => {
-        const result = await deps.runSequenceJob('/api/sequence', master, count, statusBubble);
-        if (!result) { sendBtn.disabled = false; return; }
-        const prompts = result.prompts || [];
-        state.lastSequence = { video: false, items: prompts.map(p => ({ prompt: p, action: '', audio: '' })) };
-        statusBubble.innerHTML = `<div class="status-text">Grok returned <strong style="color:#a78bfa">${prompts.length}</strong> prompt(s) — generating one after another…</div>`;
-        scrollBottom();
-        for (const prompt of prompts) {
-          addMessage('user', escapeHtml(prompt), prompt);
-          const ok = await deps.runGeneration(prompt, '');
-          if (!ok) break;
-        }
+        await deps.runSequenceRunJob(master, count, { video: false });
         sendBtn.disabled = false;
       })();
     }
@@ -731,29 +720,10 @@ export function makeCommandHandler(deps) {
       const count = state.iterations === 1 ? 15 : state.iterations;
       state.iterationsFromSequence = true;
       sendBtn.disabled = true;
-      const statusBubble = addMessage('bot', `
-        <div class="status-text">Asking Grok for ${count} video shot(s)…</div>
-        <div class="dots"><span></span><span></span><span></span></div>
-      `);
+      // Server-driven like /sequence, but Grok also returns per-shot action/audio,
+      // stored as videoMeta against each still so it can later become a video.
       return (async () => {
-        const result = await deps.runSequenceJob('/api/video-sequence', master, count, statusBubble);
-        if (!result) { sendBtn.disabled = false; return; }
-        const shots = result.prompts || [];
-        state.lastSequence = {
-          video: true,
-          items: shots.map(s => ({ prompt: s.prompt || '', action: s.action || '', audio: s.audio || '' })),
-        };
-        statusBubble.innerHTML = `<div class="status-text">Grok returned <strong style="color:#a78bfa">${shots.length}</strong> shot(s) — generating one after another…</div>`;
-        scrollBottom();
-        for (const shot of shots) {
-          const prompt = shot.prompt || '';
-          if (!prompt) continue;
-          addMessage('user', escapeHtml(prompt), prompt);
-          const ok = await deps.runGeneration(prompt, '', null, {
-            videoMeta: { action: shot.action || '', audio: shot.audio || '' },
-          });
-          if (!ok) break;
-        }
+        await deps.runSequenceRunJob(master, count, { video: true });
         sendBtn.disabled = false;
       })();
     }
@@ -1372,8 +1342,7 @@ export function makeCommandHandler(deps) {
         { sig: '/server', desc: 'choose a ComfyUI server' },
         { sig: '/session-load [name]', desc: 'restore a previously saved session; omit name to pick from a menu' },
         { sig: '/session-new', desc: 'start a completely new session, resetting all settings to defaults' },
-        { sig: '/session-record <name>', desc: 'start auto-saving the session after every image; omit the name to pick an existing session to record into; run again (no name, or same name) to stop recording' },
-        { sig: '/session-save <name>', desc: 'save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete' },
+        { sig: '/session-record <name>', desc: 'recording is always on — this renames the current (temporary) session to a memorable name so /session-load can restore it later; no name shows the current name' },
         { sig: '/session-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
         { sig: '/settings-backup', desc: 'download a ZIP of all server-side settings for backup — macros, prompt aliases, saved sessions and the server catalogue (<code>servers.json</code>)', notes: 'server-side files only; per-tab generation settings live in a saved session' },
         { sig: '/settings-save', desc: 'push a snapshot of all generation settings (workflows, resolution, denoise, video settings, override prompts, replacements) onto an in-memory stack; pair with <code>/settings-restore</code> to bracket a macro so it leaves settings unchanged' },
@@ -2039,144 +2008,52 @@ export function makeCommandHandler(deps) {
       state.image2imageOverridePrompt = null;
       state.image2videoReplacements = [];
       state.image2videoOverridePrompt = null;
+      // Recording is always on: start the new session recording into a fresh
+      // temporary name rather than continuing to append to the previous one.
+      // Detach (without cancelling) any sequence run this tab was watching —
+      // the server-side job keeps running and appending to its own session,
+      // recoverable later via /session-load, but this tab stops rendering its
+      // events into the fresh chat we're about to build.
+      deps.detachActiveSequenceRun();
+      state.recordingName = deps.newTempSessionName();
       messagesEl.innerHTML = '';
       deps.updateHeaderStatus();
       addMessage('bot', 'New session started. Describe the image you\'d like to generate.');
       return;
     }
 
-    if (cmd === '/session-save') {
-      const rawName = raw.slice('/session-save'.length).trim();
-      addMessage('user', escapeHtml(raw), raw);
-
-      const buildPayload = (name) => ({
-        name,
-        settings: {
-          server: state.currentServer,
-          workflow: state.currentWorkflow,
-          faceWorkflow: state.currentFaceWorkflow,
-          upscaleWorkflow: state.currentUpscaleWorkflow,
-          image2imageWorkflow: state.currentImage2ImageWorkflow,
-          image2videoWorkflow: state.currentImage2VideoWorkflow,
-          inpaintingWorkflow: state.currentInpaintingWorkflow,
-          resolution: state.currentResolution,
-          generationSteps: state.currentGenerationSteps,
-          iterations: state.iterations,
-          sequenceReplacements: state.sequenceReplacements.slice(),
-          image2imageReplacements: state.image2imageReplacements.slice(),
-          image2imageOverridePrompt: state.image2imageOverridePrompt,
-          image2videoReplacements: state.image2videoReplacements.slice(),
-          image2videoOverridePrompt: state.image2videoOverridePrompt,
-          lastFaceDetailPrompt: state.lastFaceDetailPrompt,
-          lastInpaintingPrompt: state.lastInpaintingPrompt,
-          extraPrompt: state.extraPrompt,
-          currentDenoise: { ...state.currentDenoise },
-          videoSettings: { ...state.currentVideoSettings },
-          videoLock: state.videoLock,
-        },
-        recordingName: state.recordingName,
-        sessionImages: state.sessionImages.slice(),
-        imagePrompts: Object.assign({}, state.imagePrompts),
-        imageVideoMeta: Object.assign({}, state.imageVideoMeta),
-        lastSequence: state.lastSequence,
-        promptHistory: state.history.slice(),
-        messages: deps.captureSessionMessages(),
-      });
-
-      const doSave = (name, bubble) => {
-        bubble.innerHTML = '<div class="status-text">Saving session…</div>';
-        fetch('/api/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(buildPayload(name)),
-        })
-        .then(parseJsonResponse)
-        .then(data => {
-          if (data.error) throw new Error(data.error);
-          bubble.innerHTML = `Session saved as <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong>. Use <code>/session-load</code> to restore it.`;
-          scrollBottom();
-        })
-        .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ Save failed: ${escapeHtml(err.message)}</span>`;
-          scrollBottom();
-        });
-      };
-
-      if (rawName) {
-        if (state.recordingName && state.recordingName !== rawName) {
-          addMessage('bot', `⚠ A recording is active for session <strong style="color:#a78bfa">${escapeHtml(state.recordingName)}</strong> but you're saving to a different name (<strong style="color:#a78bfa">${escapeHtml(rawName)}</strong>). Type <code>y</code> to save anyway or <code>n</code> to cancel.`);
-          state.pendingConfirm = (answer) => {
-            if (!/^y(es)?$/i.test(answer)) {
-              addMessage('bot', 'Cancelled — session not saved.');
-              return;
-            }
-            const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
-            doSave(rawName, bubble);
-          };
-          return;
-        }
-        const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
-        doSave(rawName, bubble);
-        return;
-      }
-
-      renderSessionPicker({
-        headerHtml: '<strong>Select a session to overwrite:</strong>',
-        onSelect: (name, bubble) => {
-          if (state.recordingName && state.recordingName !== name) {
-            bubble.innerHTML = `⚠ A recording is active for session <strong style="color:#a78bfa">${escapeHtml(state.recordingName)}</strong> but you selected a different session (<strong style="color:#a78bfa">${escapeHtml(name)}</strong>). Type <code>y</code> to save anyway or <code>n</code> to cancel.`;
-            scrollBottom();
-            state.pendingConfirm = (answer) => {
-              if (!/^y(es)?$/i.test(answer)) {
-                bubble.innerHTML = 'Cancelled — session not saved.';
-                scrollBottom();
-                return;
-              }
-              doSave(name, bubble);
-            };
-            return;
-          }
-          doSave(name, bubble);
-        },
-      });
-      return;
-    }
-
     if (cmd === '/session-record') {
+      // Recording is always on. This command no longer toggles it — it renames
+      // the active (temporary) session to a memorable name, moving the file
+      // server-side so any images already recorded (and any in-flight server run)
+      // follow into the new name.
       const rawName = raw.slice('/session-record'.length).trim();
       addMessage('user', escapeHtml(raw), raw);
 
-      if (!rawName && state.recordingName) {
-        const prev = state.recordingName;
-        state.recordingName = null;
-        const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
-        bubble.innerHTML = `Recording stopped for session <strong style="color:#a78bfa">${escapeHtml(prev)}</strong>.`;
+      if (!rawName) {
+        addMessage('bot', `Currently recording to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '—')}</strong>. Run <code>/session-record &lt;name&gt;</code> to rename it, or <code>/session-load</code> to restore a saved one.`);
         scrollBottom();
         return;
       }
 
-      const doRecord = (name, bubble) => {
-        state.recordingName = name;
-        bubble.innerHTML = `Recording started — session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> will be saved automatically after each image. Run <code>/session-record</code> with no name to stop.`;
+      const from = state.recordingName;
+      const bubble = addMessage('bot', `<div class="status-text">Renaming session to <strong>${escapeHtml(rawName)}</strong>…</div>`).parentElement.querySelector('.bubble');
+      fetch('/api/sessions/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: rawName }),
+      })
+      .then(parseJsonResponse)
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        if (state.liveRunSession === from) state.liveRunSession = data.name;
+        state.recordingName = data.name;
+        bubble.innerHTML = `Recording to session <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> — auto-saved after each image. Restore it later with <code>/session-load ${escapeHtml(data.name)}</code>.`;
         scrollBottom();
-      };
-
-      if (rawName) {
-        if (state.recordingName === rawName) {
-          state.recordingName = null;
-          const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
-          bubble.innerHTML = `Recording stopped for session <strong style="color:#a78bfa">${escapeHtml(rawName)}</strong>.`;
-          scrollBottom();
-          return;
-        }
-        const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
-        doRecord(rawName, bubble);
-        return;
-      }
-
-      renderSessionPicker({
-        headerHtml: '<strong>Select a session to record into:</strong>',
-        onSelect: (name, bubble) => doRecord(name, bubble),
+      })
+      .catch(err => {
+        bubble.innerHTML = `<span style="color:#f87171">⚠ Rename failed: ${escapeHtml(err.message)}</span>`;
+        scrollBottom();
       });
       return;
     }
