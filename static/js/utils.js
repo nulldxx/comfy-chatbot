@@ -78,7 +78,10 @@ export function expandAliases(text, aliases) {
 }
 
 // Apply find→replace pairs to a prompt string (plain substring replacement).
+// A falsy prompt (null/'') is passed through unchanged so callers can wrap a
+// possibly-null derived prompt without a separate guard.
 export function applyReplacements(prompt, replacements) {
+  if (!prompt) return prompt;
   for (const [from, to] of replacements) prompt = prompt.split(from).join(to);
   return prompt;
 }

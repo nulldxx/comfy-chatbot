@@ -206,6 +206,13 @@ function showChatSummary() {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(state.lastFaceDetailPrompt)}</code>` });
   }
 
+  if (state.faceDetailReplacements.length) {
+    const list = state.faceDetailReplacements
+      .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
+      .join(', ');
+    rows.push({ label: `Face-detail replacements (${state.faceDetailReplacements.length})`, value: list });
+  }
+
   if (state.lastInpaintingPrompt) {
     rows.push({ label: 'Inpainting prompt', value: `<code>${escapeHtml(state.lastInpaintingPrompt)}</code>` });
   }
@@ -798,6 +805,35 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/face-detail-replacement') {
+      addMessage('user', escapeHtml(raw), raw);
+      if (!parts[1]) {
+        if (!state.faceDetailReplacements.length) {
+          addMessage('bot', `No face-detail replacements set.<br>Usage: <code>/face-detail-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to each face-detail prompt before it is run.<br><code>/face-detail-replacement-reset</code> removes them all.`);
+        } else {
+          const list = state.faceDetailReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
+          addMessage('bot', `<strong>Face-detail replacements:</strong><br>${list}<br><br><code>/face-detail-replacement-reset</code> removes them all.`);
+        }
+        return;
+      }
+      const from = parts[1];
+      const to   = parts.slice(2).join(' ');
+      if (!to) {
+        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/face-detail-replacement Dog Cat</code></span>');
+        return;
+      }
+      state.faceDetailReplacements.push([from, to]);
+      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to each face-detail prompt before it is run.`);
+      return;
+    }
+
+    if (cmd === '/face-detail-replacement-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.faceDetailReplacements = [];
+      addMessage('bot', 'Face-detail replacements cleared.');
+      return;
+    }
+
     if (cmd === '/image2image-set-prompt') {
       addMessage('user', escapeHtml(raw), raw);
       const override = raw.slice('/image2image-set-prompt'.length).trim();
@@ -1236,7 +1272,7 @@ export function makeCommandHandler(deps) {
       let fdSessionChain = Promise.resolve();
       fdSessionTargets.forEach(img => {
         fdSessionChain = fdSessionChain.then(() => {
-          const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]);
+          const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]), state.faceDetailReplacements);
           if (!prompt) {
             addMessage('bot', '<span style="color:#f87171">No LoRA in this image\'s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
             return;
@@ -1264,7 +1300,7 @@ export function makeCommandHandler(deps) {
       let fdChain = Promise.resolve();
       fdTargets.forEach(img => {
         fdChain = fdChain.then(() => {
-          const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]);
+          const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]), state.faceDetailReplacements);
           if (!prompt) {
             addMessage('bot', '<span style="color:#f87171">No LoRA in this image\'s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
             return;
@@ -1297,6 +1333,8 @@ export function makeCommandHandler(deps) {
         { sig: '/face-detail [N]', desc: 'run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image\'s prompt' },
         { sig: '/face-detail-prompt <prompt>', desc: 'set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image\'s own prompt (needs a <code>&lt;lora:…&gt;</code> tag)' },
         { sig: '/face-detail-prompt-reset', desc: 'clear that override so the face icons derive a prompt from each image again' },
+        { sig: '/face-detail-replacement <from> <to>', desc: 'find→replace applied to every face-detail prompt (override or derived) before it is run (no args lists them)' },
+        { sig: '/face-detail-replacement-reset', desc: 'clear all face-detail replacements' },
         { sig: '/face-detail-session', desc: 'face-detail every image from this session, one after another' },
         { sig: '/face-detail-workflow [name]', desc: 'choose which face-detailer workflow the face icons use (no arg = picker)' },
         { sig: '/face-detail-workflow-reset', desc: 'reset the face-detailer workflow to its default' },
@@ -2009,6 +2047,7 @@ export function makeCommandHandler(deps) {
       state.image2imageOverridePrompt = null;
       state.image2videoReplacements = [];
       state.image2videoOverridePrompt = null;
+      state.faceDetailReplacements = [];
       // Recording is always on: start the new chat recording into a fresh
       // temporary name rather than continuing to append to the previous one.
       // Detach (without cancelling) any sequence run this tab was watching —
@@ -2118,6 +2157,7 @@ export function makeCommandHandler(deps) {
         image2imageOverridePrompt: state.image2imageOverridePrompt,
         image2videoReplacements:   state.image2videoReplacements.slice(),
         image2videoOverridePrompt: state.image2videoOverridePrompt,
+        faceDetailReplacements:    state.faceDetailReplacements.slice(),
         lastFaceDetailPrompt:      state.lastFaceDetailPrompt,
         lastInpaintingPrompt:      state.lastInpaintingPrompt,
         extraPrompt:               state.extraPrompt,
@@ -2151,6 +2191,7 @@ export function makeCommandHandler(deps) {
       state.image2imageOverridePrompt   = s.image2imageOverridePrompt;
       state.image2videoReplacements     = s.image2videoReplacements;
       state.image2videoOverridePrompt   = s.image2videoOverridePrompt;
+      state.faceDetailReplacements      = s.faceDetailReplacements;
       state.lastFaceDetailPrompt        = s.lastFaceDetailPrompt;
       state.lastInpaintingPrompt        = s.lastInpaintingPrompt;
       state.extraPrompt                 = s.extraPrompt;

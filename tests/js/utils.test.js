@@ -235,6 +235,11 @@ describe('applyReplacements', () => {
     expect(applyReplacements('remove this word', [['this ', '']]))
       .toBe('remove word');
   });
+
+  test('passes a falsy prompt through unchanged even with replacements', () => {
+    expect(applyReplacements(null, [['cat', 'dog']])).toBe(null);
+    expect(applyReplacements('', [['cat', 'dog']])).toBe('');
+  });
 });
 
 // ---------------------------------------------------------------------------

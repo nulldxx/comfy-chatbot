@@ -218,7 +218,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     face.addEventListener('click', e => {
       e.stopPropagation();
       if (face.disabled || sendBtn.disabled) return;
-      const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]);
+      const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]), state.faceDetailReplacements);
       if (!prompt) {
         addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
         return;

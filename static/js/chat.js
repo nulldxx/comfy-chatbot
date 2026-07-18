@@ -806,7 +806,7 @@ function appendChatImage(container, url) {
   face.addEventListener('click', e => {
     e.stopPropagation();
     if (face.disabled || sendBtn.disabled) return;
-    const prompt = state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]);
+    const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]), state.faceDetailReplacements);
     if (!prompt) {
       addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
       return;
@@ -1125,6 +1125,7 @@ function doRecordSave() {
         image2imageOverridePrompt: state.image2imageOverridePrompt,
         image2videoReplacements: state.image2videoReplacements.slice(),
         image2videoOverridePrompt: state.image2videoOverridePrompt,
+        faceDetailReplacements: state.faceDetailReplacements.slice(),
         lastFaceDetailPrompt: state.lastFaceDetailPrompt,
         lastInpaintingPrompt: state.lastInpaintingPrompt,
         extraPrompt: state.extraPrompt,
@@ -1179,6 +1180,7 @@ function restoreSession(data) {
   if (s.image2imageOverridePrompt !== undefined) state.image2imageOverridePrompt = s.image2imageOverridePrompt;
   if (s.image2videoReplacements !== undefined) state.image2videoReplacements = s.image2videoReplacements;
   if (s.image2videoOverridePrompt !== undefined) state.image2videoOverridePrompt = s.image2videoOverridePrompt;
+  if (s.faceDetailReplacements  !== undefined) state.faceDetailReplacements  = s.faceDetailReplacements;
   if (s.lastFaceDetailPrompt    !== undefined) state.lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastInpaintingPrompt    !== undefined) state.lastInpaintingPrompt    = s.lastInpaintingPrompt;
   if (s.extraPrompt             !== undefined) state.extraPrompt             = s.extraPrompt;
