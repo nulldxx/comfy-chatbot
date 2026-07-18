@@ -35,57 +35,6 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
   }).catch(() => { bubble.innerHTML = `<span style="color:#f87171">Failed to load ${failLabel}.</span>`; });
 }
 
-// Reset all per-tab state and start recording into a fresh temporary chat.
-// This is the logic behind the sidebar's "new chat" button (sidebar.js calls
-// deps.newChat()); it used to also back the removed /chat-new slash command.
-function newChat() {
-  state.history.length = 0;
-  state.historyIdx = -1;
-  state.savedDraft = '';
-  state.sessionImages.length = 0;
-  for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
-  for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
-  state.lastSequence = null;
-  state.fauxFullscreenEls.clear();
-  document.body.style.overflow = '';
-  state.currentServer = null;
-  state.currentWorkflow = null;
-  state.currentFaceWorkflow = null;
-  state.currentUpscaleWorkflow = null;
-  state.currentImage2ImageWorkflow = null;
-  state.currentImage2VideoWorkflow = null;
-  state.currentInpaintingWorkflow = null;
-  state.lastFaceDetailPrompt = null;
-  state.lastInpaintingPrompt = null;
-  state.extraPrompt = null;
-  state.currentResolution = { width: 1365, height: 768 };
-  state.currentGenerationSteps = null;
-  state.currentDenoise = { ...DEFAULT_DENOISE };
-  state.currentVideoSettings = { ...DEFAULT_VIDEO_SETTINGS };
-  state.videoLock = 'fps';
-  state.iterations = 1;
-  state.iterationsFromSequence = false;
-  state.sequenceReplacements = [];
-  state.image2imageReplacements = [];
-  state.image2imageOverridePrompt = null;
-  state.image2videoReplacements = [];
-  state.image2videoOverridePrompt = null;
-  state.faceDetailReplacements = [];
-  state.autoFaceDetail = false;
-  // Recording is always on: start the new chat recording into a fresh
-  // temporary name rather than continuing to append to the previous one.
-  // Detach (without cancelling) any sequence run this tab was watching —
-  // the server-side job keeps running and appending to its own chat,
-  // recoverable later via the sidebar, but this tab stops rendering its
-  // events into the fresh chat we're about to build.
-  deps.detachActiveSequenceRun();
-  state.recordingName = deps.newTempSessionName();
-  messagesEl.innerHTML = '';
-  deps.updateHeaderStatus();
-  addMessage('bot', 'New chat started. Describe the image you\'d like to generate.');
-  document.dispatchEvent(new CustomEvent('chats-changed'));
-}
-
 function showChatSummary() {
   const rows = [];
 
@@ -610,6 +559,58 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
 }
 
 export function makeCommandHandler(deps) {
+  // Reset all per-tab state and start recording into a fresh temporary chat.
+  // This is the logic behind the sidebar's "new chat" button (sidebar.js calls
+  // deps.newChat()); it used to also back the removed /chat-new slash command.
+  // Defined inside makeCommandHandler so it closes over the `deps` param.
+  function newChat() {
+    state.history.length = 0;
+    state.historyIdx = -1;
+    state.savedDraft = '';
+    state.sessionImages.length = 0;
+    for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
+    for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
+    state.lastSequence = null;
+    state.fauxFullscreenEls.clear();
+    document.body.style.overflow = '';
+    state.currentServer = null;
+    state.currentWorkflow = null;
+    state.currentFaceWorkflow = null;
+    state.currentUpscaleWorkflow = null;
+    state.currentImage2ImageWorkflow = null;
+    state.currentImage2VideoWorkflow = null;
+    state.currentInpaintingWorkflow = null;
+    state.lastFaceDetailPrompt = null;
+    state.lastInpaintingPrompt = null;
+    state.extraPrompt = null;
+    state.currentResolution = { width: 1365, height: 768 };
+    state.currentGenerationSteps = null;
+    state.currentDenoise = { ...DEFAULT_DENOISE };
+    state.currentVideoSettings = { ...DEFAULT_VIDEO_SETTINGS };
+    state.videoLock = 'fps';
+    state.iterations = 1;
+    state.iterationsFromSequence = false;
+    state.sequenceReplacements = [];
+    state.image2imageReplacements = [];
+    state.image2imageOverridePrompt = null;
+    state.image2videoReplacements = [];
+    state.image2videoOverridePrompt = null;
+    state.faceDetailReplacements = [];
+    state.autoFaceDetail = false;
+    // Recording is always on: start the new chat recording into a fresh
+    // temporary name rather than continuing to append to the previous one.
+    // Detach (without cancelling) any sequence run this tab was watching —
+    // the server-side job keeps running and appending to its own chat,
+    // recoverable later via the sidebar, but this tab stops rendering its
+    // events into the fresh chat we're about to build.
+    deps.detachActiveSequenceRun();
+    state.recordingName = deps.newTempSessionName();
+    messagesEl.innerHTML = '';
+    deps.updateHeaderStatus();
+    addMessage('bot', 'New chat started. Describe the image you\'d like to generate.');
+    document.dispatchEvent(new CustomEvent('chats-changed'));
+  }
+
   function runDefaultMacroOnImage(url) {
     if (!state.defaultMacro) {
       addMessage('bot', '<span style="color:#f87171">⚠ No default macro set — use <code>/macro-set-default</code> to choose one.</span>');
