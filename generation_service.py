@@ -739,6 +739,14 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
             # original item_prompt, without the suffix.
             gen_prompt = f"{clean_prompt} {extra_prompt}".strip() if extra_prompt else clean_prompt
 
+            # Announce the start of this shot so the attached client can open a
+            # fresh per-shot bubble (with its own status line, cancel button and
+            # generation timer) before the "Generating…"/"Queued…" progress and
+            # the final image arrive — restoring the per-image UX the old
+            # client-driven loop had. Carries the original prompt (pre-extra) and
+            # video meta so the bubble's user line matches the "image" event.
+            send("shot", index=i, total=total, prompt=item_prompt, videoMeta=video_meta)
+
             send("progress", message=f"Generating {i}/{total}…")
             try:
                 urls = _run_generation_core(

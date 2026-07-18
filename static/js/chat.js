@@ -76,6 +76,32 @@ function newTempSessionName() {
 }
 if (!state.recordingName) state.recordingName = newTempSessionName();
 
+// On a fresh page load (e.g. after being logged out mid-run), a server-side
+// sequence run may still be generating into its recording session. Without this
+// the browser lands on an empty chat with no sign of it — you can't see the
+// progress or cancel it. So on startup, adopt any still-running sequence run:
+// load the session it's recording into (bringing back the images generated so
+// far) which in turn reattaches to its live SSE stream (restoreSession →
+// reattachLiveSequenceRun), restoring the "Queued…" progress and cancel button.
+function resumeRunningSequenceRunOnStartup() {
+  fetch('/api/jobs')
+    .then(r => r.json())
+    .then(jobsList => {
+      if (!Array.isArray(jobsList)) return;
+      const job = jobsList.find(j =>
+        j.kind === 'sequence-run'
+        && (j.status === 'pending' || j.status === 'running')
+        && j.recording_name
+      );
+      if (!job) return;
+      return fetch('/api/sessions/' + encodeURIComponent(job.recording_name))
+        .then(parseJsonResponse)
+        .then(data => { if (data && !data.error) restoreSession(data); });
+    })
+    .catch(() => {});
+}
+resumeRunningSequenceRunOnStartup();
+
 // ---------------------------------------------------------------------------
 // Input: auto-resize + alias expansion + slash autocomplete
 // ---------------------------------------------------------------------------
@@ -1385,20 +1411,79 @@ function detachActiveSequenceRun(opts = {}) {
 // Wires an EventSource for a sequence-run job onto statusBubble/cancelBtn,
 // dispatching on every event type the run emits. Shared by runSequenceRunJob
 // (a freshly-started run) and reattachLiveSequenceRun (rejoining one still in
-// progress after /session-load) — a fresh EventSource always replays the job's
-// full event backlog (_JobChannel), so the 'image' handler skips URLs already in
-// state.sessionImages to avoid re-rendering images restoreSession already loaded
-// from the persisted session file.
-function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFail } = {}) {
+// progress after /session-load or on startup).
+//
+// Each shot is drawn in its OWN bubble — a "shell" — matching the old
+// client-driven loop: a user line with the prompt, then a bot bubble that shows
+// the live "Queued (ID:…)"/progress text plus a cancel button, and on completion
+// collapses to the image with a "Done — 1 result in Xs" timer in its border. The
+// top statusBubble is only the run header (Grok phase + terminal summary).
+//
+// `replay`: a reattaching client's fresh EventSource replays the job's full
+// event backlog (_JobChannel). With replay=true we suppress rendering until the
+// server's `caught_up` marker, because restoreSession already drew the persisted
+// shots — replaying them would duplicate images/failures and flash empty shells.
+// A freshly-started run (replay=false) treats everything as live from the start.
+function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFail, replay = false } = {}) {
   const statusText = statusBubble.querySelector('.status-text');
   activeSequenceRun = { jobId, es: null };
 
-  cancelBtn.disabled = false;
-  cancelBtn.addEventListener('click', () => {
-    cancelBtn.disabled = true;
-    if (statusText) statusText.textContent = 'Cancelling…';
-    fetch('/api/cancel/' + jobId, { method: 'POST' }).catch(() => {});
-  });
+  let caughtUp = !replay;   // when false, we're still replaying backlog
+  let shell = null;         // the currently-open per-shot bubble, or null
+
+  const wireCancel = btn => {
+    btn.disabled = false;
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      if (btn.__statusText) btn.__statusText.textContent = 'Cancelling…';
+      fetch('/api/cancel/' + jobId, { method: 'POST' }).catch(() => {});
+    });
+  };
+
+  cancelBtn.__statusText = statusText;
+  wireCancel(cancelBtn);
+
+  // Opens a fresh per-shot bubble (user line + bot status bubble with its own
+  // dots and cancel button) and starts its generation timer.
+  const openShell = prompt => {
+    addMessage('user', escapeHtml(prompt || ''), prompt || '');
+    const bubble = addMessage('bot', `
+      <div class="status-text">Connecting…</div>
+      <div class="dots"><span></span><span></span><span></span></div>
+    `);
+    const cb = document.createElement('button');
+    cb.className = 'cancel-btn';
+    cb.title = 'Cancel this run';
+    cb.textContent = '✕';
+    cb.__statusText = bubble.querySelector('.status-text');
+    bubble.appendChild(cb);
+    wireCancel(cb);
+    // The run header's cancel button is now redundant — the open shell carries
+    // its own — so drop it, keeping cancellation next to the active shot.
+    if (cancelBtn.parentNode) cancelBtn.remove();
+    return {
+      bubble,
+      statusText: bubble.querySelector('.status-text'),
+      dotsEl: bubble.querySelector('.dots'),
+      cancelBtn: cb,
+      startTime: Date.now(),
+    };
+  };
+
+  const finishShellWithImage = (sh, url) => {
+    if (sh.dotsEl) sh.dotsEl.remove();
+    if (sh.cancelBtn) sh.cancelBtn.remove();
+    const elapsed = ((Date.now() - sh.startTime) / 1000).toFixed(1);
+    if (sh.statusText) sh.statusText.textContent = `Done — 1 result in ${elapsed}s`;
+    appendChatImage(sh.bubble, url);
+  };
+
+  const finishShellWithError = (sh, error) => {
+    if (sh.dotsEl) sh.dotsEl.remove();
+    if (sh.cancelBtn) sh.cancelBtn.remove();
+    if (sh.statusText) sh.statusText.textContent = '';
+    sh.bubble.innerHTML += `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(error || 'unknown error')}</span>`;
+  };
 
   const es = new EventSource(`/api/progress/${jobId}`);
   activeSequenceRun.es = es;
@@ -1408,19 +1493,64 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (activeSequenceRun && activeSequenceRun.jobId === jobId) activeSequenceRun = null;
     state.liveRunSession = null;
     if (cancelBtn.parentNode) cancelBtn.remove();
+    if (shell && shell.cancelBtn && shell.cancelBtn.parentNode) shell.cancelBtn.remove();
   };
 
   es.onmessage = e => {
     const msg = JSON.parse(e.data);
-    if (msg.type === 'progress') {
-      if (statusText) statusText.textContent = msg.message;
-      scrollBottom();
-    } else if (msg.type === 'prompts') {
+
+    if (msg.type === 'caught_up') {
+      caughtUp = true;
+      return;
+    }
+
+    if (msg.type === 'prompts') {
       const items = msg.prompts || [];
       state.lastSequence = msg.video
         ? { video: true,  items: items.map(s => ({ prompt: s.prompt || '', action: s.action || '', audio: s.audio || '' })) }
         : { video: false, items: items.map(p => ({ prompt: p, action: '', audio: '' })) };
       if (statusText) statusText.textContent = `Grok returned ${items.length} ${msg.video ? 'shot' : 'prompt'}(s) — generating one after another…`;
+      scrollBottom();
+      return;
+    }
+
+    // Terminal events always render (even during replay) so a reattaching
+    // client sees the run's final state.
+    if (msg.type === 'done') {
+      stop();
+      const n = (msg.images || []).length;
+      statusBubble.innerHTML = `<div class="status-text">Sequence complete — ${n} image(s). Recorded to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '')}</strong>.</div>`;
+      scrollBottom();
+      if (onDone) onDone(msg);
+      return;
+    }
+    if (msg.type === 'cancelled') {
+      if (shell) { if (shell.dotsEl) shell.dotsEl.remove(); if (shell.cancelBtn) shell.cancelBtn.remove(); if (shell.statusText) shell.statusText.textContent = 'Cancelled'; shell = null; }
+      stop();
+      statusBubble.innerHTML = `<span style="color:#f87171">⚠ Cancelled</span>`;
+      scrollBottom();
+      if (onFail) onFail('Cancelled');
+      return;
+    }
+    if (msg.type === 'error') {
+      if (shell) { if (shell.dotsEl) shell.dotsEl.remove(); if (shell.cancelBtn) shell.cancelBtn.remove(); shell = null; }
+      stop();
+      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
+      scrollBottom();
+      if (onFail) onFail(msg.message);
+      return;
+    }
+
+    // Per-shot events are suppressed while replaying backlog — restoreSession
+    // already drew those shots from the persisted session.
+    if (!caughtUp) return;
+
+    if (msg.type === 'shot') {
+      shell = openShell(msg.prompt);
+      scrollBottom();
+    } else if (msg.type === 'progress') {
+      if (shell && shell.statusText) shell.statusText.textContent = msg.message;
+      else if (statusText) statusText.textContent = msg.message;
       scrollBottom();
     } else if (msg.type === 'image') {
       const url = msg.url;
@@ -1428,31 +1558,27 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
         state.sessionImages.push(url);
         if (msg.prompt) state.imagePrompts[url] = msg.prompt;
         if (msg.videoMeta) state.imageVideoMeta[url] = msg.videoMeta;
-        addMessage('user', escapeHtml(msg.prompt || ''), msg.prompt || '');
-        const bubble = addMessage('bot', '');
-        appendChatImage(bubble, url);
+        if (shell) {
+          finishShellWithImage(shell, url);
+          shell = null;
+        } else {
+          // Fallback: the shot began before we caught up (reattached mid-shot),
+          // so there's no open shell — render the image standalone.
+          addMessage('user', escapeHtml(msg.prompt || ''), msg.prompt || '');
+          const bubble = addMessage('bot', '');
+          appendChatImage(bubble, url);
+        }
         scrollBottom();
       }
     } else if (msg.type === 'failed') {
-      addMessage('user', escapeHtml(msg.prompt || ''), msg.prompt || '');
-      addMessage('bot', `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(msg.error || 'unknown error')}</span>`);
+      if (shell) {
+        finishShellWithError(shell, msg.error);
+        shell = null;
+      } else {
+        addMessage('user', escapeHtml(msg.prompt || ''), msg.prompt || '');
+        addMessage('bot', `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(msg.error || 'unknown error')}</span>`);
+      }
       scrollBottom();
-    } else if (msg.type === 'done') {
-      stop();
-      const n = (msg.images || []).length;
-      statusBubble.innerHTML = `<div class="status-text">Sequence complete — ${n} image(s). Recorded to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '')}</strong>.</div>`;
-      scrollBottom();
-      if (onDone) onDone(msg);
-    } else if (msg.type === 'cancelled') {
-      stop();
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ Cancelled</span>`;
-      scrollBottom();
-      if (onFail) onFail('Cancelled');
-    } else if (msg.type === 'error') {
-      stop();
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
-      scrollBottom();
-      if (onFail) onFail(msg.message);
     }
   };
   es.onerror = () => { stop(); if (onFail) onFail('Connection lost'); };
@@ -1541,7 +1667,7 @@ function reattachLiveSequenceRun(recordingName) {
       cancelBtn.textContent = '✕';
       cancelBtn.disabled = true;
       statusBubble.appendChild(cancelBtn);
-      attachSequenceRunStream(job.job_id, statusBubble, cancelBtn);
+      attachSequenceRunStream(job.job_id, statusBubble, cancelBtn, { replay: true });
     })
     .catch(() => {});
 }

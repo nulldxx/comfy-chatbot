@@ -1189,6 +1189,13 @@ def api_progress(job_id):
             yield f"data: {msg}\n\n"
         idx = len(cached)
 
+        # Boundary marker: everything above was replayed backlog, everything
+        # below is live. A reattaching sequence-run client uses this to tell
+        # already-persisted history (which it renders from the loaded session)
+        # from genuinely new events, so it doesn't rebuild per-shot bubbles for
+        # shots it has already drawn. Harmless/ignored by other job types.
+        yield f"data: {json.dumps({'type': 'caught_up'})}\n\n"
+
         # If the job already finished before we arrived, stop after replay.
         with jobs_lock:
             status = (jobs.get(job_id) or {}).get("status")

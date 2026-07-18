@@ -223,6 +223,34 @@ class RunSequenceRunTests(unittest.TestCase):
         self.assertIn("prompts", types)
         self.assertLess(types.index("prompts"), types.index("image"))
 
+    def test_shot_event_precedes_each_image_with_prompt(self):
+        job_id = self._make_job()
+        with patch.object(gs, "generate_prompt_sequence", return_value=["a cat", "a dog"]), \
+             patch.object(gs, "_run_generation_core", side_effect=lambda jid, ch, c, p, l, *a, **k: [f"/images/{p.replace(' ', '_')}.png"]), \
+             patch.object(gs, "append_session_image"):
+            gs.run_sequence_run(job_id, "x", 2, [], video=False, gen_settings=self._settings())
+        msgs = _drain(gs.jobs[job_id]["channel"])
+        shots = [m for m in msgs if m["type"] == "shot"]
+        self.assertEqual(len(shots), 2)
+        self.assertEqual([s["prompt"] for s in shots], ["a cat", "a dog"])
+        self.assertEqual([s["index"] for s in shots], [1, 2])
+        self.assertTrue(all(s["total"] == 2 for s in shots))
+        # Each shot event precedes its own image event.
+        types = [m["type"] for m in msgs]
+        first_shot = types.index("shot")
+        first_image = types.index("image")
+        self.assertLess(first_shot, first_image)
+
+    def test_shot_event_carries_video_meta(self):
+        job_id = self._make_job()
+        shots = [{"prompt": "a cat", "action": "leaps", "audio": "meow"}]
+        with patch.object(gs, "generate_video_prompt_sequence", return_value=shots), \
+             patch.object(gs, "_run_generation_core", return_value=["/images/a.png"]), \
+             patch.object(gs, "append_session_image"):
+            gs.run_sequence_run(job_id, "x", 1, [], video=True, gen_settings=self._settings())
+        shot = [m for m in _drain(gs.jobs[job_id]["channel"]) if m["type"] == "shot"][0]
+        self.assertEqual(shot["videoMeta"], {"action": "leaps", "audio": "meow"})
+
     def test_per_shot_error_continues(self):
         job_id = self._make_job()
 

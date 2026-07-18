@@ -148,6 +148,10 @@ class ProgressReplayTests(_JobsFixture):
         self.assertIn('"type": "progress"', body)
         self.assertIn('"type": "done"', body)
         self.assertIn('/images/x.png', body)
+        # A caught_up boundary marker separates replayed backlog from live events
+        # and must come after the backlog it terminates.
+        self.assertIn('"type": "caught_up"', body)
+        self.assertLess(body.index('"type": "progress"'), body.index('"type": "caught_up"'))
 
     def test_unknown_job_returns_404(self):
         resp = self.client.get("/api/progress/no-such-job")
