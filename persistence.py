@@ -1,10 +1,28 @@
+import os
 import re
 import json
+import threading
 from pathlib import Path
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
 from config import IMAGES_DIR, MEDIA_EXTS
+
+# Serialises every mutation of a session JSON file. Two writers race on the same
+# sessions/<name>.json: the client's full-doc overwrite (save_session, via
+# /api/sessions) and the server-side sequence run's incremental append
+# (append_session_image). All session-file writes take this lock and write
+# atomically (temp file + os.replace) so a reader never sees a half-written doc
+# and concurrent writers can't lose each other's updates. A single threading.Lock
+# suffices because the app runs one Gunicorn worker (see gunicorn.conf.py).
+sessions_write_lock = threading.Lock()
+
+
+def _atomic_write_json(path, data):
+    """Write ``data`` as pretty JSON to ``path`` atomically (temp file + replace)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, path)
 
 
 def slugify(name):
@@ -50,8 +68,79 @@ def save_session(name, body):
     path = sessions_dir() / f"{name}.json"
     payload = {k: v for k, v in body.items() if k != "name"}
     payload["saved_at"] = datetime.now().isoformat()
-    path.write_text(json.dumps(payload, indent=2))
+    with sessions_write_lock:
+        _atomic_write_json(path, payload)
     return path
+
+
+def append_session_image(name, url, prompt, video_meta=None, settings=None):
+    """Append one completed image to a session file, creating it if needed.
+
+    Used by the server-side sequence run (generation_service.run_sequence_run) so
+    that images generated after the browser has disconnected are still persisted
+    and can be recovered later via /session-load. Mirrors the doc shape produced
+    client-side (doRecordSave / captureSessionMessages) so restoreSession can
+    rebuild the chat: a user message carrying the prompt followed by a bot message
+    carrying the image. Runs under sessions_write_lock as a read-modify-write and
+    writes atomically. Returns the updated document.
+    """
+    path = sessions_dir() / f"{name}.json"
+    with sessions_write_lock:
+        if path.is_file():
+            try:
+                doc = json.loads(path.read_text())
+            except Exception:
+                doc = {}
+        else:
+            doc = {}
+
+        doc.setdefault("sessionImages", [])
+        doc.setdefault("imagePrompts", {})
+        doc.setdefault("imageVideoMeta", {})
+        doc.setdefault("messages", [])
+        doc["recordingName"] = name
+        # Only seed settings the first time, so a later client overwrite (or a
+        # rename) doesn't get its richer settings clobbered by our subset.
+        if settings and not doc.get("settings"):
+            doc["settings"] = settings
+
+        if url not in doc["sessionImages"]:
+            doc["sessionImages"].append(url)
+        doc["imagePrompts"][url] = prompt
+        if video_meta is not None:
+            doc["imageVideoMeta"][url] = video_meta
+
+        doc["messages"].append({"role": "user", "prompt": prompt})
+        doc["messages"].append({"role": "bot", "images": [url], "text": ""})
+
+        doc["saved_at"] = datetime.now().isoformat()
+        _atomic_write_json(path, doc)
+    return doc
+
+
+def rename_session(src, dst):
+    """Move sessions/<src>.json to sessions/<dst>.json, rewriting recordingName.
+
+    Raises FileNotFoundError if src is missing, FileExistsError if dst already
+    exists. Runs under sessions_write_lock so it can't interleave with an
+    in-flight append. Returns the destination name.
+    """
+    d = sessions_dir()
+    src_path = d / f"{src}.json"
+    dst_path = d / f"{dst}.json"
+    with sessions_write_lock:
+        if not src_path.is_file():
+            raise FileNotFoundError(src)
+        if dst_path.exists():
+            raise FileExistsError(dst)
+        try:
+            doc = json.loads(src_path.read_text())
+        except Exception:
+            doc = {}
+        doc["recordingName"] = dst
+        _atomic_write_json(dst_path, doc)
+        src_path.unlink()
+    return dst
 
 
 def load_session(safe_name):

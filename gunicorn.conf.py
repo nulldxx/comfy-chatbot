@@ -11,8 +11,13 @@ threads = 8
 timeout = 120          # Allow up to 2 min for slow image generation handoff
 keepalive = 5
 
-max_requests = 1000
-max_requests_jitter = 100
+# Worker recycling is disabled: a server-side sequence run (/api/sequence-run)
+# drives a long generation loop in a daemon thread on the single worker, and
+# recycling the worker mid-run would kill it (only images already written to the
+# session file would survive). This is a single-user appliance, so the leak
+# mitigation max_requests normally provides isn't worth the risk of aborting runs.
+max_requests = 0
+max_requests_jitter = 0
 
 accesslog = "-"
 errorlog = "-"

@@ -60,6 +60,23 @@ function updateHeaderStatus() {
 updateHeaderStatus();
 
 // ---------------------------------------------------------------------------
+// Always-on recording
+// ---------------------------------------------------------------------------
+// Recording is never off: every session auto-saves to a named session file. A
+// fresh browser starts recording into a temporary name; /session-record renames
+// it to something memorable, and /session-load recovers it later. Because the
+// server-side sequence run also writes to this file, a large run started here
+// survives the browser closing and is recoverable on return.
+
+function newTempSessionName() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `temp-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
+       + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+if (!state.recordingName) state.recordingName = newTempSessionName();
+
+// ---------------------------------------------------------------------------
 // Input: auto-resize + alias expansion + slash autocomplete
 // ---------------------------------------------------------------------------
 
@@ -1049,12 +1066,16 @@ let recordSaveTimer = null;
 
 function scheduleRecordSave() {
   if (!state.recordingName) return;
+  // While a server-side sequence run is writing to this session, let it be the
+  // sole writer — a full-doc overwrite here would clobber its incremental appends.
+  if (state.liveRunSession) return;
   clearTimeout(recordSaveTimer);
   recordSaveTimer = setTimeout(doRecordSave, 1500);
 }
 
 function doRecordSave() {
   if (!state.recordingName) return;
+  if (state.liveRunSession) return;
   fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1097,6 +1118,7 @@ function doRecordSave() {
 function restoreSession(data) {
   clearTimeout(recordSaveTimer);
   state.recordingName = null;
+  state.liveRunSession = null;
   state.history.length = 0;
   state.historyIdx = -1;
   state.savedDraft = '';
@@ -1156,6 +1178,9 @@ function restoreSession(data) {
     state.recordingName = data.recordingName;
     addMessage('bot', `Recording resumed — auto-saving to session <strong style="color:#a78bfa">${escapeHtml(data.recordingName)}</strong>.`);
     scrollBottom();
+  } else {
+    // Keep recording always-on even for a legacy/temp-less save.
+    state.recordingName = newTempSessionName();
   }
 }
 
@@ -1303,6 +1328,120 @@ function runSequenceJob(endpoint, master, count, statusBubble) {
           es.close();
           cancelBtn.remove();
           resolve(msg);
+        } else if (msg.type === 'cancelled') {
+          es.close();
+          fail('Cancelled');
+        } else if (msg.type === 'error') {
+          es.close();
+          fail(msg.message);
+        }
+      };
+      es.onerror = () => { es.close(); fail('Connection lost'); };
+    })
+    .catch(err => fail(err.message));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// runSequenceRunJob — server-driven sequence run over SSE
+// ---------------------------------------------------------------------------
+// Unlike runSequenceJob (Grok expansion only, then the browser loops generating
+// each image), this hands the whole run to the server via /api/sequence-run: the
+// server expands the master prompt AND generates every image, appending each to
+// the recording session file. We just watch /api/progress/<job_id> and render
+// each image as its "image" event arrives — so the run keeps going (and stays
+// recoverable via /session-load) even if the browser closes mid-run.
+
+function runSequenceRunJob(master, count, opts = {}) {
+  const video = !!opts.video;
+  return new Promise(resolve => {
+    const statusBubble = addMessage('bot', `
+      <div class="status-text">Asking Grok for ${count} ${video ? 'shot' : 'prompt'}(s)…</div>
+      <div class="dots"><span></span><span></span><span></span></div>
+    `);
+    const statusText = statusBubble.querySelector('.status-text');
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'cancel-btn';
+    cancelBtn.title = 'Cancel this run';
+    cancelBtn.textContent = '✕';
+    cancelBtn.disabled = true;
+    statusBubble.appendChild(cancelBtn);
+
+    const finish = () => {
+      state.liveRunSession = null;
+      if (cancelBtn.parentNode) cancelBtn.remove();
+      resolve(true);
+    };
+    const fail = message => {
+      state.liveRunSession = null;
+      if (cancelBtn.parentNode) cancelBtn.remove();
+      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(message)}</span>`;
+      resolve(false);
+    };
+
+    fetch('/api/sequence-run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: master,
+        count,
+        video,
+        replacements: state.sequenceReplacements,
+        recordingName: state.recordingName,
+        settings: {
+          workflow: state.currentWorkflow,
+          server: state.currentServer ? state.currentServer.address : null,
+          server_os: state.currentServer ? state.currentServer.os : null,
+          width: state.currentResolution ? state.currentResolution.width : null,
+          height: state.currentResolution ? state.currentResolution.height : null,
+          steps: state.currentGenerationSteps,
+        },
+      }),
+    })
+    .then(parseJsonResponse)
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+
+      // The server is now the sole writer of this session file — suppress the
+      // client's own auto-save for its duration (see scheduleRecordSave).
+      state.liveRunSession = state.recordingName;
+
+      cancelBtn.disabled = false;
+      cancelBtn.addEventListener('click', () => {
+        cancelBtn.disabled = true;
+        if (statusText) statusText.textContent = 'Cancelling…';
+        fetch('/api/cancel/' + data.job_id, { method: 'POST' }).catch(() => {});
+      });
+
+      const es = new EventSource(`/api/progress/${data.job_id}`);
+      es.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'progress') {
+          if (statusText) statusText.textContent = msg.message;
+          scrollBottom();
+        } else if (msg.type === 'prompts') {
+          const items = msg.prompts || [];
+          state.lastSequence = msg.video
+            ? { video: true,  items: items.map(s => ({ prompt: s.prompt || '', action: s.action || '', audio: s.audio || '' })) }
+            : { video: false, items: items.map(p => ({ prompt: p, action: '', audio: '' })) };
+          if (statusText) statusText.textContent = `Grok returned ${items.length} ${msg.video ? 'shot' : 'prompt'}(s) — generating one after another…`;
+          scrollBottom();
+        } else if (msg.type === 'image') {
+          const url = msg.url;
+          if (state.sessionImages.indexOf(url) === -1) state.sessionImages.push(url);
+          if (msg.prompt) state.imagePrompts[url] = msg.prompt;
+          if (msg.videoMeta) state.imageVideoMeta[url] = msg.videoMeta;
+          addMessage('user', escapeHtml(msg.prompt || ''), msg.prompt || '');
+          const bubble = addMessage('bot', '');
+          appendChatImage(bubble, url);
+          scrollBottom();
+        } else if (msg.type === 'done') {
+          es.close();
+          const n = (msg.images || []).length;
+          statusBubble.innerHTML = `<div class="status-text">Sequence complete — ${n} image(s). Recorded to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName)}</strong>.</div>`;
+          scrollBottom();
+          finish();
         } else if (msg.type === 'cancelled') {
           es.close();
           fail('Cancelled');
@@ -1586,5 +1725,7 @@ const { handleSlashCommand, runDefaultMacroOnImage } = makeCommandHandler({
   updateHeaderStatus,
   compositeVideos,
   runSequenceJob,
+  runSequenceRunJob,
+  newTempSessionName,
   appendChatImage,
 });

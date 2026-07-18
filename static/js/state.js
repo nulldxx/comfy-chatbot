@@ -73,8 +73,16 @@ export const state = {
   // In-memory stack for /settings-save / /settings-restore
   settingsStack:               [],
 
-  // Active recording session name (null = not recording)
+  // Active recording session name. Recording is always on: a temporary name is
+  // assigned at startup (see newTempSessionName in chat.js) and every image is
+  // auto-saved to it. /session-record renames it; /session-load restores it.
   recordingName:               null,
+
+  // Name of the session a server-side sequence run (/api/sequence-run) is writing
+  // to while this browser is attached to it. While set, client-side auto-save is
+  // suppressed so the server is the sole writer of that session file (prevents the
+  // full-overwrite save from clobbering the server's incremental appends).
+  liveRunSession:              null,
 
   // Tracks which elements are in faux-fullscreen so body overflow is only
   // restored when the last one exits.

@@ -149,6 +149,87 @@ class TestSessions(unittest.TestCase):
         roles = [m["role"] for m in data["messages"]]
         self.assertNotIn("bot", roles)
 
+    def test_save_session_atomic_no_tmp_left(self):
+        persistence.save_session("s", {"data": 1})
+        d = Path(self.tmp) / "sessions"
+        leftovers = list(d.glob("*.tmp"))
+        self.assertEqual(leftovers, [])
+
+    # --- append_session_image ---
+
+    def test_append_creates_file(self):
+        persistence.append_session_image("run1", "/images/a.png", "a cat")
+        path = Path(self.tmp) / "sessions" / "run1.json"
+        self.assertTrue(path.is_file())
+        doc = json.loads(path.read_text())
+        self.assertEqual(doc["sessionImages"], ["/images/a.png"])
+        self.assertEqual(doc["imagePrompts"]["/images/a.png"], "a cat")
+        self.assertEqual(doc["recordingName"], "run1")
+
+    def test_append_builds_user_and_bot_messages(self):
+        persistence.append_session_image("run1", "/images/a.png", "a cat")
+        doc = json.loads((Path(self.tmp) / "sessions" / "run1.json").read_text())
+        self.assertEqual(doc["messages"], [
+            {"role": "user", "prompt": "a cat"},
+            {"role": "bot", "images": ["/images/a.png"], "text": ""},
+        ])
+
+    def test_append_accumulates(self):
+        persistence.append_session_image("run1", "/images/a.png", "a cat")
+        persistence.append_session_image("run1", "/images/b.png", "a dog")
+        doc = json.loads((Path(self.tmp) / "sessions" / "run1.json").read_text())
+        self.assertEqual(doc["sessionImages"], ["/images/a.png", "/images/b.png"])
+        self.assertEqual(len(doc["messages"]), 4)
+
+    def test_append_dedups_url(self):
+        persistence.append_session_image("run1", "/images/a.png", "a cat")
+        persistence.append_session_image("run1", "/images/a.png", "a cat again")
+        doc = json.loads((Path(self.tmp) / "sessions" / "run1.json").read_text())
+        self.assertEqual(doc["sessionImages"], ["/images/a.png"])
+
+    def test_append_stores_video_meta(self):
+        persistence.append_session_image(
+            "run1", "/images/a.png", "a cat", video_meta={"action": "runs", "audio": "meow"}
+        )
+        doc = json.loads((Path(self.tmp) / "sessions" / "run1.json").read_text())
+        self.assertEqual(doc["imageVideoMeta"]["/images/a.png"], {"action": "runs", "audio": "meow"})
+
+    def test_append_seeds_settings_once(self):
+        persistence.append_session_image("run1", "/images/a.png", "a", settings={"workflow": "wf1"})
+        persistence.append_session_image("run1", "/images/b.png", "b", settings={"workflow": "wf2"})
+        doc = json.loads((Path(self.tmp) / "sessions" / "run1.json").read_text())
+        self.assertEqual(doc["settings"], {"workflow": "wf1"})
+
+    def test_append_output_loads_cleanly(self):
+        # A file the server appended to must be readable by load_session.
+        real = Path(self.tmp) / "real.png"
+        real.write_bytes(b"\x89PNG")
+        persistence.append_session_image("run1", "/images/real.png", "a cat")
+        data = persistence.load_session("run1")
+        self.assertEqual(data["sessionImages"], ["/images/real.png"])
+
+    # --- rename_session ---
+
+    def test_rename_moves_file_and_rewrites_name(self):
+        persistence.append_session_image("temp-x", "/images/a.png", "a cat")
+        persistence.rename_session("temp-x", "sunsets")
+        d = Path(self.tmp) / "sessions"
+        self.assertFalse((d / "temp-x.json").exists())
+        self.assertTrue((d / "sunsets.json").exists())
+        doc = json.loads((d / "sunsets.json").read_text())
+        self.assertEqual(doc["recordingName"], "sunsets")
+        self.assertEqual(doc["sessionImages"], ["/images/a.png"])
+
+    def test_rename_missing_src_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            persistence.rename_session("nope", "dst")
+
+    def test_rename_existing_dst_raises(self):
+        persistence.save_session("a", {})
+        persistence.save_session("b", {})
+        with self.assertRaises(FileExistsError):
+            persistence.rename_session("a", "b")
+
     # --- delete_session ---
 
     def test_delete_session(self):
