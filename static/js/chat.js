@@ -1916,8 +1916,12 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
           // Run the queued face-detail passes one after another, then resolve —
           // keeps the sendMessage iterations loop sequential and settles this
           // generation's promise only once the detailed images are in place.
+          // Re-stamp the status line with the aggregate wall-clock time so the
+          // bubble reflects both the generation and the face-detail pass.
           (async () => {
             for (const p of autoPasses) await runAutoFaceDetail(p.prompt, p.url, p.wrap);
+            const total = ((Date.now() - startTime) / 1000).toFixed(1);
+            statusLine.textContent = `Done — ${msg.images.length} result(s) in ${total}s (incl. face-detail)${label}`;
             resolve(true);
           })();
         } else {
