@@ -170,6 +170,7 @@ class RunSequenceRunTests(unittest.TestCase):
             "images": [],
             "assets": [],
             "cancel": threading.Event(),
+            "retry": threading.Event(),
             "server": "http://s",
             "prompt_id": None,
             "session": None,
@@ -251,21 +252,36 @@ class RunSequenceRunTests(unittest.TestCase):
         shot = [m for m in _drain(gs.jobs[job_id]["channel"]) if m["type"] == "shot"][0]
         self.assertEqual(shot["videoMeta"], {"action": "leaps", "audio": "meow"})
 
-    def test_per_shot_error_continues(self):
+    def test_per_shot_failure_pauses_then_retry_succeeds(self):
+        # A failed shot no longer auto-advances: it pauses awaiting a retry (or a
+        # whole-run cancel). Here the first attempt at "bad" fails and trips
+        # retry_event (as /api/retry-shot would), so the shot is re-run and
+        # succeeds. The retried failure is cleared from the terminal record.
         job_id = self._make_job()
+        attempts = {"bad": 0}
 
         def core(jid, channel, cancel, prompt, loras, *a, **k):
             if prompt == "bad":
-                raise ValueError("boom")
+                attempts["bad"] += 1
+                if attempts["bad"] == 1:
+                    gs.jobs[job_id]["retry"].set()  # user hits retry while paused
+                    raise ValueError("boom")
+                return ["/images/recovered.png"]
             return ["/images/ok.png"]
 
         with patch.object(gs, "generate_prompt_sequence", return_value=["bad", "good"]), \
              patch.object(gs, "_run_generation_core", side_effect=core), \
-             patch.object(gs, "append_session_image"):
+             patch.object(gs, "append_session_image"), \
+             patch.object(gs, "append_failure_to_recording"):
             gs.run_sequence_run(job_id, "x", 2, [], video=False, gen_settings=self._settings())
-        images = [m for m in _drain(gs.jobs[job_id]["channel"]) if m["type"] == "image"]
-        self.assertEqual(len(images), 1)
+
+        msgs = _drain(gs.jobs[job_id]["channel"])
+        images = [m for m in msgs if m["type"] == "image"]
+        self.assertEqual(len(images), 2)  # recovered "bad" + "good"
+        self.assertEqual(attempts["bad"], 2)  # failed once, retried once
+        self.assertTrue(any(m["type"] == "shot_failed" for m in msgs))
         self.assertEqual(gs.jobs[job_id]["status"], "done")
+        self.assertEqual(gs.jobs[job_id]["failed"], [])  # retried failure cleared
 
     def test_cancel_between_images_marks_cancelled(self):
         job_id = self._make_job()
@@ -356,38 +372,39 @@ class RunSequenceRunTests(unittest.TestCase):
         self.assertEqual(seen_prompts, ["a cat"])
 
     def test_per_shot_failure_persisted_and_emitted(self):
-        # A failed shot is (1) recorded in the terminal "failed" list, (2) sent as
-        # a distinct "failed" SSE event (not just a transient progress line), and
-        # (3) persisted to the session via append_failure_to_recording so it's
-        # visible after a later /session-load.
+        # A failed shot is (1) sent as a distinct "shot_failed" SSE event (not
+        # just a transient progress line), (2) persisted to the session via
+        # append_failure_to_recording so it's visible after a later
+        # /session-load, and (3) retained in the terminal "failed" list when the
+        # run is cancelled while paused on it (a retry would instead clear it).
         job_id = self._make_job()
-        notes = []
+        persisted = []
 
         def core(jid, channel, cancel, prompt, loras, *a, **k):
             if prompt == "bad":
+                gs.jobs[job_id]["cancel"].set()  # user cancels the run while paused
                 raise ValueError("boom")
             return ["/images/ok.png"]
 
         with patch.object(gs, "generate_prompt_sequence", return_value=["bad", "good"]), \
              patch.object(gs, "_run_generation_core", side_effect=core), \
              patch.object(gs, "append_session_image"), \
-             patch.object(gs, "append_session_note", side_effect=lambda *a, **k: notes.append(a)):
+             patch.object(gs, "append_failure_to_recording",
+                          side_effect=lambda *a, **k: persisted.append(a)):
             gs.run_sequence_run(job_id, "x", 2, [], video=False, gen_settings=self._settings())
 
         msgs = _drain(gs.jobs[job_id]["channel"])
-        failed_events = [m for m in msgs if m["type"] == "failed"]
+        failed_events = [m for m in msgs if m["type"] == "shot_failed"]
         self.assertEqual(len(failed_events), 1)
         self.assertEqual(failed_events[0]["prompt"], "bad")
         self.assertEqual(failed_events[0]["error"], "boom")
 
-        done = [m for m in msgs if m["type"] == "done"][0]
-        self.assertEqual(len(done["failed"]), 1)
-        self.assertEqual(done["failed"][0]["prompt"], "bad")
+        self.assertEqual(gs.jobs[job_id]["status"], "cancelled")
         self.assertEqual(gs.jobs[job_id]["failed"][0]["prompt"], "bad")
 
-        self.assertEqual(len(notes), 1)
-        self.assertEqual(notes[0][0], "run-sess")  # recording name
-        self.assertEqual(notes[0][1], "bad")       # prompt
+        # append_failure_to_recording(job_id, prompt, error_text)
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(persisted[0][1], "bad")
 
 
 class AppendToRecordingTests(unittest.TestCase):
