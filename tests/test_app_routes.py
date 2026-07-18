@@ -691,51 +691,6 @@ class TestImage2VideoSettings(_AppFixture):
         self.assertEqual(resp.status_code, 404)
 
 
-class TestSequenceRoutes(_AppFixture):
-    """/api/sequence and /api/video-sequence start a cancellable Grok job and
-    return a job_id; the slow Grok call runs in the job (see test_generation_service)."""
-
-    def setUp(self):
-        super().setUp()
-        self._job_patcher = patch.object(
-            app_module, "start_sequence_job", return_value="seq-job-id"
-        )
-        self._job = self._job_patcher.start()
-
-    def tearDown(self):
-        self._job_patcher.stop()
-        super().tearDown()
-
-    def test_sequence_requires_master_prompt(self):
-        resp = self.client.post("/api/sequence", json={"prompt": "  "})
-        self.assertEqual(resp.status_code, 400)
-        self._job.assert_not_called()
-
-    def test_video_sequence_requires_master_prompt(self):
-        resp = self.client.post("/api/video-sequence", json={"prompt": "  "})
-        self.assertEqual(resp.status_code, 400)
-        self._job.assert_not_called()
-
-    def test_sequence_returns_job_id(self):
-        resp = self.client.post(
-            "/api/sequence",
-            json={"prompt": "pets", "count": 2, "replacements": [["cat", "dog"]]},
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.get_json()["job_id"], "seq-job-id")
-        self._job.assert_called_once_with("pets", 2, [("cat", "dog")], video=False)
-
-    def test_video_sequence_returns_job_id(self):
-        resp = self.client.post("/api/video-sequence", json={"prompt": "pets", "count": 3})
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.get_json()["job_id"], "seq-job-id")
-        self._job.assert_called_once_with("pets", 3, [], video=True)
-
-    def test_count_is_clamped(self):
-        self.client.post("/api/sequence", json={"prompt": "x", "count": 999})
-        self.assertEqual(self._job.call_args[0][1], 64)
-
-
 class TestSequenceRunRoute(_AppFixture):
     """/api/sequence-run drives the whole run server-side; the route validates
     input and starts the job (mocked here — the loop is in test_generation_service)."""

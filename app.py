@@ -42,7 +42,7 @@ from config import (
 from generation_service import (
     cancel_auto_purge, get_last_sent_workflow, jobs, jobs_lock,
     rename_and_retarget_session, run_generation, start_background_job,
-    start_generation_job, start_sequence_job, start_sequence_run_job,
+    start_generation_job, start_sequence_run_job,
 )
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
@@ -1010,46 +1010,6 @@ def _parse_sequence_request(data):
     return master, count, replacements
 
 
-@app.route("/api/sequence", methods=["POST"])
-@login_required
-def api_sequence():
-    """Turn a single master prompt into a sequence of prompts via Grok.
-
-    Runs the (slow) Grok call as a tracked job and returns a job_id immediately;
-    the client watches /api/progress/<job_id> for the result and can cancel it
-    via /api/cancel/<job_id>, exactly like a ComfyUI generation. The returned
-    prompts are then fed back through /api/generate one after another (the same
-    flow as /multi-prompt).
-    """
-    data = request.get_json(force=True)
-    try:
-        master, count, replacements = _parse_sequence_request(data)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-
-    job_id = start_sequence_job(master, count, replacements, video=False)
-    return jsonify({"job_id": job_id})
-
-
-@app.route("/api/video-sequence", methods=["POST"])
-@login_required
-def api_video_sequence():
-    """Like /api/sequence, but Grok also returns an action and audio prompt per shot.
-
-    The client generates each still image from the `prompt` field only; the
-    `action`/`audio` are remembered against the resulting image and folded into
-    the video prompt later if the image is turned into a video.
-    """
-    data = request.get_json(force=True)
-    try:
-        master, count, replacements = _parse_sequence_request(data)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-
-    job_id = start_sequence_job(master, count, replacements, video=True)
-    return jsonify({"job_id": job_id})
-
-
 def _parse_gen_settings(data):
     """Extract per-image generation settings for a sequence run from the request.
 
@@ -1102,8 +1062,7 @@ def _parse_gen_settings(data):
 def api_sequence_run():
     """Drive a whole /sequence (or /video-sequence) run server-side.
 
-    Unlike /api/sequence (Grok expansion only, browser generates each image), this
-    expands the master prompt AND generates every image on the server, appending
+    Expands the master prompt AND generates every image on the server, appending
     each finished image to the <recordingName> chat file as it lands. The run
     therefore survives the browser closing and is recoverable via /chats.
     Returns a job_id the client watches over /api/progress/<job_id>; each image

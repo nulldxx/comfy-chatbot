@@ -551,123 +551,17 @@ def case_preserving_replace(text, src, dst):
     return re.sub(re.escape(src), repl, text, flags=re.IGNORECASE)
 
 
-def run_sequence(job_id, master, count, replacements, video):
-    with jobs_lock:
-        channel = jobs[job_id]["channel"]
-        cancel_event = jobs[job_id]["cancel"]
-        session = jobs[job_id]["session"]
-        jobs[job_id]["status"] = "running"
-
-    def send(msg_type, **kwargs):
-        channel.send(json.dumps({"type": msg_type, **kwargs}))
-
-    try:
-        if cancel_event.is_set():
-            raise JobCancelled()
-
-        send("progress", message=f"Asking Grok for {count} {'shot' if video else 'prompt'}(s)…")
-
-        if video:
-            shots = generate_video_prompt_sequence(
-                master, count, cancel_event=cancel_event, session=session
-            )
-            out = []
-            for shot in shots:
-                item = {
-                    "prompt": shot.get("prompt", ""),
-                    "action": shot.get("action", ""),
-                    "audio": shot.get("audio", ""),
-                }
-                for src, dst in replacements:
-                    for key in ("prompt", "action", "audio"):
-                        item[key] = case_preserving_replace(item[key], src, dst)
-                out.append(item)
-        else:
-            prompts = generate_prompt_sequence(
-                master, count, cancel_event=cancel_event, session=session
-            )
-            out = []
-            for p in prompts:
-                for src, dst in replacements:
-                    p = case_preserving_replace(p, src, dst)
-                out.append(p)
-
-        with jobs_lock:
-            _mark_terminal_locked(job_id, "done")
-        send("done", prompts=out, video=video)
-
-    except JobCancelled:
-        with jobs_lock:
-            _mark_terminal_locked(job_id, "cancelled")
-        send("cancelled", message="Cancelled")
-    except GrokError as e:
-        # A cancel closes the session, which surfaces as a GrokError from the
-        # aborted request — report it as a cancellation, not an error.
-        if cancel_event.is_set():
-            with jobs_lock:
-                _mark_terminal_locked(job_id, "cancelled")
-            send("cancelled", message="Cancelled")
-        else:
-            with jobs_lock:
-                _mark_terminal_locked(job_id, "error", error=str(e))
-            send("error", message=str(e))
-    except Exception as e:
-        with jobs_lock:
-            _mark_terminal_locked(job_id, "error", error=str(e))
-        send("error", message=str(e))
-    finally:
-        channel.close()
-        try:
-            session.close()
-        except Exception:
-            pass
-
-
-def start_sequence_job(master, count, replacements, video):
-    """Create a tracked Grok prompt-sequence job; return its job_id."""
-    job_id = str(uuid.uuid4())
-    summary = _build_summary(None, master, "video-sequence" if video else "sequence")
-    with jobs_lock:
-        jobs[job_id] = {
-            "status": "pending",
-            "channel": _JobChannel(),
-            "images": [],
-            "assets": [],
-            "cancel": threading.Event(),
-            "server": None,
-            "prompt_id": None,
-            "session": requests.Session(),
-            "kind": "sequence",
-            "workflow_name": None,
-            "prompt": master,
-            "summary": summary,
-            "started_at": time.time(),
-            "finished_at": None,
-            "error": None,
-        }
-        _evict_old_jobs_locked()
-
-    t = threading.Thread(
-        target=run_sequence,
-        args=(job_id, master, count, replacements, video),
-        daemon=True,
-    )
-    t.start()
-    return job_id
-
-
 # ---------------------------------------------------------------------------
 # Server-side sequence runs
 # ---------------------------------------------------------------------------
 #
-# Unlike start_sequence_job (which only expands the master prompt via Grok and
-# hands the prompt list back to the browser to generate one-by-one), a sequence
-# *run* drives the whole loop server-side in one job: expand, then generate each
-# image sequentially on this thread via _run_generation_core, appending every
-# finished image to the recording chat file. Because the loop and the
-# persistence live on the server, a run keeps going — and stays recoverable via
-# /chats — after the browser disconnects. A connected browser watches the
-# same job over SSE and sees each image arrive through an "image" event.
+# A sequence *run* drives the whole loop server-side in one job: expand the
+# master prompt via Grok, then generate each image sequentially on this thread
+# via _run_generation_core, appending every finished image to the recording
+# chat file. Because the loop and the persistence live on the server, a run
+# keeps going — and stays recoverable via /chats — after the browser
+# disconnects. A connected browser watches the same job over SSE and sees each
+# image arrive through an "image" event.
 
 def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
     with jobs_lock:

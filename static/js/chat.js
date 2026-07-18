@@ -1326,72 +1326,10 @@ function sendMessage() {
 }
 
 // ---------------------------------------------------------------------------
-// runSequenceJob — runs a Grok prompt-expansion job over SSE
-// ---------------------------------------------------------------------------
-
-function runSequenceJob(endpoint, master, count, statusBubble) {
-  return new Promise(resolve => {
-    const statusText = statusBubble.querySelector('.status-text');
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'cancel-btn';
-    cancelBtn.title = 'Cancel this job';
-    cancelBtn.textContent = '✕';
-    cancelBtn.disabled = true;
-    statusBubble.appendChild(cancelBtn);
-
-    const fail = message => {
-      cancelBtn.remove();
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(message)}</span>`;
-      resolve(null);
-    };
-
-    fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: master, count, replacements: state.sequenceReplacements }),
-    })
-    .then(parseJsonResponse)
-    .then(data => {
-      if (data.error) throw new Error(data.error);
-
-      cancelBtn.disabled = false;
-      cancelBtn.addEventListener('click', () => {
-        cancelBtn.disabled = true;
-        if (statusText) statusText.textContent = 'Cancelling…';
-        fetch('/api/cancel/' + data.job_id, { method: 'POST' }).catch(() => {});
-      });
-
-      const es = new EventSource(`/api/progress/${data.job_id}`);
-      es.onmessage = e => {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'progress') {
-          if (statusText) statusText.textContent = msg.message;
-          scrollBottom();
-        } else if (msg.type === 'done') {
-          es.close();
-          cancelBtn.remove();
-          resolve(msg);
-        } else if (msg.type === 'cancelled') {
-          es.close();
-          fail('Cancelled');
-        } else if (msg.type === 'error') {
-          es.close();
-          fail(msg.message);
-        }
-      };
-      es.onerror = () => { es.close(); fail('Connection lost'); };
-    })
-    .catch(err => fail(err.message));
-  });
-}
-
-// ---------------------------------------------------------------------------
 // runSequenceRunJob — server-driven sequence run over SSE
 // ---------------------------------------------------------------------------
-// Unlike runSequenceJob (Grok expansion only, then the browser loops generating
-// each image), this hands the whole run to the server via /api/sequence-run: the
-// server expands the master prompt AND generates every image, appending each to
+// This hands the whole run to the server via /api/sequence-run: the server
+// expands the master prompt AND generates every image, appending each to
 // the recording session file. We just watch /api/progress/<job_id> and render
 // each image as its "image" event arrives — so the run keeps going (and stays
 // recoverable via /session-load) even if the browser closes mid-run.
@@ -2011,7 +1949,6 @@ const { handleSlashCommand, runDefaultMacroOnImage } = makeCommandHandler({
   restoreSession,
   updateHeaderStatus,
   compositeVideos,
-  runSequenceJob,
   runSequenceRunJob,
   detachActiveSequenceRun,
   newTempSessionName,
