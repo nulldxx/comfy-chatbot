@@ -12,7 +12,14 @@
       "Bash(curl:*)",
       "Bash(docker stop:*)",
       "Bash(docker logs:*)",
-      "Bash(docker-compose build:*)"
+      "Bash(docker-compose build:*)",
+      "Bash(git -C /home/ben/Code/comfy-chatbot check-ignore -v tags)",
+      "Bash(git -C /home/ben/Code/comfy-chatbot ls-files tags)",
+      "Bash(node *)",
+      "Bash(docker-compose up *)",
+      "Bash(git add *)",
+      "Bash(git reset *)",
+      "Bash(cd *)"
     ],
     "deny": [],
     "ask": []
