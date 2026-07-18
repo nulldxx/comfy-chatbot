@@ -806,71 +806,71 @@ class TestSequenceRunRoute(_AppFixture):
 # Session endpoints
 # ---------------------------------------------------------------------------
 
-class TestSessionEndpoints(_AppFixture):
-    def test_list_sessions_empty(self):
-        resp = self.client.get("/api/sessions")
+class TestChatEndpoints(_AppFixture):
+    def test_list_chats_empty(self):
+        resp = self.client.get("/api/chats")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json(), [])
 
-    def test_save_session(self):
+    def test_chat_save(self):
         resp = self.client.post(
-            "/api/sessions", json={"name": "My Session", "messages": []}
+            "/api/chats", json={"name": "My Chat", "messages": []}
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.get_json()
         self.assertTrue(data["ok"])
-        self.assertEqual(data["name"], "my-session")
+        self.assertEqual(data["name"], "my-chat")
 
-    def test_save_session_bad_name_returns_400(self):
-        resp = self.client.post("/api/sessions", json={"name": "!!! ###"})
+    def test_chat_save_bad_name_returns_400(self):
+        resp = self.client.post("/api/chats", json={"name": "!!! ###"})
         self.assertEqual(resp.status_code, 400)
 
-    def test_load_session(self):
-        self.client.post("/api/sessions", json={"name": "mysession", "messages": []})
-        resp = self.client.get("/api/sessions/mysession")
+    def test_load_chat(self):
+        self.client.post("/api/chats", json={"name": "mychat", "messages": []})
+        resp = self.client.get("/api/chats/mychat")
         self.assertEqual(resp.status_code, 200)
 
-    def test_load_session_not_found(self):
-        resp = self.client.get("/api/sessions/ghost")
+    def test_load_chat_not_found(self):
+        resp = self.client.get("/api/chats/ghost")
         self.assertEqual(resp.status_code, 404)
 
-    def test_load_session_invalid_name(self):
-        # "my%20session" decodes to "my session"; secure_filename changes it → 400
-        resp = self.client.get("/api/sessions/my%20session")
+    def test_load_chat_invalid_name(self):
+        # "my%20chat" decodes to "my chat"; secure_filename changes it → 400
+        resp = self.client.get("/api/chats/my%20chat")
         self.assertEqual(resp.status_code, 400)
 
-    def test_delete_session(self):
-        self.client.post("/api/sessions", json={"name": "todel", "messages": []})
-        resp = self.client.delete("/api/sessions/todel")
+    def test_delete_chat(self):
+        self.client.post("/api/chats", json={"name": "todel", "messages": []})
+        resp = self.client.delete("/api/chats/todel")
         self.assertEqual(resp.status_code, 200)
 
-    def test_delete_session_not_found(self):
-        resp = self.client.delete("/api/sessions/nope")
+    def test_delete_chat_not_found(self):
+        resp = self.client.delete("/api/chats/nope")
         self.assertEqual(resp.status_code, 404)
 
-    def test_rename_session(self):
-        self.client.post("/api/sessions", json={"name": "temp-1", "messages": []})
-        resp = self.client.post("/api/sessions/rename", json={"from": "temp-1", "to": "Sunsets"})
+    def test_chat_rename(self):
+        self.client.post("/api/chats", json={"name": "temp-1", "messages": []})
+        resp = self.client.post("/api/chats/rename", json={"from": "temp-1", "to": "Sunsets"})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["name"], "sunsets")
         # old gone, new present
-        self.assertEqual(self.client.get("/api/sessions/temp-1").status_code, 404)
-        self.assertEqual(self.client.get("/api/sessions/sunsets").status_code, 200)
+        self.assertEqual(self.client.get("/api/chats/temp-1").status_code, 404)
+        self.assertEqual(self.client.get("/api/chats/sunsets").status_code, 200)
 
-    def test_rename_missing_names_returns_400(self):
-        resp = self.client.post("/api/sessions/rename", json={"from": "temp-1"})
+    def test_chat_rename_missing_names_returns_400(self):
+        resp = self.client.post("/api/chats/rename", json={"from": "temp-1"})
         self.assertEqual(resp.status_code, 400)
 
-    def test_rename_to_existing_returns_409(self):
-        self.client.post("/api/sessions", json={"name": "a", "messages": []})
-        self.client.post("/api/sessions", json={"name": "b", "messages": []})
-        resp = self.client.post("/api/sessions/rename", json={"from": "a", "to": "b"})
+    def test_chat_rename_to_existing_returns_409(self):
+        self.client.post("/api/chats", json={"name": "a", "messages": []})
+        self.client.post("/api/chats", json={"name": "b", "messages": []})
+        resp = self.client.post("/api/chats/rename", json={"from": "a", "to": "b"})
         self.assertEqual(resp.status_code, 409)
 
-    def test_rename_missing_source_ok_when_not_yet_written(self):
-        # A temp session with no images/save yet has no file; rename still succeeds
+    def test_chat_rename_missing_source_ok_when_not_yet_written(self):
+        # A temp chat with no images/save yet has no file; rename still succeeds
         # (live jobs are retargeted regardless).
-        resp = self.client.post("/api/sessions/rename", json={"from": "temp-x", "to": "named"})
+        resp = self.client.post("/api/chats/rename", json={"from": "temp-x", "to": "named"})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["name"], "named")
 

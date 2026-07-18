@@ -35,13 +35,13 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
   }).catch(() => { bubble.innerHTML = `<span style="color:#f87171">Failed to load ${failLabel}.</span>`; });
 }
 
-function renderSessionPicker({ headerHtml, onSelect }) {
-  const bubble = addMessage('bot', '<div class="status-text">Loading saved sessions…</div>').parentElement.querySelector('.bubble');
-  fetch('/api/sessions')
+function renderChatPicker({ headerHtml, onSelect }) {
+  const bubble = addMessage('bot', '<div class="status-text">Loading saved chats…</div>').parentElement.querySelector('.bubble');
+  fetch('/api/chats')
   .then(parseJsonResponse)
   .then(sessions => {
     if (!sessions.length) {
-      bubble.innerHTML = 'No saved sessions yet — recording is always on, so <code>/session-record &lt;name&gt;</code> names the one in progress.';
+      bubble.innerHTML = 'No saved chats yet — recording is always on, so <code>/chat-rename &lt;name&gt;</code> names the one in progress.';
       scrollBottom();
       return;
     }
@@ -64,20 +64,20 @@ function renderSessionPicker({ headerHtml, onSelect }) {
 
       const delBtn = document.createElement('button');
       delBtn.className = 'sel-del-btn';
-      delBtn.title = 'Delete session';
+      delBtn.title = 'Delete chat';
       delBtn.innerHTML = '🗑';
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const name = btn.dataset.name;
         delBtn.disabled = true;
         delBtn.style.opacity = '0.4';
-        fetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' })
+        fetch('/api/chats/' + encodeURIComponent(name), { method: 'DELETE' })
         .then(parseJsonResponse)
         .then(data => {
           if (data.error) throw new Error(data.error);
           row.remove();
           if (!selList.querySelector('.sel-row')) {
-            bubble.innerHTML = 'No saved sessions yet — recording is always on, so <code>/session-record &lt;name&gt;</code> names the one in progress.';
+            bubble.innerHTML = 'No saved chats yet — recording is always on, so <code>/chat-rename &lt;name&gt;</code> names the one in progress.';
           }
           scrollBottom();
         })
@@ -100,12 +100,12 @@ function renderSessionPicker({ headerHtml, onSelect }) {
     scrollBottom();
   })
   .catch(() => {
-    bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load sessions.</span>';
+    bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load chats.</span>';
     scrollBottom();
   });
 }
 
-function showSessionSummary() {
+function showChatSummary() {
   const rows = [];
 
   const srvName  = state.currentServer ? state.currentServer.name    : DEFAULT_SERVER;
@@ -1340,10 +1340,10 @@ export function makeCommandHandler(deps) {
         { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
         { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
         { sig: '/server', desc: 'choose a ComfyUI server' },
-        { sig: '/session-load [name]', desc: 'restore a previously saved session; omit name to pick from a menu' },
-        { sig: '/session-new', desc: 'start a completely new session, resetting all settings to defaults' },
-        { sig: '/session-record <name>', desc: 'recording is always on — this renames the current (temporary) session to a memorable name so /session-load can restore it later; no name shows the current name' },
-        { sig: '/session-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
+        { sig: '/chats [name]', desc: 'restore a previously saved chat; omit name to pick from a menu' },
+        { sig: '/chat-new', desc: 'start a completely new chat, resetting all settings to defaults' },
+        { sig: '/chat-rename <name>', desc: 'recording is always on — this renames the current (temporary) chat to a memorable name so /chats can restore it later; no name shows the current name' },
+        { sig: '/chat-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
         { sig: '/settings-backup', desc: 'download a ZIP of all server-side settings for backup — macros, prompt aliases, saved sessions and the server catalogue (<code>servers.json</code>)', notes: 'server-side files only; per-tab generation settings live in a saved session' },
         { sig: '/settings-save', desc: 'push a snapshot of all generation settings (workflows, resolution, denoise, video settings, override prompts, replacements) onto an in-memory stack; pair with <code>/settings-restore</code> to bracket a macro so it leaves settings unchanged' },
         { sig: '/settings-restore', desc: 'pop and reapply the most recent <code>/settings-save</code> snapshot; warns if the stack is empty; stack-based so nested macros work correctly without cross-contaminating each other' },
@@ -1976,7 +1976,7 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/session-new') {
+    if (cmd === '/chat-new') {
       state.history.length = 0;
       state.historyIdx = -1;
       state.savedDraft = '';
@@ -2008,37 +2008,37 @@ export function makeCommandHandler(deps) {
       state.image2imageOverridePrompt = null;
       state.image2videoReplacements = [];
       state.image2videoOverridePrompt = null;
-      // Recording is always on: start the new session recording into a fresh
+      // Recording is always on: start the new chat recording into a fresh
       // temporary name rather than continuing to append to the previous one.
       // Detach (without cancelling) any sequence run this tab was watching —
-      // the server-side job keeps running and appending to its own session,
-      // recoverable later via /session-load, but this tab stops rendering its
+      // the server-side job keeps running and appending to its own chat,
+      // recoverable later via /chats, but this tab stops rendering its
       // events into the fresh chat we're about to build.
       deps.detachActiveSequenceRun();
       state.recordingName = deps.newTempSessionName();
       messagesEl.innerHTML = '';
       deps.updateHeaderStatus();
-      addMessage('bot', 'New session started. Describe the image you\'d like to generate.');
+      addMessage('bot', 'New chat started. Describe the image you\'d like to generate.');
       return;
     }
 
-    if (cmd === '/session-record') {
+    if (cmd === '/chat-rename') {
       // Recording is always on. This command no longer toggles it — it renames
-      // the active (temporary) session to a memorable name, moving the file
+      // the active (temporary) chat to a memorable name, moving the file
       // server-side so any images already recorded (and any in-flight server run)
       // follow into the new name.
-      const rawName = raw.slice('/session-record'.length).trim();
+      const rawName = raw.slice('/chat-rename'.length).trim();
       addMessage('user', escapeHtml(raw), raw);
 
       if (!rawName) {
-        addMessage('bot', `Currently recording to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '—')}</strong>. Run <code>/session-record &lt;name&gt;</code> to rename it, or <code>/session-load</code> to restore a saved one.`);
+        addMessage('bot', `Currently recording to chat <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '—')}</strong>. Run <code>/chat-rename &lt;name&gt;</code> to rename it, or <code>/chats</code> to restore a saved one.`);
         scrollBottom();
         return;
       }
 
       const from = state.recordingName;
-      const bubble = addMessage('bot', `<div class="status-text">Renaming session to <strong>${escapeHtml(rawName)}</strong>…</div>`).parentElement.querySelector('.bubble');
-      fetch('/api/sessions/rename', {
+      const bubble = addMessage('bot', `<div class="status-text">Renaming chat to <strong>${escapeHtml(rawName)}</strong>…</div>`).parentElement.querySelector('.bubble');
+      fetch('/api/chats/rename', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ from, to: rawName }),
@@ -2048,7 +2048,7 @@ export function makeCommandHandler(deps) {
         if (data.error) throw new Error(data.error);
         if (state.liveRunSession === from) state.liveRunSession = data.name;
         state.recordingName = data.name;
-        bubble.innerHTML = `Recording to session <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> — auto-saved after each image. Restore it later with <code>/session-load ${escapeHtml(data.name)}</code>.`;
+        bubble.innerHTML = `Recording to chat <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> — auto-saved after each image. Restore it later with <code>/chats ${escapeHtml(data.name)}</code>.`;
         scrollBottom();
       })
       .catch(err => {
@@ -2058,39 +2058,39 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/session-load') {
-      const sessionArg = raw.slice('/session-load'.length).trim();
-      const loadSession = (name, bubble) => {
+    if (cmd === '/chats') {
+      const chatArg = raw.slice('/chats'.length).trim();
+      const loadChat = (name, bubble) => {
         bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
-        fetch('/api/sessions/' + encodeURIComponent(name))
+        fetch('/api/chats/' + encodeURIComponent(name))
         .then(parseJsonResponse)
         .then(data => {
           if (data.error) throw new Error(data.error);
           deps.restoreSession(data);
-          bubble.innerHTML = `Session <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
+          bubble.innerHTML = `Chat <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
           scrollBottom();
-          showSessionSummary();
+          showChatSummary();
         })
         .catch(err => {
           bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
       };
-      if (sessionArg) {
+      if (chatArg) {
         addMessage('user', escapeHtml(raw), raw);
-        const bubble = addMessage('bot', `<div class="status-text">Loading <strong>${escapeHtml(sessionArg)}</strong>…</div>`);
-        loadSession(sessionArg, bubble);
+        const bubble = addMessage('bot', `<div class="status-text">Loading <strong>${escapeHtml(chatArg)}</strong>…</div>`);
+        loadChat(chatArg, bubble);
       } else {
-        renderSessionPicker({
-          headerHtml: '<strong>Select a session to restore:</strong>',
-          onSelect: loadSession,
+        renderChatPicker({
+          headerHtml: '<strong>Select a chat to restore:</strong>',
+          onSelect: loadChat,
         });
       }
       return;
     }
 
-    if (cmd === '/session-summary') {
-      showSessionSummary();
+    if (cmd === '/chat-summary') {
+      showChatSummary();
       return;
     }
 

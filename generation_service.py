@@ -26,7 +26,7 @@ from workflow import (
 #   status:          "pending" | "running" | "done" | "error" | "cancelled"
 #   kind:            "image" | "video" | "sequence" | "sequence-run" | "task"
 #   workflow_name:   filename of the workflow template (None for sequence jobs)
-#   recording_name:  session file a sequence-run appends images to (that kind only)
+#   recording_name:  chat file a sequence-run appends images to (that kind only)
 #   prompt:          user prompt (empty string for upscale/sequence)
 #   summary:         short human label for /jobs cards
 #   server:          ComfyUI server address (None for sequence jobs)
@@ -663,9 +663,9 @@ def start_sequence_job(master, count, replacements, video):
 # hands the prompt list back to the browser to generate one-by-one), a sequence
 # *run* drives the whole loop server-side in one job: expand, then generate each
 # image sequentially on this thread via _run_generation_core, appending every
-# finished image to the recording session file. Because the loop and the
+# finished image to the recording chat file. Because the loop and the
 # persistence live on the server, a run keeps going — and stays recoverable via
-# /session-load — after the browser disconnects. A connected browser watches the
+# /chats — after the browser disconnects. A connected browser watches the
 # same job over SSE and sees each image arrive through an "image" event.
 
 def run_sequence_run(job_id, master, count, replacements, video, gen_settings):

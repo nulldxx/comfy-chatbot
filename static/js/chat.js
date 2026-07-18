@@ -368,7 +368,7 @@ function importSettingsFile(file) {
             const needsReload = kind === 'backup' || kind === 'servers' || kind === 'session';
             applyBubble.innerHTML =
               `✓ Restored ${escapeHtml(parts.join(', ') || 'settings')}.`
-              + (needsReload ? '<br><span style="color:#94a3b8;font-size:0.85rem">Reload the page to pick up restored servers, and use <code>/session-load</code> for restored sessions.</span>' : '');
+              + (needsReload ? '<br><span style="color:#94a3b8;font-size:0.85rem">Reload the page to pick up restored servers, and use <code>/chats</code> for restored chats.</span>' : '');
             scrollBottom();
           })
           .catch(err => {

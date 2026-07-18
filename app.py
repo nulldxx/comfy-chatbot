@@ -1104,8 +1104,8 @@ def api_sequence_run():
 
     Unlike /api/sequence (Grok expansion only, browser generates each image), this
     expands the master prompt AND generates every image on the server, appending
-    each finished image to the <recordingName> session file as it lands. The run
-    therefore survives the browser closing and is recoverable via /session-load.
+    each finished image to the <recordingName> chat file as it lands. The run
+    therefore survives the browser closing and is recoverable via /chats.
     Returns a job_id the client watches over /api/progress/<job_id>; each image
     arrives as an SSE "image" event.
     """
@@ -1839,36 +1839,36 @@ def api_host_status():
 # Session persistence
 # ---------------------------------------------------------------------------
 
-@app.route("/api/sessions")
+@app.route("/api/chats")
 @login_required
-def api_sessions_list():
+def api_chats_list():
     return jsonify(list_sessions())
 
 
-@app.route("/api/sessions", methods=["POST"])
+@app.route("/api/chats", methods=["POST"])
 @login_required
-def api_session_save():
+def api_chat_save():
     body = request.get_json(force=True) or {}
     raw_name = (body.get("name") or "").strip()
     name = slugify(raw_name)
     if not name:
-        return jsonify({"error": "A valid session name is required"}), 400
+        return jsonify({"error": "A valid chat name is required"}), 400
     try:
         save_session(name, body)
     except OSError as e:
-        return jsonify({"error": f"Could not save session: {e}"}), 500
+        return jsonify({"error": f"Could not save chat: {e}"}), 500
     return jsonify({"ok": True, "name": name})
 
 
-@app.route("/api/sessions/rename", methods=["POST"])
+@app.route("/api/chats/rename", methods=["POST"])
 @login_required
-def api_session_rename():
-    """Rename a session file (used by /session-record to name the temp session).
+def api_chat_rename():
+    """Rename a chat file (used by /chat-rename to name the temp chat).
 
     Moves the file and retargets any live sequence run writing to the old name
     atomically (rename_and_retarget_session), so a run in progress seamlessly
     continues appending into the new file and a FAILED rename (destination
-    already exists) never leaves a job silently repointed at the wrong session.
+    already exists) never leaves a job silently repointed at the wrong chat.
     """
     body = request.get_json(force=True) or {}
     src = slugify(body.get("from") or "")
@@ -1880,41 +1880,41 @@ def api_session_rename():
     try:
         rename_and_retarget_session(src, dst)
     except FileNotFoundError:
-        # The temp session may not have been written to disk yet (no image or
+        # The temp chat may not have been written to disk yet (no image or
         # save has landed). Any live job was still retargeted, so treat as success.
         return jsonify({"ok": True, "name": dst})
     except FileExistsError:
-        return jsonify({"error": "A session with that name already exists"}), 409
+        return jsonify({"error": "A chat with that name already exists"}), 409
     except OSError as e:
-        return jsonify({"error": f"Could not rename session: {e}"}), 500
+        return jsonify({"error": f"Could not rename chat: {e}"}), 500
     return jsonify({"ok": True, "name": dst})
 
 
-@app.route("/api/sessions/<name>", methods=["GET"])
+@app.route("/api/chats/<name>", methods=["GET"])
 @login_required
-def api_session_load(name):
+def api_chat_load(name):
     safe = secure_filename(name)
     if not safe or safe != name:
-        return jsonify({"error": "Invalid session name"}), 400
+        return jsonify({"error": "Invalid chat name"}), 400
     try:
         data = load_session(safe)
     except FileNotFoundError:
-        return jsonify({"error": "Session not found"}), 404
+        return jsonify({"error": "Chat not found"}), 404
     except Exception as e:
-        return jsonify({"error": f"Could not read session: {e}"}), 500
+        return jsonify({"error": f"Could not read chat: {e}"}), 500
     return jsonify(data)
 
 
-@app.route("/api/sessions/<name>", methods=["DELETE"])
+@app.route("/api/chats/<name>", methods=["DELETE"])
 @login_required
-def api_session_delete(name):
+def api_chat_delete(name):
     safe = secure_filename(name)
     if not safe or safe != name:
-        return jsonify({"error": "Invalid session name"}), 400
+        return jsonify({"error": "Invalid chat name"}), 400
     try:
         delete_session(safe)
     except FileNotFoundError:
-        return jsonify({"error": "Session not found"}), 404
+        return jsonify({"error": "Chat not found"}), 404
     return jsonify({"ok": True})
 
 
