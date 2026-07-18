@@ -16,6 +16,7 @@ import {
 } from './autocomplete.js';
 import { openMaskEditor, buildComparisonSlider, openCropEditor } from './editors.js';
 import { makeCommandHandler } from './commands.js';
+import { initSidebar } from './sidebar.js';
 
 // ---------------------------------------------------------------------------
 // LoRA catalogue and alias catalogue — populated from server on load
@@ -94,7 +95,7 @@ function resumeRunningSequenceRunOnStartup() {
         && j.recording_name
       );
       if (!job) return;
-      return fetch('/api/sessions/' + encodeURIComponent(job.recording_name))
+      return fetch('/api/chats/' + encodeURIComponent(job.recording_name))
         .then(parseJsonResponse)
         .then(data => { if (data && !data.error) restoreSession(data); });
     })
@@ -1102,7 +1103,7 @@ function scheduleRecordSave() {
 function doRecordSave() {
   if (!state.recordingName) return;
   if (state.liveRunSession) return;
-  fetch('/api/sessions', {
+  fetch('/api/chats', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1138,7 +1139,9 @@ function doRecordSave() {
       promptHistory: state.history.slice(),
       messages: captureSessionMessages(),
     }),
-  }).catch(() => {});
+  })
+    .then(() => { document.dispatchEvent(new CustomEvent('chats-changed')); })
+    .catch(() => {});
 }
 
 function restoreSession(data) {
@@ -1945,4 +1948,13 @@ const { handleSlashCommand, runDefaultMacroOnImage } = makeCommandHandler({
   detachActiveSequenceRun,
   newTempSessionName,
   appendChatImage,
+});
+
+// Mount the expandable chat sidebar (collapsed by default). It reuses the
+// command handler and restoreSession, so it must init after both are defined.
+initSidebar({
+  handleSlashCommand,
+  restoreSession,
+  getRecordingName: () => state.recordingName,
+  setRecordingName: (n) => { state.recordingName = n; },
 });

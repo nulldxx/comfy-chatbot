@@ -8,6 +8,18 @@
 </head>
 <body>
 
+<aside id="sidebar" class="collapsed">
+  <div class="sidebar-top">
+    <button id="sidebar-toggle" title="Expand sidebar" aria-label="Toggle sidebar">☰</button>
+    <button id="sidebar-new" title="New chat" aria-label="New chat">✚</button>
+  </div>
+  <div class="sidebar-list-label">Chats</div>
+  <div id="sidebar-list" class="sel-list"></div>
+</aside>
+
+<div id="sidebar-backdrop"></div>
+
+<div id="app-main">
 <header>
   <div class="header-left">
     <h1>⚡ ComfyUI Chat</h1>
@@ -40,6 +52,7 @@
     <button id="send-btn">Generate</button>
   </div>
   <div class="hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line &nbsp;·&nbsp; Tap a message to re-edit &nbsp;·&nbsp; Type /lora to insert a LoRA</div>
+</div>
 </div>
 
 <div id="lightbox">

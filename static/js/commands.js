@@ -76,6 +76,7 @@ function renderChatPicker({ headerHtml, onSelect }) {
         .then(data => {
           if (data.error) throw new Error(data.error);
           row.remove();
+          document.dispatchEvent(new CustomEvent('chats-changed'));
           if (!selList.querySelector('.sel-row')) {
             bubble.innerHTML = 'No saved chats yet — recording is always on, so <code>/chat-rename &lt;name&gt;</code> names the one in progress.';
           }
@@ -2019,6 +2020,7 @@ export function makeCommandHandler(deps) {
       messagesEl.innerHTML = '';
       deps.updateHeaderStatus();
       addMessage('bot', 'New chat started. Describe the image you\'d like to generate.');
+      document.dispatchEvent(new CustomEvent('chats-changed'));
       return;
     }
 
@@ -2049,6 +2051,7 @@ export function makeCommandHandler(deps) {
         if (state.liveRunSession === from) state.liveRunSession = data.name;
         state.recordingName = data.name;
         bubble.innerHTML = `Recording to chat <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> — auto-saved after each image. Restore it later with <code>/chats ${escapeHtml(data.name)}</code>.`;
+        document.dispatchEvent(new CustomEvent('chats-changed'));
         scrollBottom();
       })
       .catch(err => {

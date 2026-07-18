@@ -6,8 +6,111 @@ body {
   color: #e0e0e0;
   height: 100vh;
   display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+/* Main chat column (header + messages + input) sits to the right of the sidebar. */
+#app-main {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  display: flex;
   flex-direction: column;
 }
+
+/* -------------------------------------------------------------------------
+   Sidebar (collapsed-by-default vertical chat rail)
+   ------------------------------------------------------------------------- */
+#sidebar {
+  background: #16213e;
+  border-right: 1px solid #0f3460;
+  flex-shrink: 0;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.18s ease;
+}
+#sidebar.collapsed { width: 52px; }
+
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  flex-shrink: 0;
+}
+#sidebar.collapsed .sidebar-top { flex-direction: column; }
+
+#sidebar-toggle, #sidebar-new {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #94a3b8;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+#sidebar-new { flex: 1; }
+#sidebar.collapsed #sidebar-new { flex: none; }
+#sidebar-toggle:hover, #sidebar-new:hover { border-color: #7c3aed; color: #a78bfa; }
+
+.sidebar-list-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #475569;
+  padding: 4px 14px 6px;
+  flex-shrink: 0;
+}
+#sidebar.collapsed .sidebar-list-label { display: none; }
+
+#sidebar-list {
+  margin-top: 0;
+  padding: 0 8px 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+#sidebar.collapsed #sidebar-list { display: none; }
+
+/* Sidebar chat rows reuse .sel-list/.sel-btn/.sel-del-btn; the rename button
+   mirrors the delete button but hovers to the violet accent. */
+.sel-rename-btn {
+  background: #0f172a; border: 1px solid #334155;
+  border-radius: 8px; color: #64748b;
+  padding: 7px 10px; font-size: 0.9rem;
+  cursor: pointer; font-family: inherit; line-height: 1;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.sel-rename-btn:hover:not(:disabled) { border-color: #7c3aed; color: #a78bfa; background: #1e1040; }
+
+/* Row action buttons stay hidden until hover on pointer devices. */
+#sidebar-list .sel-rename-btn,
+#sidebar-list .sel-del-btn { opacity: 0; transition: opacity 0.12s, border-color 0.15s, color 0.15s, background 0.15s; }
+#sidebar-list .sel-row:hover .sel-rename-btn,
+#sidebar-list .sel-row:hover .sel-del-btn { opacity: 1; }
+#sidebar-list .sel-btn { overflow: hidden; }
+#sidebar-list .sel-btn > span:first-child { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-rename-input {
+  flex: 1;
+  background: #0f172a; border: 1px solid #7c3aed;
+  border-radius: 8px; color: #e2e8f0;
+  padding: 7px 12px; font-size: 0.85rem;
+  font-family: inherit; min-width: 0;
+}
+.sidebar-empty { color: #475569; font-size: 0.82rem; padding: 4px 6px; }
+
+#sidebar-backdrop { display: none; }
 
 header {
   background: #16213e;
@@ -694,6 +797,31 @@ header a:hover { color: #a78bfa; }
   .review-macro { opacity: 0.6; }
   .review-import { opacity: 0.6; }
   .review-grid.review-draggable .review-drag-handle { opacity: 0.6; }
+}
+
+/* Touch devices have no hover — keep the sidebar row actions faintly visible. */
+@media (hover: none) {
+  #sidebar-list .sel-rename-btn,
+  #sidebar-list .sel-del-btn { opacity: 0.6; }
+}
+
+/* On narrow screens the expanded sidebar overlays the chat instead of
+   crushing it; the collapsed 52px rail stays in flow so the toggle is
+   always reachable. */
+@media (max-width: 600px) {
+  #sidebar:not(.collapsed) {
+    position: fixed;
+    top: 0; bottom: 0; left: 0;
+    z-index: 400;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+  }
+  #sidebar:not(.collapsed) ~ #sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 399;
+    background: rgba(0, 0, 0, 0.5);
+  }
 }
 
 /* /splice-session: drag-to-reorder grid of session videos + a ✓ button. */
