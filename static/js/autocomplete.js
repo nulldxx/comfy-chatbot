@@ -65,7 +65,6 @@ export const SLASH_COMMANDS = [
   { cmd: '/session-load',                 desc: 'load a previously saved session',                                                    args: '[name]'  },
   { cmd: '/session-new',                  desc: 'start a new session (resets all settings)',                                          args: ''  },
   { cmd: '/session-record',               desc: 'rename the current always-on recording session to a memorable name',                  args: ' ' },
-  { cmd: '/session-save',                 desc: 'save the current session (no name: pick one to overwrite)',                          args: ' ' },
   { cmd: '/session-summary',              desc: 'show active settings (workflow, replacements, etc.)',                                args: ''  },
   { cmd: '/settings-backup',             desc: 'download a ZIP backup of all settings (macros, aliases, sessions, servers)',          args: ''  },
   { cmd: '/settings-restore',            desc: 'pop and reapply the most recent /settings-save snapshot',                            args: ''  },

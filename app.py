@@ -41,7 +41,7 @@ from config import (
 )
 from generation_service import (
     cancel_auto_purge, get_last_sent_workflow, jobs, jobs_lock,
-    retarget_live_jobs, run_generation, start_background_job,
+    rename_and_retarget_session, run_generation, start_background_job,
     start_generation_job, start_sequence_job, start_sequence_run_job,
 )
 from image_store import (
@@ -52,7 +52,7 @@ from image_store import (
 )
 from persistence import (
     aliases_file, delete_session, list_sessions, load_aliases, load_macros,
-    load_session, macros_file, rename_session, save_aliases, save_macros,
+    load_session, macros_file, save_aliases, save_macros,
     save_session, sessions_dir, slugify,
 )
 app = Flask(__name__)
@@ -1090,6 +1090,10 @@ def _parse_gen_settings(data):
         "width": width,
         "height": height,
         "steps": steps,
+        # Appended to every generated prompt server-side, matching the client's
+        # old per-image runGeneration behaviour for the (now-removed) client-driven
+        # sequence loop.
+        "extraPrompt": (settings.get("extraPrompt") or "").strip() or None,
     }, None
 
 
@@ -1218,14 +1222,17 @@ def api_progress(job_id):
 def api_jobs():
     """Return the last 10 ComfyUI generation jobs the server is/was running.
 
-    Grok prompt-sequence jobs (kind == "sequence") are excluded — they're not
-    long-running enough to need a recovery UI and the user didn't ask for them.
-    Newest first.
+    Grok prompt-sequence jobs (kind == "sequence", expansion-only, not
+    long-running) are excluded. "sequence-run" jobs (the server-driven
+    expand-and-generate loop behind /api/sequence-run) ARE included, both so
+    they're visible/cancellable in the /jobs recovery UI and so the client's
+    reattachLiveSequenceRun can find a still-running one by recording_name after
+    a /session-load. Newest first.
     """
     with jobs_lock:
         items = []
         for job_id, rec in jobs.items():
-            if rec.get("kind") not in ("image", "video"):
+            if rec.get("kind") not in ("image", "video", "sequence-run"):
                 continue
             items.append({
                 "job_id": job_id,
@@ -1239,6 +1246,7 @@ def api_jobs():
                 "assets": list(rec.get("assets") or rec.get("images") or []),
                 "error": rec.get("error"),
                 "server": rec.get("server"),
+                "recording_name": rec.get("recording_name"),
             })
     items.sort(key=lambda r: r.get("started_at") or 0, reverse=True)
     return jsonify(items[:10])
@@ -1850,8 +1858,10 @@ def api_session_save():
 def api_session_rename():
     """Rename a session file (used by /session-record to name the temp session).
 
-    Retargets any live sequence run writing to the old name first, then moves the
-    file, so a run in progress seamlessly continues appending into the new file.
+    Moves the file and retargets any live sequence run writing to the old name
+    atomically (rename_and_retarget_session), so a run in progress seamlessly
+    continues appending into the new file and a FAILED rename (destination
+    already exists) never leaves a job silently repointed at the wrong session.
     """
     body = request.get_json(force=True) or {}
     src = slugify(body.get("from") or "")
@@ -1860,13 +1870,11 @@ def api_session_rename():
         return jsonify({"error": "Both 'from' and 'to' names are required"}), 400
     if src == dst:
         return jsonify({"ok": True, "name": dst})
-    retarget_live_jobs(src, dst)
     try:
-        rename_session(src, dst)
+        rename_and_retarget_session(src, dst)
     except FileNotFoundError:
         # The temp session may not have been written to disk yet (no image or
-        # save has landed). Retargeting live jobs above already pointed any run at
-        # the new name, so treat this as success.
+        # save has landed). Any live job was still retargeted, so treat as success.
         return jsonify({"ok": True, "name": dst})
     except FileExistsError:
         return jsonify({"error": "A session with that name already exists"}), 409

@@ -41,7 +41,7 @@ function renderSessionPicker({ headerHtml, onSelect }) {
   .then(parseJsonResponse)
   .then(sessions => {
     if (!sessions.length) {
-      bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
+      bubble.innerHTML = 'No saved sessions yet — recording is always on, so <code>/session-record &lt;name&gt;</code> names the one in progress.';
       scrollBottom();
       return;
     }
@@ -77,7 +77,7 @@ function renderSessionPicker({ headerHtml, onSelect }) {
           if (data.error) throw new Error(data.error);
           row.remove();
           if (!selList.querySelector('.sel-row')) {
-            bubble.innerHTML = 'No saved sessions yet. Use <code>/session-save &lt;name&gt;</code> to save one.';
+            bubble.innerHTML = 'No saved sessions yet — recording is always on, so <code>/session-record &lt;name&gt;</code> names the one in progress.';
           }
           scrollBottom();
         })
@@ -1343,7 +1343,6 @@ export function makeCommandHandler(deps) {
         { sig: '/session-load [name]', desc: 'restore a previously saved session; omit name to pick from a menu' },
         { sig: '/session-new', desc: 'start a completely new session, resetting all settings to defaults' },
         { sig: '/session-record <name>', desc: 'recording is always on — this renames the current (temporary) session to a memorable name so /session-load can restore it later; no name shows the current name' },
-        { sig: '/session-save <name>', desc: 'save the current session (chat history, images, settings, up/down prompt history) to disk; omit the name to pick an existing session to overwrite or delete' },
         { sig: '/session-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
         { sig: '/settings-backup', desc: 'download a ZIP of all server-side settings for backup — macros, prompt aliases, saved sessions and the server catalogue (<code>servers.json</code>)', notes: 'server-side files only; per-tab generation settings live in a saved session' },
         { sig: '/settings-save', desc: 'push a snapshot of all generation settings (workflows, resolution, denoise, video settings, override prompts, replacements) onto an in-memory stack; pair with <code>/settings-restore</code> to bracket a macro so it leaves settings unchanged' },
@@ -2011,108 +2010,15 @@ export function makeCommandHandler(deps) {
       state.image2videoOverridePrompt = null;
       // Recording is always on: start the new session recording into a fresh
       // temporary name rather than continuing to append to the previous one.
+      // Detach (without cancelling) any sequence run this tab was watching —
+      // the server-side job keeps running and appending to its own session,
+      // recoverable later via /session-load, but this tab stops rendering its
+      // events into the fresh chat we're about to build.
+      deps.detachActiveSequenceRun();
       state.recordingName = deps.newTempSessionName();
-      state.liveRunSession = null;
       messagesEl.innerHTML = '';
       deps.updateHeaderStatus();
       addMessage('bot', 'New session started. Describe the image you\'d like to generate.');
-      return;
-    }
-
-    if (cmd === '/session-save') {
-      const rawName = raw.slice('/session-save'.length).trim();
-      addMessage('user', escapeHtml(raw), raw);
-
-      const buildPayload = (name) => ({
-        name,
-        settings: {
-          server: state.currentServer,
-          workflow: state.currentWorkflow,
-          faceWorkflow: state.currentFaceWorkflow,
-          upscaleWorkflow: state.currentUpscaleWorkflow,
-          image2imageWorkflow: state.currentImage2ImageWorkflow,
-          image2videoWorkflow: state.currentImage2VideoWorkflow,
-          inpaintingWorkflow: state.currentInpaintingWorkflow,
-          resolution: state.currentResolution,
-          generationSteps: state.currentGenerationSteps,
-          iterations: state.iterations,
-          sequenceReplacements: state.sequenceReplacements.slice(),
-          image2imageReplacements: state.image2imageReplacements.slice(),
-          image2imageOverridePrompt: state.image2imageOverridePrompt,
-          image2videoReplacements: state.image2videoReplacements.slice(),
-          image2videoOverridePrompt: state.image2videoOverridePrompt,
-          lastFaceDetailPrompt: state.lastFaceDetailPrompt,
-          lastInpaintingPrompt: state.lastInpaintingPrompt,
-          extraPrompt: state.extraPrompt,
-          currentDenoise: { ...state.currentDenoise },
-          videoSettings: { ...state.currentVideoSettings },
-          videoLock: state.videoLock,
-        },
-        recordingName: state.recordingName,
-        sessionImages: state.sessionImages.slice(),
-        imagePrompts: Object.assign({}, state.imagePrompts),
-        imageVideoMeta: Object.assign({}, state.imageVideoMeta),
-        lastSequence: state.lastSequence,
-        promptHistory: state.history.slice(),
-        messages: deps.captureSessionMessages(),
-      });
-
-      const doSave = (name, bubble) => {
-        bubble.innerHTML = '<div class="status-text">Saving session…</div>';
-        fetch('/api/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(buildPayload(name)),
-        })
-        .then(parseJsonResponse)
-        .then(data => {
-          if (data.error) throw new Error(data.error);
-          bubble.innerHTML = `Session saved as <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong>. Use <code>/session-load</code> to restore it.`;
-          scrollBottom();
-        })
-        .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ Save failed: ${escapeHtml(err.message)}</span>`;
-          scrollBottom();
-        });
-      };
-
-      if (rawName) {
-        if (state.recordingName && state.recordingName !== rawName) {
-          addMessage('bot', `⚠ A recording is active for session <strong style="color:#a78bfa">${escapeHtml(state.recordingName)}</strong> but you're saving to a different name (<strong style="color:#a78bfa">${escapeHtml(rawName)}</strong>). Type <code>y</code> to save anyway or <code>n</code> to cancel.`);
-          state.pendingConfirm = (answer) => {
-            if (!/^y(es)?$/i.test(answer)) {
-              addMessage('bot', 'Cancelled — session not saved.');
-              return;
-            }
-            const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
-            doSave(rawName, bubble);
-          };
-          return;
-        }
-        const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
-        doSave(rawName, bubble);
-        return;
-      }
-
-      renderSessionPicker({
-        headerHtml: '<strong>Select a session to overwrite:</strong>',
-        onSelect: (name, bubble) => {
-          if (state.recordingName && state.recordingName !== name) {
-            bubble.innerHTML = `⚠ A recording is active for session <strong style="color:#a78bfa">${escapeHtml(state.recordingName)}</strong> but you selected a different session (<strong style="color:#a78bfa">${escapeHtml(name)}</strong>). Type <code>y</code> to save anyway or <code>n</code> to cancel.`;
-            scrollBottom();
-            state.pendingConfirm = (answer) => {
-              if (!/^y(es)?$/i.test(answer)) {
-                bubble.innerHTML = 'Cancelled — session not saved.';
-                scrollBottom();
-                return;
-              }
-              doSave(name, bubble);
-            };
-            return;
-          }
-          doSave(name, bubble);
-        },
-      });
       return;
     }
 

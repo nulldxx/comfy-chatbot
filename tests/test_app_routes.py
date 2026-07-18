@@ -788,6 +788,19 @@ class TestSequenceRunRoute(_AppFixture):
         self.assertEqual(resp.status_code, 400)
         self._job.assert_not_called()
 
+    def test_extra_prompt_passed_through(self):
+        self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "recordingName": "r",
+            "settings": {"extraPrompt": "  in the style of monet  "},
+        })
+        gen_settings = self._job.call_args[0][5]
+        self.assertEqual(gen_settings["extraPrompt"], "in the style of monet")
+
+    def test_extra_prompt_absent_is_none(self):
+        self.client.post("/api/sequence-run", json={"prompt": "pets", "recordingName": "r"})
+        gen_settings = self._job.call_args[0][5]
+        self.assertIsNone(gen_settings["extraPrompt"])
+
 
 # ---------------------------------------------------------------------------
 # Session endpoints

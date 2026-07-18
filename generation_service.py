@@ -13,7 +13,7 @@ from werkzeug.utils import secure_filename
 from config import COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS
 from ComfyServer import ComfyServer, JobCancelled
 from catalogue import parse_loras_from_prompt
-from persistence import append_session_image
+from persistence import append_session_image, append_session_note, rename_session
 from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequence
 from workflow import (
     LORA_PLACEHOLDER_RE,
@@ -679,6 +679,7 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
         channel.send(json.dumps({"type": msg_type, **kwargs}))
 
     all_urls = []
+    failed = []
     try:
         if cancel_event.is_set():
             raise JobCancelled()
@@ -713,6 +714,7 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
         # Let a connected browser render the plan (also drives /sequence-review).
         send("prompts", prompts=out, video=video)
 
+        extra_prompt = (gen_settings.get("extraPrompt") or "").strip()
         total = len(out)
         for i, item in enumerate(out, start=1):
             if cancel_event.is_set():
@@ -731,11 +733,16 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
             if not clean_prompt:
                 send("progress", message=f"Shot {i}/{total}: empty after LoRA tags, skipping")
                 continue
+            # extraPrompt is appended for generation only, matching the client's
+            # old runGeneration behaviour — the stored/displayed prompt (used for
+            # append_image_to_recording and the "image" event below) stays the
+            # original item_prompt, without the suffix.
+            gen_prompt = f"{clean_prompt} {extra_prompt}".strip() if extra_prompt else clean_prompt
 
             send("progress", message=f"Generating {i}/{total}…")
             try:
                 urls = _run_generation_core(
-                    job_id, channel, cancel_event, clean_prompt, loras,
+                    job_id, channel, cancel_event, gen_prompt, loras,
                     gen_settings["server"], gen_settings["server_os"], gen_settings["workflow"],
                     workflow_dir=COMFY_GENERATION_DIR,
                     width=gen_settings.get("width"),
@@ -745,48 +752,51 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
             except JobCancelled:
                 raise
             except Exception as e:
-                # Best-effort: one failed shot shouldn't sink the whole run.
+                # Best-effort: one failed shot shouldn't sink the whole run, but
+                # the failure is still persisted and surfaced live so it isn't
+                # silently invisible in a session recovered after the fact.
                 send("progress", message=f"Shot {i}/{total} failed: {e}")
+                failed.append({"index": i, "prompt": item_prompt, "error": str(e)})
+                try:
+                    append_failure_to_recording(job_id, item_prompt, str(e))
+                except Exception:
+                    pass
+                send("failed", prompt=item_prompt, error=str(e), index=i, total=total)
                 continue
 
-            # Re-read the recording name every iteration so a mid-run rename
-            # (/session-record) redirects subsequent appends into the new file.
-            with jobs_lock:
-                rec_name = jobs[job_id].get("recording_name")
             for url in urls:
                 all_urls.append(url)
-                if rec_name:
-                    try:
-                        append_session_image(
-                            rec_name, url, item_prompt, video_meta, settings=gen_settings
-                        )
-                    except Exception as e:
-                        send("progress", message=f"Warning: could not persist to session: {e}")
+                try:
+                    append_image_to_recording(
+                        job_id, url, item_prompt, video_meta, gen_settings
+                    )
+                except Exception as e:
+                    send("progress", message=f"Warning: could not persist to session: {e}")
                 send("image", url=url, prompt=item_prompt, videoMeta=video_meta,
                      index=i, total=total)
 
         with jobs_lock:
-            _mark_terminal_locked(job_id, "done", images=all_urls, assets=all_urls)
-        send("done", images=all_urls, prompts=out, video=video)
+            _mark_terminal_locked(job_id, "done", images=all_urls, assets=all_urls, failed=failed)
+        send("done", images=all_urls, prompts=out, video=video, failed=failed)
 
     except JobCancelled:
         with jobs_lock:
-            _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls)
+            _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls, failed=failed)
         send("cancelled", message="Cancelled")
     except GrokError as e:
         # A cancel during the Grok call closes the session, surfacing as a
         # GrokError from the aborted request — report it as a cancellation.
         if cancel_event.is_set():
             with jobs_lock:
-                _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls)
+                _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls, failed=failed)
             send("cancelled", message="Cancelled")
         else:
             with jobs_lock:
-                _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls)
+                _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls, failed=failed)
             send("error", message=str(e))
     except Exception as e:
         with jobs_lock:
-            _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls)
+            _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls, failed=failed)
         send("error", message=str(e))
     finally:
         channel.close()
@@ -802,7 +812,8 @@ def start_sequence_run_job(master, count, replacements, video, recording_name, g
     The record carries both a requests.Session (so /api/cancel can abort the Grok
     call) and, once generation starts, a prompt_id/server (so /api/cancel can
     interrupt the in-flight ComfyUI job). recording_name is the session file the
-    run appends each image to; it may be retargeted mid-run by retarget_live_jobs.
+    run appends each image to; it may be retargeted mid-run by
+    rename_and_retarget_session (see append_image_to_recording).
     """
     job_id = str(uuid.uuid4())
     summary = _build_summary(None, master, "video-sequence-run" if video else "sequence-run")
@@ -836,17 +847,63 @@ def start_sequence_run_job(master, count, replacements, video, recording_name, g
     return job_id
 
 
-def retarget_live_jobs(src, dst):
-    """Point any live sequence run at a renamed session so its appends follow it.
+def append_image_to_recording(job_id, url, prompt, video_meta, settings):
+    """Append one image to whatever session this job is currently recording to.
 
-    Called by /api/sessions/rename before the file is moved: every non-terminal
-    job whose recording_name == src is updated to dst, so run_sequence_run's
-    per-iteration re-read lands subsequent appends in the new file.
+    Reads jobs[job_id]["recording_name"] and performs the append to persistence
+    in the SAME jobs_lock critical section as rename_and_retarget_session's file
+    move + retarget, so the two can never interleave: a rename can't complete
+    with a job's append landing on the just-vacated old filename (or vice versa).
+    A no-op if the job has no recording_name (shouldn't normally happen).
     """
     with jobs_lock:
+        rec = jobs.get(job_id)
+        name = rec.get("recording_name") if rec else None
+        if name:
+            append_session_image(name, url, prompt, video_meta, settings=settings)
+
+
+def append_failure_to_recording(job_id, prompt, error_text):
+    """Record a failed shot (no image) against whatever session this job is
+    recording to, under the same jobs_lock-guarded pattern as
+    append_image_to_recording — see its docstring for why."""
+    with jobs_lock:
+        rec = jobs.get(job_id)
+        name = rec.get("recording_name") if rec else None
+        if name:
+            append_session_note(name, prompt, f"⚠ Generation failed: {error_text}")
+
+
+def rename_and_retarget_session(src, dst):
+    """Rename a session file and repoint any live job recording to it — atomically.
+
+    Called by /api/sessions/rename. Holds jobs_lock across the file rename itself
+    (rename_session, which internally takes persistence's sessions_write_lock) so
+    it can't interleave with append_image_to_recording/append_failure_to_recording,
+    which read a job's recording_name and perform their persistence call under the
+    same lock. This closes two bugs the naive "retarget then rename" ordering had:
+    a live run's append landing on a filename mid-rename (TOCTOU), and a FAILED
+    rename (destination already exists) still permanently repointing the job
+    before the failure was known.
+
+    Raises FileExistsError if dst already exists (no job is retargeted in that
+    case — the exception propagates before the loop below runs). Raises
+    FileNotFoundError if src has no file yet (a temp session with no images
+    written) — any live job is still retargeted in that case, since there's
+    nothing on disk to conflict with; the exception is only informational for
+    the caller (a temp session with no file is a normal, harmless case to rename).
+    """
+    with jobs_lock:
+        try:
+            rename_session(src, dst)
+            missing = False
+        except FileNotFoundError:
+            missing = True
         for rec in jobs.values():
             if rec.get("status") not in TERMINAL_STATUSES and rec.get("recording_name") == src:
                 rec["recording_name"] = dst
+    if missing:
+        raise FileNotFoundError(src)
 
 
 # ---------------------------------------------------------------------------

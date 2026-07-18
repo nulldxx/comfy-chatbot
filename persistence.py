@@ -118,6 +118,40 @@ def append_session_image(name, url, prompt, video_meta=None, settings=None):
     return doc
 
 
+def append_session_note(name, prompt, note):
+    """Append a text-only note (no image) to a session, creating it if needed.
+
+    Used when a sequence-run shot fails: there's no image to append via
+    append_session_image, but the failure should still be visible on
+    /session-load rather than silently vanishing as a gap in the sequence.
+    Mirrors append_session_image's message shape but with an empty images list —
+    load_session keeps a bot message with no images as long as it has text, so
+    this survives the same filtering that would otherwise drop an empty message.
+    """
+    path = sessions_dir() / f"{name}.json"
+    with sessions_write_lock:
+        if path.is_file():
+            try:
+                doc = json.loads(path.read_text())
+            except Exception:
+                doc = {}
+        else:
+            doc = {}
+
+        doc.setdefault("sessionImages", [])
+        doc.setdefault("imagePrompts", {})
+        doc.setdefault("imageVideoMeta", {})
+        doc.setdefault("messages", [])
+        doc["recordingName"] = name
+
+        doc["messages"].append({"role": "user", "prompt": prompt})
+        doc["messages"].append({"role": "bot", "images": [], "text": note})
+
+        doc["saved_at"] = datetime.now().isoformat()
+        _atomic_write_json(path, doc)
+    return doc
+
+
 def rename_session(src, dst):
     """Move sessions/<src>.json to sessions/<dst>.json, rewriting recordingName.
 

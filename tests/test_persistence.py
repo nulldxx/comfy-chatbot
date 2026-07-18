@@ -208,6 +208,36 @@ class TestSessions(unittest.TestCase):
         data = persistence.load_session("run1")
         self.assertEqual(data["sessionImages"], ["/images/real.png"])
 
+    # --- append_session_note ---
+
+    def test_note_creates_file(self):
+        persistence.append_session_note("run1", "a cat", "⚠ Generation failed: boom")
+        path = Path(self.tmp) / "sessions" / "run1.json"
+        self.assertTrue(path.is_file())
+        doc = json.loads(path.read_text())
+        self.assertEqual(doc["messages"], [
+            {"role": "user", "prompt": "a cat"},
+            {"role": "bot", "images": [], "text": "⚠ Generation failed: boom"},
+        ])
+        self.assertEqual(doc["sessionImages"], [])
+        self.assertEqual(doc["recordingName"], "run1")
+
+    def test_note_does_not_touch_session_images(self):
+        persistence.append_session_image("run1", "/images/a.png", "a cat")
+        persistence.append_session_note("run1", "a dog", "⚠ Generation failed: boom")
+        doc = json.loads((Path(self.tmp) / "sessions" / "run1.json").read_text())
+        self.assertEqual(doc["sessionImages"], ["/images/a.png"])
+        self.assertEqual(len(doc["messages"]), 4)
+
+    def test_note_survives_load_session_filtering(self):
+        # A text-only bot message (no images) must survive load_session's filter,
+        # which drops bot messages with no images AND no text — this one has text.
+        persistence.append_session_note("run1", "a cat", "⚠ Generation failed: boom")
+        data = persistence.load_session("run1")
+        bot_msgs = [m for m in data["messages"] if m["role"] == "bot"]
+        self.assertEqual(len(bot_msgs), 1)
+        self.assertEqual(bot_msgs[0]["text"], "⚠ Generation failed: boom")
+
     # --- rename_session ---
 
     def test_rename_moves_file_and_rewrites_name(self):

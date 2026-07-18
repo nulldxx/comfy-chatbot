@@ -271,9 +271,10 @@ class RunSequenceRunTests(unittest.TestCase):
         self.assertEqual(img["videoMeta"], {"action": "leaps", "audio": "meow"})
 
     def test_recording_name_reread_each_iteration(self):
-        # A mid-run rename (retarget_live_jobs) must redirect later appends. The
-        # name is re-read fresh each iteration, so a rename applied after the first
-        # append is picked up for the second.
+        # A mid-run rename (rename_and_retarget_session) must redirect later
+        # appends. The name is re-read fresh each iteration (inside
+        # append_image_to_recording, under jobs_lock), so a rename applied after
+        # the first append is picked up for the second.
         job_id = self._make_job(recording_name="temp-1")
         names = []
 
@@ -287,6 +288,176 @@ class RunSequenceRunTests(unittest.TestCase):
              patch.object(gs, "append_session_image", side_effect=fake_append):
             gs.run_sequence_run(job_id, "x", 2, [], video=False, gen_settings=self._settings())
         self.assertEqual(names, ["temp-1", "renamed"])
+
+    def test_extra_prompt_applied_to_generation_not_to_stored_prompt(self):
+        # extraPrompt is appended for generation only (matching the old client
+        # runGeneration behaviour) — the persisted/displayed prompt (passed to
+        # append_session_image and the "image" event) stays the original prompt.
+        job_id = self._make_job()
+        seen_prompts = []
+
+        def fake_core(jid, channel, cancel, prompt, loras, *a, **k):
+            seen_prompts.append(prompt)
+            return ["/images/a.png"]
+
+        settings = self._settings()
+        settings["extraPrompt"] = "in the style of monet"
+        with patch.object(gs, "generate_prompt_sequence", return_value=["a cat"]), \
+             patch.object(gs, "_run_generation_core", side_effect=fake_core), \
+             patch.object(gs, "append_session_image") as append_mock:
+            gs.run_sequence_run(job_id, "x", 1, [], video=False, gen_settings=settings)
+        self.assertEqual(seen_prompts, ["a cat in the style of monet"])
+        append_mock.assert_called_once_with(
+            "run-sess", "/images/a.png", "a cat", None, settings=settings
+        )
+        img = [m for m in _drain(gs.jobs[job_id]["channel"]) if m["type"] == "image"][0]
+        self.assertEqual(img["prompt"], "a cat")
+
+    def test_no_extra_prompt_leaves_prompt_unchanged(self):
+        job_id = self._make_job()
+        seen_prompts = []
+
+        def fake_core(jid, channel, cancel, prompt, loras, *a, **k):
+            seen_prompts.append(prompt)
+            return ["/images/a.png"]
+
+        with patch.object(gs, "generate_prompt_sequence", return_value=["a cat"]), \
+             patch.object(gs, "_run_generation_core", side_effect=fake_core), \
+             patch.object(gs, "append_session_image"):
+            gs.run_sequence_run(job_id, "x", 1, [], video=False, gen_settings=self._settings())
+        self.assertEqual(seen_prompts, ["a cat"])
+
+    def test_per_shot_failure_persisted_and_emitted(self):
+        # A failed shot is (1) recorded in the terminal "failed" list, (2) sent as
+        # a distinct "failed" SSE event (not just a transient progress line), and
+        # (3) persisted to the session via append_failure_to_recording so it's
+        # visible after a later /session-load.
+        job_id = self._make_job()
+        notes = []
+
+        def core(jid, channel, cancel, prompt, loras, *a, **k):
+            if prompt == "bad":
+                raise ValueError("boom")
+            return ["/images/ok.png"]
+
+        with patch.object(gs, "generate_prompt_sequence", return_value=["bad", "good"]), \
+             patch.object(gs, "_run_generation_core", side_effect=core), \
+             patch.object(gs, "append_session_image"), \
+             patch.object(gs, "append_session_note", side_effect=lambda *a, **k: notes.append(a)):
+            gs.run_sequence_run(job_id, "x", 2, [], video=False, gen_settings=self._settings())
+
+        msgs = _drain(gs.jobs[job_id]["channel"])
+        failed_events = [m for m in msgs if m["type"] == "failed"]
+        self.assertEqual(len(failed_events), 1)
+        self.assertEqual(failed_events[0]["prompt"], "bad")
+        self.assertEqual(failed_events[0]["error"], "boom")
+
+        done = [m for m in msgs if m["type"] == "done"][0]
+        self.assertEqual(len(done["failed"]), 1)
+        self.assertEqual(done["failed"][0]["prompt"], "bad")
+        self.assertEqual(gs.jobs[job_id]["failed"][0]["prompt"], "bad")
+
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0][0], "run-sess")  # recording name
+        self.assertEqual(notes[0][1], "bad")       # prompt
+
+
+class AppendToRecordingTests(unittest.TestCase):
+    """append_image_to_recording / append_failure_to_recording read a job's
+    current recording_name and perform the persistence call in one jobs_lock
+    critical section, so they can't interleave with rename_and_retarget_session."""
+
+    def _make_job(self, recording_name="sess"):
+        job_id = "test-append-job"
+        gs.jobs[job_id] = {
+            "status": "running", "channel": gs._JobChannel(), "images": [], "assets": [],
+            "cancel": threading.Event(), "server": None, "prompt_id": None,
+            "recording_name": recording_name, "kind": "sequence-run",
+            "workflow_name": None, "prompt": "x", "summary": "test",
+            "started_at": 0.0, "finished_at": None, "error": None,
+        }
+        return job_id
+
+    def tearDown(self):
+        gs.jobs.pop("test-append-job", None)
+
+    def test_append_image_uses_current_recording_name(self):
+        job_id = self._make_job("sess-a")
+        with patch.object(gs, "append_session_image") as m:
+            gs.append_image_to_recording(job_id, "/images/a.png", "a cat", None, {"workflow": "wf"})
+        m.assert_called_once_with("sess-a", "/images/a.png", "a cat", None, settings={"workflow": "wf"})
+
+    def test_append_image_noop_without_recording_name(self):
+        job_id = self._make_job(recording_name=None)
+        with patch.object(gs, "append_session_image") as m:
+            gs.append_image_to_recording(job_id, "/images/a.png", "a cat", None, {})
+        m.assert_not_called()
+
+    def test_append_failure_uses_current_recording_name(self):
+        job_id = self._make_job("sess-a")
+        with patch.object(gs, "append_session_note") as m:
+            gs.append_failure_to_recording(job_id, "a cat", "boom")
+        m.assert_called_once_with("sess-a", "a cat", "⚠ Generation failed: boom")
+
+
+class RenameAndRetargetSessionTests(unittest.TestCase):
+    """rename_and_retarget_session (generation_service.py) holds jobs_lock across
+    both the file rename (persistence.rename_session) and the job-record retarget,
+    so a live run's append_image_to_recording (which also reads recording_name
+    under jobs_lock) can never observe a stale name mid-rename, and a FAILED
+    rename never leaves a job silently repointed at the wrong session."""
+
+    def _make_job(self, job_id, recording_name, status="running"):
+        gs.jobs[job_id] = {
+            "status": status, "channel": gs._JobChannel(), "images": [], "assets": [],
+            "cancel": threading.Event(), "server": None, "prompt_id": None,
+            "recording_name": recording_name, "kind": "sequence-run",
+            "workflow_name": None, "prompt": "x", "summary": "test",
+            "started_at": 0.0, "finished_at": None, "error": None,
+        }
+
+    def tearDown(self):
+        for jid in list(gs.jobs):
+            if jid.startswith("test-rename-job"):
+                gs.jobs.pop(jid, None)
+
+    def test_success_retargets_live_job(self):
+        self._make_job("test-rename-job", "temp-1")
+        with patch.object(gs, "rename_session", return_value="dst") as m:
+            gs.rename_and_retarget_session("temp-1", "dst")
+        m.assert_called_once_with("temp-1", "dst")
+        self.assertEqual(gs.jobs["test-rename-job"]["recording_name"], "dst")
+
+    def test_failed_rename_does_not_retarget(self):
+        # dst already exists on disk -> rename_session raises FileExistsError,
+        # which must propagate BEFORE any job is retargeted.
+        self._make_job("test-rename-job", "temp-1")
+        with patch.object(gs, "rename_session", side_effect=FileExistsError("dst")):
+            with self.assertRaises(FileExistsError):
+                gs.rename_and_retarget_session("temp-1", "dst")
+        self.assertEqual(gs.jobs["test-rename-job"]["recording_name"], "temp-1")
+
+    def test_missing_src_still_retargets(self):
+        # A temp session with no file yet (no image/save landed) — nothing to
+        # collide with, so the live job is still retargeted; the caller treats
+        # the FileNotFoundError as a harmless "nothing to move" signal.
+        self._make_job("test-rename-job", "temp-1")
+        with patch.object(gs, "rename_session", side_effect=FileNotFoundError("temp-1")):
+            with self.assertRaises(FileNotFoundError):
+                gs.rename_and_retarget_session("temp-1", "dst")
+        self.assertEqual(gs.jobs["test-rename-job"]["recording_name"], "dst")
+
+    def test_terminal_job_not_retargeted(self):
+        self._make_job("test-rename-job", "temp-1", status="done")
+        with patch.object(gs, "rename_session", return_value="dst"):
+            gs.rename_and_retarget_session("temp-1", "dst")
+        self.assertEqual(gs.jobs["test-rename-job"]["recording_name"], "temp-1")
+
+    def test_unrelated_job_untouched(self):
+        self._make_job("test-rename-job", "other-session")
+        with patch.object(gs, "rename_session", return_value="dst"):
+            gs.rename_and_retarget_session("temp-1", "dst")
+        self.assertEqual(gs.jobs["test-rename-job"]["recording_name"], "other-session")
 
 
 if __name__ == "__main__":
