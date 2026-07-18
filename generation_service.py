@@ -11,7 +11,7 @@ import requests
 from werkzeug.utils import secure_filename
 
 from config import COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS
-from ComfyServer import ComfyServer, JobCancelled
+from ComfyServer import ComfyServer, JobCancelled, JobRetry
 from catalogue import parse_loras_from_prompt
 from persistence import append_session_image, append_session_note, rename_session
 from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequence
@@ -228,7 +228,7 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                          input_image=None, input_mask=None, input_last_frame=None,
                          preserve_mtime_from=None,
                          cleanup_input_image=False, duration=None, frames=None, fps=None,
-                         video_width=None, video_height=None):
+                         video_width=None, video_height=None, retry_event=None):
     """Core generation pipeline shared by run_generation and run_sequence_run.
 
     Runs everything from placeholder substitution through downloading the output,
@@ -398,7 +398,8 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
             jobs[job_id]["prompt_id"] = prompt_id
         send("progress", message=f"Queued (ID: {prompt_id[:8]}…) — generating")
 
-        prompt_data = server.poll_status(prompt_id, COMFY_POLL_TIMEOUT_SECONDS, progress, cancel_event=cancel_event)
+        prompt_data = server.poll_status(prompt_id, COMFY_POLL_TIMEOUT_SECONDS, progress,
+                                         cancel_event=cancel_event, retry_event=retry_event)
         send("progress", message="Downloading images...")
 
         images = server.get_output_images(prompt_data)
@@ -672,6 +673,7 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
     with jobs_lock:
         channel = jobs[job_id]["channel"]
         cancel_event = jobs[job_id]["cancel"]
+        retry_event = jobs[job_id]["retry"]
         session = jobs[job_id]["session"]
         jobs[job_id]["status"] = "running"
 
@@ -740,37 +742,60 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
             gen_prompt = f"{clean_prompt} {extra_prompt}".strip() if extra_prompt else clean_prompt
 
             # Announce the start of this shot so the attached client can open a
-            # fresh per-shot bubble (with its own status line, cancel button and
-            # generation timer) before the "Generating…"/"Queued…" progress and
+            # fresh per-shot bubble (with its own status line, retry/cancel buttons
+            # and generation timer) before the "Generating…"/"Queued…" progress and
             # the final image arrive — restoring the per-image UX the old
             # client-driven loop had. Carries the original prompt (pre-extra) and
             # video meta so the bubble's user line matches the "image" event.
+            # Emitted once, before the retry loop, so the client keeps the same
+            # per-shot bubble across any retries.
             send("shot", index=i, total=total, prompt=item_prompt, videoMeta=video_meta)
 
-            send("progress", message=f"Generating {i}/{total}…")
-            try:
-                urls = _run_generation_core(
-                    job_id, channel, cancel_event, gen_prompt, loras,
-                    gen_settings["server"], gen_settings["server_os"], gen_settings["workflow"],
-                    workflow_dir=COMFY_GENERATION_DIR,
-                    width=gen_settings.get("width"),
-                    height=gen_settings.get("height"),
-                    steps=gen_settings.get("steps"),
-                )
-            except JobCancelled:
-                raise
-            except Exception as e:
-                # Best-effort: one failed shot shouldn't sink the whole run, but
-                # the failure is still persisted and surfaced live so it isn't
-                # silently invisible in a session recovered after the fact.
-                send("progress", message=f"Shot {i}/{total} failed: {e}")
-                failed.append({"index": i, "prompt": item_prompt, "error": str(e)})
+            # Per-shot retry loop. The user can abort a stuck/failed generation
+            # (via /api/retry-shot, which trips retry_event) to re-run this same
+            # prompt without losing completed shots or the remaining queue. A
+            # failed attempt pauses here — waiting for a retry or a whole-run
+            # cancel — rather than advancing, so the user stays in control.
+            urls = None
+            while urls is None:
+                if cancel_event.is_set():
+                    raise JobCancelled()
+                retry_event.clear()
+                send("progress", message=f"Generating {i}/{total}…")
                 try:
-                    append_failure_to_recording(job_id, item_prompt, str(e))
-                except Exception:
-                    pass
-                send("failed", prompt=item_prompt, error=str(e), index=i, total=total)
-                continue
+                    urls = _run_generation_core(
+                        job_id, channel, cancel_event, gen_prompt, loras,
+                        gen_settings["server"], gen_settings["server_os"], gen_settings["workflow"],
+                        workflow_dir=COMFY_GENERATION_DIR,
+                        width=gen_settings.get("width"),
+                        height=gen_settings.get("height"),
+                        steps=gen_settings.get("steps"),
+                        retry_event=retry_event,
+                    )
+                except JobCancelled:
+                    raise
+                except JobRetry:
+                    # User asked to re-run this shot; loop and try again.
+                    send("progress", message=f"Retrying {i}/{total}…")
+                    continue
+                except Exception as e:
+                    # This shot failed. Persist and surface it, then pause on the
+                    # shot until the user retries (retry_event) or cancels the
+                    # whole run (cancel_event) — the sequence does not advance.
+                    failed.append({"index": i, "prompt": item_prompt, "error": str(e)})
+                    try:
+                        append_failure_to_recording(job_id, item_prompt, str(e))
+                    except Exception:
+                        pass
+                    send("shot_failed", prompt=item_prompt, error=str(e), index=i, total=total)
+                    while not retry_event.is_set():
+                        if cancel_event.is_set():
+                            raise JobCancelled()
+                        time.sleep(0.25)
+                    # Retry requested: drop this failure from the record (it will
+                    # be re-attempted) and loop.
+                    failed[:] = [f for f in failed if f.get("index") != i]
+                    continue
 
             for url in urls:
                 all_urls.append(url)
@@ -832,6 +857,7 @@ def start_sequence_run_job(master, count, replacements, video, recording_name, g
             "images": [],
             "assets": [],
             "cancel": threading.Event(),
+            "retry": threading.Event(),
             "server": gen_settings.get("server"),
             "prompt_id": None,
             "session": requests.Session(),

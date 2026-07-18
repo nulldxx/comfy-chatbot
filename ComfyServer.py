@@ -15,6 +15,14 @@ class JobCancelled(Exception):
     """Raised when a job is cancelled while polling for completion."""
 
 
+class JobRetry(Exception):
+    """Raised when the current shot is asked to retry while polling.
+
+    Unlike JobCancelled (which aborts the whole run), this aborts only the
+    in-flight generation so the caller can re-run the same prompt.
+    """
+
+
 class ComfyServer:
     """Main interface to ComfyUI server."""
 
@@ -167,7 +175,8 @@ class ComfyServer:
         except requests.exceptions.RequestException as e:
             raise requests.exceptions.RequestException(f"Error connecting to server: {e}")
 
-    def poll_status(self, prompt_id, timeout=600, callback=None, cancel_event=None):
+    def poll_status(self, prompt_id, timeout=600, callback=None, cancel_event=None,
+                    retry_event=None):
         """
         Poll workflow execution status until completion or timeout.
 
@@ -176,6 +185,8 @@ class ComfyServer:
             timeout: Maximum wait time in seconds
             callback: Optional callback function for status updates
             cancel_event: Optional threading.Event; when set, polling aborts
+            retry_event: Optional threading.Event; when set, aborts only this
+                poll (so the caller can re-run the same prompt) via JobRetry
 
         Returns:
             dict: Completed prompt data with outputs
@@ -184,6 +195,7 @@ class ComfyServer:
             TimeoutError: If execution exceeds timeout
             RuntimeError: If execution fails
             JobCancelled: If cancel_event is set during polling
+            JobRetry: If retry_event is set during polling
         """
         url = f"http://{self.server}/history/{prompt_id}"
         start_time = time.time()
@@ -192,6 +204,11 @@ class ComfyServer:
         while True:
             if cancel_event is not None and cancel_event.is_set():
                 raise JobCancelled()
+
+            # Checked at the loop top so it fires within ~2s (the sleep below)
+            # even while the server is unreachable and polls keep erroring out.
+            if retry_event is not None and retry_event.is_set():
+                raise JobRetry()
 
             # Check timeout
             elapsed = time.time() - start_time

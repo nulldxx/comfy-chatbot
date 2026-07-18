@@ -1445,6 +1445,19 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     });
   };
 
+  // Retry just the current shot: abort the stuck generation and re-run the same
+  // prompt, keeping completed shots and the remaining queue. Does NOT stop the
+  // SSE stream — the server re-emits progress/image into the same bubble. The
+  // button is re-enabled when the next progress event for its shell arrives.
+  const wireRetry = btn => {
+    btn.disabled = false;
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      if (btn.__statusText) btn.__statusText.textContent = 'Retrying…';
+      fetch('/api/retry-shot/' + jobId, { method: 'POST' }).catch(() => {});
+    });
+  };
+
   cancelBtn.__statusText = statusText;
   wireCancel(cancelBtn);
 
@@ -1456,11 +1469,21 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       <div class="status-text">Connecting…</div>
       <div class="dots"><span></span><span></span><span></span></div>
     `);
+    const shellStatusText = bubble.querySelector('.status-text');
+    // Retry button (⟳) sits just left of the cancel button; appended first so
+    // flex-ordering / float places it before the ✕.
+    const rb = document.createElement('button');
+    rb.className = 'retry-btn';
+    rb.title = 'Cancel this generation and retry it';
+    rb.textContent = '⟳';
+    rb.__statusText = shellStatusText;
+    bubble.appendChild(rb);
+    wireRetry(rb);
     const cb = document.createElement('button');
     cb.className = 'cancel-btn';
     cb.title = 'Cancel this run';
     cb.textContent = '✕';
-    cb.__statusText = bubble.querySelector('.status-text');
+    cb.__statusText = shellStatusText;
     bubble.appendChild(cb);
     wireCancel(cb);
     // The run header's cancel button is now redundant — the open shell carries
@@ -1468,9 +1491,10 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (cancelBtn.parentNode) cancelBtn.remove();
     return {
       bubble,
-      statusText: bubble.querySelector('.status-text'),
+      statusText: shellStatusText,
       dotsEl: bubble.querySelector('.dots'),
       cancelBtn: cb,
+      retryBtn: rb,
       startTime: Date.now(),
     };
   };
@@ -1478,6 +1502,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
   const finishShellWithImage = (sh, url) => {
     if (sh.dotsEl) sh.dotsEl.remove();
     if (sh.cancelBtn) sh.cancelBtn.remove();
+    if (sh.retryBtn) sh.retryBtn.remove();
     const elapsed = ((Date.now() - sh.startTime) / 1000).toFixed(1);
     if (sh.statusText) sh.statusText.textContent = `Done — 1 result in ${elapsed}s`;
     appendChatImage(sh.bubble, url);
@@ -1486,8 +1511,21 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
   const finishShellWithError = (sh, error) => {
     if (sh.dotsEl) sh.dotsEl.remove();
     if (sh.cancelBtn) sh.cancelBtn.remove();
+    if (sh.retryBtn) sh.retryBtn.remove();
     if (sh.statusText) sh.statusText.textContent = '';
     sh.bubble.innerHTML += `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(error || 'unknown error')}</span>`;
+  };
+
+  // A shot failed but the run is paused on it — keep the bubble open with its
+  // spinner gone, show the failure, and leave the ⟳ retry (and ✕ cancel) live
+  // so the user can re-run once the server recovers.
+  const pauseShellOnFailure = (sh, error) => {
+    if (sh.dotsEl) { sh.dotsEl.remove(); sh.dotsEl = null; }
+    if (sh.statusText) {
+      sh.statusText.innerHTML = `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(error || 'unknown error')} — press ⟳ to retry</span>`;
+    }
+    if (sh.retryBtn) sh.retryBtn.disabled = false;
+    if (sh.cancelBtn) sh.cancelBtn.disabled = false;
   };
 
   const es = new EventSource(`/api/progress/${jobId}`);
@@ -1499,6 +1537,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     state.liveRunSession = null;
     if (cancelBtn.parentNode) cancelBtn.remove();
     if (shell && shell.cancelBtn && shell.cancelBtn.parentNode) shell.cancelBtn.remove();
+    if (shell && shell.retryBtn && shell.retryBtn.parentNode) shell.retryBtn.remove();
   };
 
   es.onmessage = e => {
@@ -1530,7 +1569,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       return;
     }
     if (msg.type === 'cancelled') {
-      if (shell) { if (shell.dotsEl) shell.dotsEl.remove(); if (shell.cancelBtn) shell.cancelBtn.remove(); if (shell.statusText) shell.statusText.textContent = 'Cancelled'; shell = null; }
+      if (shell) { if (shell.dotsEl) shell.dotsEl.remove(); if (shell.cancelBtn) shell.cancelBtn.remove(); if (shell.retryBtn) shell.retryBtn.remove(); if (shell.statusText) shell.statusText.textContent = 'Cancelled'; shell = null; }
       stop();
       statusBubble.innerHTML = `<span style="color:#f87171">⚠ Cancelled</span>`;
       scrollBottom();
@@ -1538,7 +1577,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       return;
     }
     if (msg.type === 'error') {
-      if (shell) { if (shell.dotsEl) shell.dotsEl.remove(); if (shell.cancelBtn) shell.cancelBtn.remove(); shell = null; }
+      if (shell) { if (shell.dotsEl) shell.dotsEl.remove(); if (shell.cancelBtn) shell.cancelBtn.remove(); if (shell.retryBtn) shell.retryBtn.remove(); shell = null; }
       stop();
       statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
       scrollBottom();
@@ -1554,8 +1593,23 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       shell = openShell(msg.prompt);
       scrollBottom();
     } else if (msg.type === 'progress') {
-      if (shell && shell.statusText) shell.statusText.textContent = msg.message;
-      else if (statusText) statusText.textContent = msg.message;
+      if (shell && shell.statusText) {
+        shell.statusText.textContent = msg.message;
+        // A progress event means the (possibly retried) generation is live
+        // again — re-enable retry and restore the spinner if a prior failure
+        // had paused the shell.
+        if (shell.retryBtn) shell.retryBtn.disabled = false;
+        if (shell.cancelBtn) shell.cancelBtn.disabled = false;
+        if (!shell.dotsEl) {
+          const dots = document.createElement('div');
+          dots.className = 'dots';
+          dots.innerHTML = '<span></span><span></span><span></span>';
+          shell.statusText.insertAdjacentElement('afterend', dots);
+          shell.dotsEl = dots;
+        }
+      } else if (statusText) {
+        statusText.textContent = msg.message;
+      }
       scrollBottom();
     } else if (msg.type === 'image') {
       const url = msg.url;
@@ -1575,7 +1629,19 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
         }
         scrollBottom();
       }
+    } else if (msg.type === 'shot_failed') {
+      // Retryable pause: the shot failed but the run is waiting on this shot.
+      // Keep the bubble open with its ⟳ retry live; don't null `shell` or advance.
+      if (shell) {
+        pauseShellOnFailure(shell, msg.error);
+      } else {
+        // Reattached mid-shot with no open shell — render a standalone notice.
+        addMessage('user', escapeHtml(msg.prompt || ''), msg.prompt || '');
+        addMessage('bot', `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(msg.error || 'unknown error')} — press ⟳ to retry</span>`);
+      }
+      scrollBottom();
     } else if (msg.type === 'failed') {
+      // Legacy non-fatal failure event (older jobs / replay): render and advance.
       if (shell) {
         finishShellWithError(shell, msg.error);
         shell = null;

@@ -1170,6 +1170,38 @@ def api_cancel(job_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/retry-shot/<job_id>", methods=["POST"])
+@login_required
+def api_retry_shot(job_id):
+    """Retry the current shot of a sequence run without cancelling the run.
+
+    Trips the job's retry event (which the poll loop checks, so it fires within
+    ~2s even when ComfyUI is unreachable) and best-effort interrupts the stuck
+    ComfyUI prompt so run_sequence_run re-runs the same prompt. Unlike
+    /api/cancel, it leaves the cancel event and Grok session untouched.
+    """
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    retry = job.get("retry")
+    if retry is None:
+        return jsonify({"error": "Job does not support shot retry"}), 400
+    retry.set()
+
+    # Free the in-flight ComfyUI prompt so the poll returns promptly.
+    prompt_id = job.get("prompt_id")
+    if prompt_id:
+        try:
+            ComfyServer(job["server"]).interrupt(prompt_id)
+        except Exception as e:
+            # Best-effort: the poll loop still aborts via the retry event.
+            print(f"Interrupt failed for {job['server']}/{prompt_id}: {e}", flush=True)
+
+    return jsonify({"ok": True})
+
+
 @app.route("/api/progress/<job_id>")
 @login_required
 def api_progress(job_id):

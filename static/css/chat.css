@@ -212,6 +212,19 @@ header a:hover { color: #a78bfa; }
 .cancel-btn:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
 .cancel-btn:disabled { opacity: 0.4; cursor: default; }
 
+/* Retry button sits just left of the ✕ cancel button, sharing its look but with
+   a distinct (violet) hover so the two are visually separable. */
+.retry-btn {
+  position: absolute; top: 8px; right: 44px;
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 3px 8px; font-size: 0.85rem;
+  cursor: pointer; line-height: 1;
+  transition: border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.retry-btn:hover:not(:disabled) { border-color: #a78bfa; color: #a78bfa; }
+.retry-btn:disabled { opacity: 0.4; cursor: default; }
+
 .bubble img {
   display: block;
   max-width: 480px; width: 100%;
