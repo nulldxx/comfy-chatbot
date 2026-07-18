@@ -71,6 +71,7 @@ function newChat() {
   state.image2videoReplacements = [];
   state.image2videoOverridePrompt = null;
   state.faceDetailReplacements = [];
+  state.autoFaceDetail = false;
   // Recording is always on: start the new chat recording into a fresh
   // temporary name rather than continuing to append to the previous one.
   // Detach (without cancelling) any sequence run this tab was watching —
@@ -180,6 +181,10 @@ function showChatSummary() {
            `audio <span style="color:#a78bfa">${vs.audio !== false ? 'on' : 'off'}</span> ` +
            `<span style="color:#475569">(🔒 ${state.videoLock})</span>`,
   });
+
+  if (state.autoFaceDetail) {
+    rows.push({ label: 'Auto face-detail', value: '<span style="color:#4ade80">on</span>' });
+  }
 
   if (state.lastFaceDetailPrompt) {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(state.lastFaceDetailPrompt)}</code>` });
@@ -813,6 +818,20 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/face-detail-auto') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.autoFaceDetail = true;
+      addMessage('bot', 'Auto face-detail enabled — a face-detailing pass now runs automatically on each new generation (images with no <code>&lt;lora:…&gt;</code> tag are left as-is).');
+      return;
+    }
+
+    if (cmd === '/face-detail-auto-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.autoFaceDetail = false;
+      addMessage('bot', 'Auto face-detail disabled.');
+      return;
+    }
+
     if (cmd === '/image2image-set-prompt') {
       addMessage('user', escapeHtml(raw), raw);
       const override = raw.slice('/image2image-set-prompt'.length).trim();
@@ -1314,6 +1333,8 @@ export function makeCommandHandler(deps) {
         { sig: '/face-detail-prompt-reset', desc: 'clear that override so the face icons derive a prompt from each image again' },
         { sig: '/face-detail-replacement <from> <to>', desc: 'find→replace applied to every face-detail prompt (override or derived) before it is run (no args lists them)' },
         { sig: '/face-detail-replacement-reset', desc: 'clear all face-detail replacements' },
+        { sig: '/face-detail-auto', desc: 'automatically run a face-detail pass on every new generation (silently replaces the image; skips prompts with no <code>&lt;lora:…&gt;</code> tag and videos)' },
+        { sig: '/face-detail-auto-reset', desc: 'stop auto-running face-detail on new generations' },
         { sig: '/face-detail-session', desc: 'face-detail every image from this session, one after another' },
         { sig: '/face-detail-workflow [name]', desc: 'choose which face-detailer workflow the face icons use (no arg = picker)' },
         { sig: '/face-detail-workflow-reset', desc: 'reset the face-detailer workflow to its default' },
@@ -2018,6 +2039,7 @@ export function makeCommandHandler(deps) {
         image2videoReplacements:   state.image2videoReplacements.slice(),
         image2videoOverridePrompt: state.image2videoOverridePrompt,
         faceDetailReplacements:    state.faceDetailReplacements.slice(),
+        autoFaceDetail:            state.autoFaceDetail,
         lastFaceDetailPrompt:      state.lastFaceDetailPrompt,
         lastInpaintingPrompt:      state.lastInpaintingPrompt,
         extraPrompt:               state.extraPrompt,
@@ -2052,6 +2074,7 @@ export function makeCommandHandler(deps) {
       state.image2videoReplacements     = s.image2videoReplacements;
       state.image2videoOverridePrompt   = s.image2videoOverridePrompt;
       state.faceDetailReplacements      = s.faceDetailReplacements;
+      state.autoFaceDetail              = s.autoFaceDetail;
       state.lastFaceDetailPrompt        = s.lastFaceDetailPrompt;
       state.lastInpaintingPrompt        = s.lastInpaintingPrompt;
       state.extraPrompt                 = s.extraPrompt;

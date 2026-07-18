@@ -20,6 +20,8 @@ export const SLASH_COMMANDS = [
   { cmd: '/face-detail-prompt-reset',     desc: 'clear the override; derive prompts again',                                           args: ''  },
   { cmd: '/face-detail-replacement',      desc: 'add a find→replace applied to face-detail prompts',                                  args: ' ' },
   { cmd: '/face-detail-replacement-reset', desc: 'clear all face-detail replacements',                                                args: ''  },
+  { cmd: '/face-detail-auto',              desc: 'auto-run face-detail on every new generation',                                       args: ''  },
+  { cmd: '/face-detail-auto-reset',        desc: 'stop auto-running face-detail on new generations',                                   args: ''  },
   { cmd: '/face-detail-session',          desc: 'face-detail every image from this session',                                          args: ''  },
   { cmd: '/face-detail-workflow',         desc: 'choose a face-detailer workflow (no arg = picker)',                                  args: ' ' },
   { cmd: '/face-detail-workflow-reset',   desc: 'reset the face-detailer workflow to its default',                                     args: ''  },

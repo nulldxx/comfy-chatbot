@@ -42,6 +42,7 @@ export const state = {
   image2videoReplacements:     [],
   image2videoOverridePrompt:   null,
   faceDetailReplacements:      [],
+  autoFaceDetail:              false,
 
   // Session image tracking
   sessionImages:               [],

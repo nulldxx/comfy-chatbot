@@ -658,6 +658,16 @@ function runFaceDetail(prompt, image, imgWrap, denoiseOverride) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+// Auto face-detail: like runFaceDetail but silently replaces the original
+// image in place (replaceWrap) instead of showing a comparison slider.
+function runAutoFaceDetail(prompt, image, imgWrap) {
+  return runGeneration(prompt, '', null, {
+    face: { image, workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW },
+    replaceWrap: imgWrap,
+    preserveMtimeFrom: image,
+  });
+}
+
 function runUpscale(image, imgWrap, denoiseOverride, prompt) {
   state.iterationsFromSequence = false;
   sendBtn.disabled = true;
@@ -1034,6 +1044,7 @@ function appendChatImage(container, url) {
 
   container.appendChild(wrap);
   scheduleRecordSave();
+  return wrap;
 }
 
 // ---------------------------------------------------------------------------
@@ -1126,6 +1137,7 @@ function doRecordSave() {
         image2videoReplacements: state.image2videoReplacements.slice(),
         image2videoOverridePrompt: state.image2videoOverridePrompt,
         faceDetailReplacements: state.faceDetailReplacements.slice(),
+        autoFaceDetail: state.autoFaceDetail,
         lastFaceDetailPrompt: state.lastFaceDetailPrompt,
         lastInpaintingPrompt: state.lastInpaintingPrompt,
         extraPrompt: state.extraPrompt,
@@ -1181,6 +1193,7 @@ function restoreSession(data) {
   if (s.image2videoReplacements !== undefined) state.image2videoReplacements = s.image2videoReplacements;
   if (s.image2videoOverridePrompt !== undefined) state.image2videoOverridePrompt = s.image2videoOverridePrompt;
   if (s.faceDetailReplacements  !== undefined) state.faceDetailReplacements  = s.faceDetailReplacements;
+  if (s.autoFaceDetail          !== undefined) state.autoFaceDetail          = s.autoFaceDetail;
   if (s.lastFaceDetailPrompt    !== undefined) state.lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastInpaintingPrompt    !== undefined) state.lastInpaintingPrompt    = s.lastInpaintingPrompt;
   if (s.extraPrompt             !== undefined) state.extraPrompt             = s.extraPrompt;
@@ -1860,6 +1873,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
           return;
         }
 
+        const autoPasses = [];
         msg.images.forEach((url, i) => {
           if (originPrompt) state.imagePrompts[url] = originPrompt;
           if (originVideoMeta) state.imageVideoMeta[url] = originVideoMeta;
@@ -1882,7 +1896,15 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             replaceWrap.replaceWith(tmp.firstChild);
           } else {
             state.sessionImages.push(url);
-            appendChatImage(botBubble, url);
+            const wrap = appendChatImage(botBubble, url);
+            // Auto face-detail: only for fresh (non-job) still-image generations,
+            // and only when a face prompt can be derived (needs a <lora:…> tag).
+            if (!job && state.autoFaceDetail && !isVideoUrl(url)) {
+              const fp = applyReplacements(
+                state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]),
+                state.faceDetailReplacements);
+              if (fp) autoPasses.push({ url, wrap, prompt: fp });
+            }
           }
         });
         if (replaceWrap && msg.images.length === 1) {
@@ -1890,7 +1912,17 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         } else {
           scrollBottom();
         }
-        resolve(true);
+        if (autoPasses.length) {
+          // Run the queued face-detail passes one after another, then resolve —
+          // keeps the sendMessage iterations loop sequential and settles this
+          // generation's promise only once the detailed images are in place.
+          (async () => {
+            for (const p of autoPasses) await runAutoFaceDetail(p.prompt, p.url, p.wrap);
+            resolve(true);
+          })();
+        } else {
+          resolve(true);
+        }
 
       } else if (msg.type === 'cancelled') {
         es.close();
