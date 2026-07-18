@@ -5,15 +5,15 @@
 // button. Expanded: a 260px panel listing saved chats (GET /api/chats), each
 // row switching into a chat (restoreSession) with per-row rename/delete.
 //
-// This is a new presentation surface over logic that already exists as slash
-// commands — it reuses handleSlashCommand('/chat-new'), restoreSession(), and
-// the /api/chats REST endpoints rather than duplicating them.
+// This is a presentation surface over existing logic — it reuses newChat(),
+// restoreSession(), and the /api/chats REST endpoints rather than duplicating
+// them.
 // ---------------------------------------------------------------------------
 
 import { escapeHtml, parseJsonResponse } from './utils.js';
 
 export function initSidebar(deps) {
-  const { handleSlashCommand, restoreSession, getRecordingName, setRecordingName } = deps;
+  const { newChat, restoreSession, getRecordingName, setRecordingName } = deps;
 
   const sidebar    = document.getElementById('sidebar');
   const toggleBtn  = document.getElementById('sidebar-toggle');
@@ -50,9 +50,8 @@ export function initSidebar(deps) {
   toggleBtn.addEventListener('click', () => setCollapsed(isExpanded()));
 
   newBtn.addEventListener('click', () => {
-    handleSlashCommand('/chat-new');
-    // handleSlashCommand may run async work, but /chat-new resets state
-    // synchronously; refresh shortly after so the new temp chat is reflected.
+    newChat();
+    // newChat resets state synchronously; refresh so the new temp chat shows.
     refreshChatList();
     if (isMobile()) setCollapsed(true);
   });
@@ -194,7 +193,7 @@ export function initSidebar(deps) {
     input.addEventListener('blur', commit);
   }
 
-  // External flows (auto-save, /chat-new, /chat-rename, deletes) announce
+  // External flows (auto-save, new chat, renames, deletes) announce
   // changes so the list stays fresh without polling.
   document.addEventListener('chats-changed', refreshChatList);
 }

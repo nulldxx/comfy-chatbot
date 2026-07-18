@@ -1064,7 +1064,7 @@ def api_sequence_run():
 
     Expands the master prompt AND generates every image on the server, appending
     each finished image to the <recordingName> chat file as it lands. The run
-    therefore survives the browser closing and is recoverable via /chats.
+    therefore survives the browser closing and is recoverable via the sidebar.
     Returns a job_id the client watches over /api/progress/<job_id>; each image
     arrives as an SSE "image" event.
     """
@@ -1854,7 +1854,7 @@ def api_chat_save():
 @app.route("/api/chats/rename", methods=["POST"])
 @login_required
 def api_chat_rename():
-    """Rename a chat file (used by /chat-rename to name the temp chat).
+    """Rename a chat file (used by the sidebar to name/rename a chat).
 
     Moves the file and retargets any live sequence run writing to the old name
     atomically (rename_and_retarget_session), so a run in progress seamlessly

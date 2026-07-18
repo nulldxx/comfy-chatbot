@@ -76,7 +76,7 @@ export const state = {
 
   // Active recording chat name. Recording is always on: a temporary name is
   // assigned at startup (see newTempSessionName in chat.js) and every image is
-  // auto-saved to it. /chat-rename renames it; /chats restores it.
+  // auto-saved to it. The sidebar renames and restores saved chats.
   recordingName:               null,
 
   // Name of the chat a server-side sequence run (/api/sequence-run) is writing

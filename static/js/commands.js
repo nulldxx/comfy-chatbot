@@ -35,75 +35,54 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
   }).catch(() => { bubble.innerHTML = `<span style="color:#f87171">Failed to load ${failLabel}.</span>`; });
 }
 
-function renderChatPicker({ headerHtml, onSelect }) {
-  const bubble = addMessage('bot', '<div class="status-text">Loading saved chats…</div>').parentElement.querySelector('.bubble');
-  fetch('/api/chats')
-  .then(parseJsonResponse)
-  .then(sessions => {
-    if (!sessions.length) {
-      bubble.innerHTML = 'No saved chats yet — recording is always on, so <code>/chat-rename &lt;name&gt;</code> names the one in progress.';
-      scrollBottom();
-      return;
-    }
-    const list = document.createElement('div');
-    list.innerHTML = headerHtml;
-    const selList = document.createElement('div');
-    selList.className = 'sel-list';
-
-    sessions.forEach(s => {
-      const date = s.saved_at ? new Date(s.saved_at).toLocaleDateString() : '';
-      const row = document.createElement('div');
-      row.className = 'sel-row';
-
-      const btn = document.createElement('button');
-      btn.className = 'sel-btn';
-      btn.dataset.name = s.name;
-      btn.innerHTML = `<span>${escapeHtml(s.name)}</span>
-        <span style="color:#475569;font-size:0.8em">${s.image_count} image(s)${date ? ' · ' + date : ''}</span>`;
-      btn.addEventListener('click', () => onSelect(btn.dataset.name, bubble));
-
-      const delBtn = document.createElement('button');
-      delBtn.className = 'sel-del-btn';
-      delBtn.title = 'Delete chat';
-      delBtn.innerHTML = '🗑';
-      delBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const name = btn.dataset.name;
-        delBtn.disabled = true;
-        delBtn.style.opacity = '0.4';
-        fetch('/api/chats/' + encodeURIComponent(name), { method: 'DELETE' })
-        .then(parseJsonResponse)
-        .then(data => {
-          if (data.error) throw new Error(data.error);
-          row.remove();
-          document.dispatchEvent(new CustomEvent('chats-changed'));
-          if (!selList.querySelector('.sel-row')) {
-            bubble.innerHTML = 'No saved chats yet — recording is always on, so <code>/chat-rename &lt;name&gt;</code> names the one in progress.';
-          }
-          scrollBottom();
-        })
-        .catch(err => {
-          delBtn.disabled = false;
-          delBtn.style.opacity = '';
-          addMessage('bot', `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
-          scrollBottom();
-        });
-      });
-
-      row.appendChild(btn);
-      row.appendChild(delBtn);
-      selList.appendChild(row);
-    });
-
-    list.appendChild(selList);
-    bubble.innerHTML = '';
-    bubble.appendChild(list);
-    scrollBottom();
-  })
-  .catch(() => {
-    bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load chats.</span>';
-    scrollBottom();
-  });
+// Reset all per-tab state and start recording into a fresh temporary chat.
+// This is the logic behind the sidebar's "new chat" button (sidebar.js calls
+// deps.newChat()); it used to also back the removed /chat-new slash command.
+function newChat() {
+  state.history.length = 0;
+  state.historyIdx = -1;
+  state.savedDraft = '';
+  state.sessionImages.length = 0;
+  for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
+  for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
+  state.lastSequence = null;
+  state.fauxFullscreenEls.clear();
+  document.body.style.overflow = '';
+  state.currentServer = null;
+  state.currentWorkflow = null;
+  state.currentFaceWorkflow = null;
+  state.currentUpscaleWorkflow = null;
+  state.currentImage2ImageWorkflow = null;
+  state.currentImage2VideoWorkflow = null;
+  state.currentInpaintingWorkflow = null;
+  state.lastFaceDetailPrompt = null;
+  state.lastInpaintingPrompt = null;
+  state.extraPrompt = null;
+  state.currentResolution = { width: 1365, height: 768 };
+  state.currentGenerationSteps = null;
+  state.currentDenoise = { ...DEFAULT_DENOISE };
+  state.currentVideoSettings = { ...DEFAULT_VIDEO_SETTINGS };
+  state.videoLock = 'fps';
+  state.iterations = 1;
+  state.iterationsFromSequence = false;
+  state.sequenceReplacements = [];
+  state.image2imageReplacements = [];
+  state.image2imageOverridePrompt = null;
+  state.image2videoReplacements = [];
+  state.image2videoOverridePrompt = null;
+  state.faceDetailReplacements = [];
+  // Recording is always on: start the new chat recording into a fresh
+  // temporary name rather than continuing to append to the previous one.
+  // Detach (without cancelling) any sequence run this tab was watching —
+  // the server-side job keeps running and appending to its own chat,
+  // recoverable later via the sidebar, but this tab stops rendering its
+  // events into the fresh chat we're about to build.
+  deps.detachActiveSequenceRun();
+  state.recordingName = deps.newTempSessionName();
+  messagesEl.innerHTML = '';
+  deps.updateHeaderStatus();
+  addMessage('bot', 'New chat started. Describe the image you\'d like to generate.');
+  document.dispatchEvent(new CustomEvent('chats-changed'));
 }
 
 function showChatSummary() {
@@ -1379,9 +1358,6 @@ export function makeCommandHandler(deps) {
         { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
         { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
         { sig: '/server', desc: 'choose a ComfyUI server' },
-        { sig: '/chats [name]', desc: 'restore a previously saved chat; omit name to pick from a menu' },
-        { sig: '/chat-new', desc: 'start a completely new chat, resetting all settings to defaults' },
-        { sig: '/chat-rename <name>', desc: 'recording is always on — this renames the current (temporary) chat to a memorable name so /chats can restore it later; no name shows the current name' },
         { sig: '/chat-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
         { sig: '/settings-backup', desc: 'download a ZIP of all server-side settings for backup — macros, prompt aliases, saved sessions and the server catalogue (<code>servers.json</code>)', notes: 'server-side files only; per-tab generation settings live in a saved session' },
         { sig: '/settings-save', desc: 'push a snapshot of all generation settings (workflows, resolution, denoise, video settings, override prompts, replacements) onto an in-memory stack; pair with <code>/settings-restore</code> to bracket a macro so it leaves settings unchanged' },
@@ -2012,122 +1988,6 @@ export function makeCommandHandler(deps) {
       document.body.style.overflow = '';
       messagesEl.innerHTML = '';
       addMessage('bot', 'Chat cleared. Settings, prompt history and session images preserved — describe the image you\'d like to generate.');
-      return;
-    }
-
-    if (cmd === '/chat-new') {
-      state.history.length = 0;
-      state.historyIdx = -1;
-      state.savedDraft = '';
-      state.sessionImages.length = 0;
-      for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
-      for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
-      state.lastSequence = null;
-      state.fauxFullscreenEls.clear();
-      document.body.style.overflow = '';
-      state.currentServer = null;
-      state.currentWorkflow = null;
-      state.currentFaceWorkflow = null;
-      state.currentUpscaleWorkflow = null;
-      state.currentImage2ImageWorkflow = null;
-      state.currentImage2VideoWorkflow = null;
-      state.currentInpaintingWorkflow = null;
-      state.lastFaceDetailPrompt = null;
-      state.lastInpaintingPrompt = null;
-      state.extraPrompt = null;
-      state.currentResolution = { width: 1365, height: 768 };
-      state.currentGenerationSteps = null;
-      state.currentDenoise = { ...DEFAULT_DENOISE };
-      state.currentVideoSettings = { ...DEFAULT_VIDEO_SETTINGS };
-      state.videoLock = 'fps';
-      state.iterations = 1;
-      state.iterationsFromSequence = false;
-      state.sequenceReplacements = [];
-      state.image2imageReplacements = [];
-      state.image2imageOverridePrompt = null;
-      state.image2videoReplacements = [];
-      state.image2videoOverridePrompt = null;
-      state.faceDetailReplacements = [];
-      // Recording is always on: start the new chat recording into a fresh
-      // temporary name rather than continuing to append to the previous one.
-      // Detach (without cancelling) any sequence run this tab was watching —
-      // the server-side job keeps running and appending to its own chat,
-      // recoverable later via /chats, but this tab stops rendering its
-      // events into the fresh chat we're about to build.
-      deps.detachActiveSequenceRun();
-      state.recordingName = deps.newTempSessionName();
-      messagesEl.innerHTML = '';
-      deps.updateHeaderStatus();
-      addMessage('bot', 'New chat started. Describe the image you\'d like to generate.');
-      document.dispatchEvent(new CustomEvent('chats-changed'));
-      return;
-    }
-
-    if (cmd === '/chat-rename') {
-      // Recording is always on. This command no longer toggles it — it renames
-      // the active (temporary) chat to a memorable name, moving the file
-      // server-side so any images already recorded (and any in-flight server run)
-      // follow into the new name.
-      const rawName = raw.slice('/chat-rename'.length).trim();
-      addMessage('user', escapeHtml(raw), raw);
-
-      if (!rawName) {
-        addMessage('bot', `Currently recording to chat <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '—')}</strong>. Run <code>/chat-rename &lt;name&gt;</code> to rename it, or <code>/chats</code> to restore a saved one.`);
-        scrollBottom();
-        return;
-      }
-
-      const from = state.recordingName;
-      const bubble = addMessage('bot', `<div class="status-text">Renaming chat to <strong>${escapeHtml(rawName)}</strong>…</div>`).parentElement.querySelector('.bubble');
-      fetch('/api/chats/rename', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, to: rawName }),
-      })
-      .then(parseJsonResponse)
-      .then(data => {
-        if (data.error) throw new Error(data.error);
-        if (state.liveRunSession === from) state.liveRunSession = data.name;
-        state.recordingName = data.name;
-        bubble.innerHTML = `Recording to chat <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> — auto-saved after each image. Restore it later with <code>/chats ${escapeHtml(data.name)}</code>.`;
-        document.dispatchEvent(new CustomEvent('chats-changed'));
-        scrollBottom();
-      })
-      .catch(err => {
-        bubble.innerHTML = `<span style="color:#f87171">⚠ Rename failed: ${escapeHtml(err.message)}</span>`;
-        scrollBottom();
-      });
-      return;
-    }
-
-    if (cmd === '/chats') {
-      const chatArg = raw.slice('/chats'.length).trim();
-      const loadChat = (name, bubble) => {
-        bubble.innerHTML = `<div class="status-text">Loading <strong>${escapeHtml(name)}</strong>…</div>`;
-        fetch('/api/chats/' + encodeURIComponent(name))
-        .then(parseJsonResponse)
-        .then(data => {
-          if (data.error) throw new Error(data.error);
-          deps.restoreSession(data);
-          bubble.innerHTML = `Chat <strong style="color:#a78bfa">${escapeHtml(name)}</strong> restored.`;
-          scrollBottom();
-          showChatSummary();
-        })
-        .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ Load failed: ${escapeHtml(err.message)}</span>`;
-          scrollBottom();
-        });
-      };
-      if (chatArg) {
-        addMessage('user', escapeHtml(raw), raw);
-        const bubble = addMessage('bot', `<div class="status-text">Loading <strong>${escapeHtml(chatArg)}</strong>…</div>`);
-        loadChat(chatArg, bubble);
-      } else {
-        renderChatPicker({
-          headerHtml: '<strong>Select a chat to restore:</strong>',
-          onSelect: loadChat,
-        });
-      }
       return;
     }
 
@@ -2980,5 +2840,5 @@ export function makeCommandHandler(deps) {
     addMessage('bot', `Unknown command <code>${escapeHtml(cmd)}</code> — type <code>/help</code> for available commands.`);
   }
 
-  return { handleSlashCommand, runDefaultMacroOnImage };
+  return { handleSlashCommand, runDefaultMacroOnImage, newChat };
 }

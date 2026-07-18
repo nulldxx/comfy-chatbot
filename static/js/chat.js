@@ -1937,7 +1937,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
 // Wire up the command handler (after all deps are defined)
 // ---------------------------------------------------------------------------
 
-const { handleSlashCommand, runDefaultMacroOnImage } = makeCommandHandler({
+const { handleSlashCommand, runDefaultMacroOnImage, newChat } = makeCommandHandler({
   runGeneration,
   runFaceDetail,
   runUpscale,
@@ -1958,7 +1958,7 @@ const { handleSlashCommand, runDefaultMacroOnImage } = makeCommandHandler({
 // Mount the expandable chat sidebar (collapsed by default). It reuses the
 // command handler and restoreSession, so it must init after both are defined.
 initSidebar({
-  handleSlashCommand,
+  newChat,
   restoreSession,
   getRecordingName: () => state.recordingName,
   setRecordingName: (n) => { state.recordingName = n; },
