@@ -41,6 +41,8 @@ export const SLASH_COMMANDS = [
   { cmd: '/image2video-replacement-reset', desc: 'clear all image2video replacements',                                                args: ''  },
   { cmd: '/image2video-set-prompt',       desc: 'set an override prompt for prompt-less /image2video',                                args: ' ' },
   { cmd: '/image2video-set-prompt-reset', desc: 'clear the image2video override prompt',                                              args: ''  },
+  { cmd: '/image2video-set-ref-image',    desc: 'pin the last image as the face-ID identity reference',                              args: ''  },
+  { cmd: '/image2video-set-ref-image-reset', desc: 'clear the pinned face-ID reference image',                                        args: ''  },
   { cmd: '/image2video-workflow',         desc: 'choose an image2video workflow (no arg = picker)',                                   args: ' ' },
   { cmd: '/image2video-workflow-reset',   desc: 'reset the image2video workflow to its default',                                       args: ''  },
   { cmd: '/inpaint-workflow',             desc: 'choose an inpainting workflow (no arg = picker)',                                    args: ' ' },

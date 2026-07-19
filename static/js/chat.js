@@ -692,8 +692,9 @@ function runImage2Video(prompt, image) {
   state.iterationsFromSequence = false;
   sendBtn.disabled = true;
   const lastFrame = (state.lastFrameUrl && state.lastFrameUrl !== image) ? state.lastFrameUrl : null;
+  const refImage = (state.refImageUrl && state.refImageUrl !== image) ? state.refImageUrl : null;
   return runGeneration(prompt, '', null, {
-    image2video: { image, lastFrame, workflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW },
+    image2video: { image, lastFrame, refImage, workflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW },
   })
     .finally(() => { sendBtn.disabled = false; });
 }
@@ -1767,6 +1768,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
+      ...(image2video && image2video.refImage ? { ref_image: image2video.refImage } : {}),
       ...(inpaint ? { denoise: inpaint.denoise != null ? inpaint.denoise : state.currentDenoise.inpaint } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),

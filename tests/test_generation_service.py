@@ -7,8 +7,10 @@ import os
 import sys
 import json
 import threading
+import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -418,6 +420,76 @@ class RenameAndRetargetSessionTests(unittest.TestCase):
         with patch.object(gs, "rename_session", return_value="dst"):
             gs.rename_and_retarget_session("temp-1", "dst")
         self.assertEqual(gs.jobs["test-rename-job"]["recording_name"], "other-session")
+
+
+class ReferenceImageMappingTests(unittest.TestCase):
+    """The <REFERENCE_IMAGE> placeholder (LTX face-ID image2video) is filled from a
+    pinned input_reference when supplied, else falls back to the uploaded
+    <INPUT_IMAGE> filename — with no second upload for the fallback."""
+
+    TEMPLATE = json.dumps({
+        "1": {"inputs": {"image": "<INPUT_IMAGE>"}, "class_type": "LoadImage"},
+        "2": {"inputs": {"image": "<REFERENCE_IMAGE>"}, "class_type": "LoadImage"},
+    })
+
+    def _make_job(self):
+        gs.jobs["test-ref-job"] = {
+            "status": "pending", "channel": gs._JobChannel(), "images": [],
+            "assets": [], "cancel": threading.Event(), "server": "http://s",
+            "prompt_id": None, "kind": "video", "workflow_name": "wf",
+            "prompt": "p", "summary": "s", "started_at": 0.0,
+            "finished_at": None, "error": None,
+        }
+        return "test-ref-job"
+
+    def tearDown(self):
+        gs.jobs.pop("test-ref-job", None)
+
+    def _run_and_capture(self, tmpdir, input_reference):
+        """Run the core just far enough to capture the workflow handed to
+        submit_workflow, then short-circuit via JobCancelled."""
+        from ComfyServer import JobCancelled
+        (Path(tmpdir) / "wf.json").write_text(self.TEMPLATE)
+
+        captured = {}
+        server = MagicMock()
+        server.upload_image.side_effect = lambda p: f"up_{Path(p).name}"
+
+        def _submit(workflow):
+            captured["workflow"] = workflow
+            raise JobCancelled()
+        server.submit_workflow.side_effect = _submit
+
+        job_id = self._make_job()
+        job = gs.jobs[job_id]
+        with patch.object(gs, "ComfyServer", return_value=server):
+            with self.assertRaises(JobCancelled):
+                gs._run_generation_core(
+                    job_id, job["channel"], job["cancel"], "p", [],
+                    "http://s", "linux", "wf", workflow_dir=Path(tmpdir),
+                    input_image=Path("/src/first.png"),
+                    input_reference=input_reference,
+                    duration=2, frames=48, fps=24,
+                    video_width=1280, video_height=720,
+                )
+        return captured["workflow"], server
+
+    def test_pinned_reference_uploaded_separately(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wf, server = self._run_and_capture(tmp, Path("/src/face.png"))
+            self.assertEqual(wf["1"]["inputs"]["image"], "up_first.png")
+            self.assertEqual(wf["2"]["inputs"]["image"], "up_face.png")
+            uploaded = {c.args[0].name for c in server.upload_image.call_args_list}
+            self.assertEqual(uploaded, {"first.png", "face.png"})
+
+    def test_reference_falls_back_to_input_image_without_reupload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wf, server = self._run_and_capture(tmp, None)
+            # Reference reuses the first frame's uploaded filename...
+            self.assertEqual(wf["1"]["inputs"]["image"], "up_first.png")
+            self.assertEqual(wf["2"]["inputs"]["image"], "up_first.png")
+            # ...and the source image is uploaded exactly once (no second upload).
+            self.assertEqual(server.upload_image.call_count, 1)
 
 
 if __name__ == "__main__":

@@ -58,6 +58,10 @@ export const state = {
   // Image2video end-frame selection
   lastFrameUrl:                null,
 
+  // Image2video identity reference face (LTX face-ID workflows), pinned via
+  // /image2video-set-ref-image; when null the triggered image is used instead.
+  refImageUrl:                 null,
+
   // Active slideshow controller (keyboard navigation target)
   activeSlideshowCtrl:         null,
 

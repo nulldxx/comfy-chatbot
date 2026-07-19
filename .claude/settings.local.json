@@ -19,7 +19,17 @@
       "Bash(docker-compose up *)",
       "Bash(git add *)",
       "Bash(git reset *)",
-      "Bash(cd *)"
+      "Bash(cd *)",
+      "Bash(systemctl --user stop openclaw-gateway.service)",
+      "Bash(systemctl --user is-active openclaw-gateway.service)",
+      "Bash(echo \"stopped: $\\(systemctl --user is-active openclaw-gateway.service\\)\")",
+      "Bash(awk '{print $5, $9}')",
+      "Bash(ssh ben@moria 'find ~/comfy-workflows -type f')",
+      "Bash(ssh ben@moria 'ls -la ~/comfy-workflows/image2video/ 2>&1; echo \"=== dirs ===\"; find ~/comfy-workflows -maxdepth 2 -type d -not -path \"*/.git*\"')",
+      "Bash(mkdir -p /tmp/claude-1000/-home-ben-Code-comfy-chatbot/dc10dd36-b758-4414-8100-dfb5c3ea043f/scratchpad/wf)",
+      "Bash(scp -q ben@moria:'~/comfy-workflows/image2video/ltx2_3_i2v.json' /tmp/claude-1000/-home-ben-Code-comfy-chatbot/dc10dd36-b758-4414-8100-dfb5c3ea043f/scratchpad/wf/ltx2_3_i2v.json)",
+      "Bash(scp -q ben@moria:'~/comfy-workflows/image2video/eros-ltx23_i2v.json' /tmp/claude-1000/-home-ben-Code-comfy-chatbot/dc10dd36-b758-4414-8100-dfb5c3ea043f/scratchpad/wf/eros-ltx23_i2v.json)",
+      "Bash(python3 -c ' *)"
     ],
     "deny": [],
     "ask": []

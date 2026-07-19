@@ -836,6 +836,16 @@ def api_image2video():
         if err:
             return err
 
+    # Optional identity reference face for face-preservation workflows (the LTX 2.3
+    # face-ID templates' <REFERENCE_IMAGE>). Pinned via /image2video-set-ref-image;
+    # when absent the reference falls back to the source image (see run_generation).
+    ref_image_url = (data.get("ref_image") or "").strip()
+    ref_image_path = None
+    if ref_image_url:
+        _, ref_image_path, err = resolve_input_image(ref_image_url)
+        if err:
+            return err
+
     available = list_image2video_workflows()
     workflow_name, err = resolve_workflow(
         data.get("workflow") or COMFY_IMAGE2VIDEO_WORKFLOW, available, "image2video"
@@ -861,7 +871,7 @@ def api_image2video():
     job_id = start_generation_job(
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
-        input_last_frame=last_frame_path,
+        input_last_frame=last_frame_path, input_reference=ref_image_path,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
     )

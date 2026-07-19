@@ -595,6 +595,7 @@ export function makeCommandHandler(deps) {
     state.image2imageOverridePrompt = null;
     state.image2videoReplacements = [];
     state.image2videoOverridePrompt = null;
+    state.refImageUrl = null;
     state.faceDetailReplacements = [];
     state.autoFaceDetail = false;
     // Recording is always on: start the new chat recording into a fresh
@@ -933,6 +934,25 @@ export function makeCommandHandler(deps) {
       addMessage('user', escapeHtml(raw), raw);
       state.image2videoOverridePrompt = null;
       addMessage('bot', 'Image2video override prompt cleared.');
+      return;
+    }
+
+    if (cmd === '/image2video-set-ref-image') {
+      addMessage('user', escapeHtml(raw), raw);
+      if (!state.sessionImages.length) {
+        addMessage('bot', 'No image in this chat yet to use as a reference. Generate or load one first, then run <code>/image2video-set-ref-image</code>.');
+        return;
+      }
+      const url = state.sessionImages[state.sessionImages.length - 1];
+      state.refImageUrl = url;
+      addMessage('bot', `Reference image set to the last image. It will be used as the identity reference for face-preserving image2video (the LTX face-ID workflows) until cleared with <code>/image2video-set-ref-image-reset</code>.`);
+      return;
+    }
+
+    if (cmd === '/image2video-set-ref-image-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.refImageUrl = null;
+      addMessage('bot', 'Reference image cleared. Face-ID image2video will use the image you run it on (its first frame, for the first/last-frame workflow).');
       return;
     }
 
@@ -1355,6 +1375,8 @@ export function makeCommandHandler(deps) {
         { sig: '/image2video-replacement-reset', desc: 'clear all image2video replacements' },
         { sig: '/image2video-set-prompt <prompt>', desc: 'override prompt used by <code>/image2video</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
         { sig: '/image2video-set-prompt-reset', desc: 'clear the override prompt' },
+        { sig: '/image2video-set-ref-image', desc: 'pin the last image as the identity reference for face-preserving image2video (the LTX face-ID workflows); no arg needed' },
+        { sig: '/image2video-set-ref-image-reset', desc: 'clear the pinned reference; face-ID image2video then uses the image you run it on' },
         { sig: '/image2video-workflow [name]', desc: 'choose which image2video workflow <code>/image2video</code> uses (no arg = picker)' },
         { sig: '/image2video-workflow-reset', desc: 'reset the image2video workflow to its default' },
         { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },

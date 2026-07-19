@@ -178,6 +178,7 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 | `<INPUT_IMAGE>` | Base64-encoded source image for img2img, face-detailer, and inpainting workflows |
 | `<INPUT_MASK>` | Base64-encoded B&W mask PNG for inpainting (white = area to repaint), uploaded separately via `/api/upload-mask` |
 | `<INPUT_LAST_FRAME>` | Source image for the optional end frame in first-frame/last-frame image2video. When no end frame is designated it falls back to `<INPUT_IMAGE>` and the guide is bypassed (see below) |
+| `<REFERENCE_IMAGE>` | Identity reference face for the LTX 2.3 face-ID image2video workflows (`LTXIdentityOverlapConditioning`). Pinned via the `/image2video-set-ref-image` command (sent as `ref_image` to `/api/image2video`); when none is pinned it falls back to `<INPUT_IMAGE>` (see the face-ID section below) |
 
 ### Numeric placeholders (replaced as bare JSON numbers, not quoted strings)
 
@@ -204,6 +205,15 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 - The guide is toggled by a float placeholder, `<LAST_FRAME_STRENGTH>` (a bare JSON number fed to a `PrimitiveFloat` node, `320:325`): `1.0` = on, `0.0` = off. The UI designates the end frame with the 🎞️ button on an image (`makeLastFrameButton` / global `lastFrameUrl` in `chat.js`); `/api/image2video` accepts a `last_frame` image URL.
 - When **no** end frame is supplied, `run_generation` strips the entire guide chain from the workflow graph after JSON parsing (`strip_last_frame_guide()` in `workflow.py`), removing nodes `270`, `320:325`, `320:331`, `320:332`, and `320:330`, and rewiring their downstream consumers directly to `LTXVConditioning` (`320:304`) and `LTXVImgToVideoInplace` (`320:296`). This is necessary because `LTXVAddGuide` at `strength=0.0` is **not** a true no-op — it still embeds the guide image into the latent at the last frame position, which causes a snap-back transition at the end of the video. Dummy placeholder values are still substituted before JSON parsing so the template parses cleanly, and the nodes are removed immediately after. When an end frame **is** supplied, strength is `1.0` and the second image drives the end frame.
 - Wiring: `Load Last Frame` (`270`) → `Resize Last Frame` (`320:331`) → `LTXVPreprocess` (`320:332`) → `LTXVAddGuide` (`320:330`). The guide takes its conditioning from `LTXVConditioning` (`320:304`) and its latent from the first-frame `LTXVImgToVideoInplace` (`320:296`); its outputs feed the pass-1 concat (`320:318`), pass-1 guider (`320:314`) and `LTXVCropGuides` (`320:284`).
+
+### Face-ID (identity-preserving) image2video detail
+
+- Two LTX 2.3 workflows in `image2video/` preserve a character's identity from a **reference face image** via an `LTXIdentityOverlapConditioning` node (`layout: "overlap"`) plus a FaceID LoRA and a caption-rewriting `TextGenerate` node that reads the reference face and merges its visible appearance into the caption. Both keep the `ref_t2v: ` caption prefix the identity model expects (`"ref_t2v: <PROMPT>"`).
+  - **`ltx23-faceid_i2v.json`** — *reference text-to-video*: an **empty** latent (`EmptyLTXVLatentVideo`), so the video content comes entirely from the prompt + the identity reference. **No first frame.** Frames are computed internally (`SimpleCalculatorKJ` = `((duration*fps)//8)*8+1`), so it has **no** `<FRAMES>` slot; it uses `<PROMPT>`, `<REFERENCE_IMAGE>`, `<DURATION>`, `<FPS>`, `<VIDEO_WIDTH>`, `<VIDEO_HEIGHT>`.
+  - **`ltx23-faceid-firstlast_i2v.json`** — the same identity graph with the proven first-frame (`LTXVImgToVideoInplace`) + optional last-frame (`LTXVAddGuide` @ `frame_idx = -1`) sub-chain spliced between the empty latent and `LTXVConcatAVLatent`, ahead of the identity node. Adds `<INPUT_IMAGE>`, `<INPUT_LAST_FRAME>`, `<LAST_FRAME_STRENGTH>` to the set above. The optional-end-frame handling is the **existing** `strip_last_frame_guide()` path (no end frame → strength `0.0`, guide chain removed, `LTXVConcatAVLatent` falls back to the first-frame `LTXVImgToVideoInplace` latent).
+- **The `<REFERENCE_IMAGE>` placeholder** is filled in `_run_generation_core` (`generation_service.py`), guarded on `"<REFERENCE_IMAGE>" in template`: a pinned reference (`input_reference`, uploaded) if supplied, else a fallback to the already-uploaded `<INPUT_IMAGE>` filename. So the reference is **override-with-fallback**: for the ref_t2v template the triggered image is the reference by default; for the first/last-frame template the **first frame** is the reference by default.
+- **UI:** `/image2video-set-ref-image` pins the last chat image into `state.refImageUrl` (reset in `newChat`; cleared by `/image2video-set-ref-image-reset`). `runImage2Video` sends it as `ref_image` (only when it differs from the triggered image). Pick either template with `/image2video-workflow`.
+- **⚠ Experimental composition:** in `ltx23-faceid-firstlast_i2v.json` the last-frame `LTXVAddGuide` and the identity overlap both add/crop guide frames (the graph's `LTXVCropGuides` uses the identity node's conditioning, not the AddGuide's). This combination must be **test-rendered in the ComfyUI editor**; if the last-frame guide isn't cropped cleanly, move the `AddGuide` to operate on the identity node's output latent/conditioning instead of before it, then re-export.
 
 ### Video settings detail
 
@@ -297,4 +307,4 @@ Deploying this needs the updated `archive-agent` on the host (the `host-mount`/
 The `docker-compose.yml` in this repo is an **example only**. The live deployment uses:
 
 - **Docker Compose file**: `~/dot-files/docker-compose/comfy-chatbot.yml`
-- **ComfyUI workflows**: `~/dot-files/comfyui/` (bind-mounted into the container at `/app/workflows`)
+- **ComfyUI workflows**: `~/comfy-workflows/` on the host `moria` (bind-mounted into the container at `/app/workflows` per that compose file; image2video templates live in `~/comfy-workflows/image2video/`)

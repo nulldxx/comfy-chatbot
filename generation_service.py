@@ -226,6 +226,7 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                          server_address, server_os, workflow_name,
                          width=None, height=None, steps=None, denoise=None, workflow_dir=None,
                          input_image=None, input_mask=None, input_last_frame=None,
+                         input_reference=None,
                          preserve_mtime_from=None,
                          cleanup_input_image=False, duration=None, frames=None, fps=None,
                          video_width=None, video_height=None, retry_event=None):
@@ -320,6 +321,19 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                     input_mask.unlink()
                 except OSError:
                     pass
+
+        # Identity reference image (face-preservation image2video, e.g. the LTX 2.3
+        # face-ID workflows). Uses a pinned reference when one is supplied, else falls
+        # back to the triggered source image (its first frame, for the first/last-frame
+        # variant) so the workflow is usable without /image2video-set-ref-image. Guarded
+        # on the template so other image2video workflows are unaffected; the fallback
+        # reuses the already-uploaded INPUT_IMAGE filename (no second upload).
+        if "<REFERENCE_IMAGE>" in template:
+            if input_reference is not None:
+                send("progress", message="Uploading reference image to ComfyUI...")
+                mapping["REFERENCE_IMAGE"] = server.upload_image(input_reference)
+            else:
+                mapping["REFERENCE_IMAGE"] = mapping.get("INPUT_IMAGE", "")
 
         # First-frame/last-frame conditioning (image2video). The template carries an
         # LTXVAddGuide node (frame_idx=-1) that conditions the model on an end frame.
