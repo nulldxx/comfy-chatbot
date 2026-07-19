@@ -1329,6 +1329,7 @@ export function makeCommandHandler(deps) {
         { sig: '/delete-all', desc: 'delete every image in the output folder (asks y/n first)' },
         { sig: '/delete-session', desc: 'delete all images from this session (chat + output folder)' },
         { sig: '/delete-today', desc: 'delete every image generated today (asks y/n first)' },
+        { sig: '/denoise', desc: 'set the default denoise strength for this session for face-detail, image2image, inpainting and upscale (sliders; Reset restores defaults 0.35 / 0.30 / 0.45 / 0.15)', notes: 'session-only; snapshotted by <code>/settings-save</code> and shown under <code>/settings</code>' },
         { sig: '/face-detail [N]', desc: 'run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image\'s prompt' },
         { sig: '/face-detail-prompt <prompt>', desc: 'set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image\'s own prompt (needs a <code>&lt;lora:…&gt;</code> tag)' },
         { sig: '/face-detail-prompt-reset', desc: 'clear that override so the face icons derive a prompt from each image again' },
