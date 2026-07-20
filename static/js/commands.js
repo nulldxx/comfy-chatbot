@@ -627,7 +627,7 @@ export function makeCommandHandler(deps) {
     if (sendBtn.disabled) return Promise.resolve();
     addMessage('user', `🤖 #${escapeHtml(name)}`, null);
     sendBtn.disabled = true;
-    // Slash commands like /image2image and /upscale always operate on the last
+    // Slash commands like /i2i and /upscale always operate on the last
     // entry in sessionImages. Move the target URL to the end so they pick the
     // right image instead of whatever was generated most recently.
     const sidx = state.sessionImages.indexOf(url);
@@ -762,29 +762,29 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/image2image-replacement') {
+    if (cmd === '/i2i-replacement') {
       addMessage('user', escapeHtml(raw), raw);
       if (!parts[1]) {
         if (!state.image2imageReplacements.length) {
-          addMessage('bot', `No image2image replacements set.<br>Usage: <code>/image2image-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to the original generation prompt when <code>/image2image</code> is run with no prompt.<br><code>/image2image-replacement-reset</code> removes them all.`);
+          addMessage('bot', `No image2image replacements set.<br>Usage: <code>/i2i-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to the original generation prompt when <code>/i2i</code> is run with no prompt.<br><code>/i2i-replacement-reset</code> removes them all.`);
         } else {
           const list = state.image2imageReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
-          addMessage('bot', `<strong>Image2image replacements:</strong><br>${list}<br><br><code>/image2image-replacement-reset</code> removes them all.`);
+          addMessage('bot', `<strong>Image2image replacements:</strong><br>${list}<br><br><code>/i2i-replacement-reset</code> removes them all.`);
         }
         return;
       }
       const from = parts[1];
       const to   = parts.slice(2).join(' ');
       if (!to) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/image2image-replacement Dog Cat</code></span>');
+        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/i2i-replacement Dog Cat</code></span>');
         return;
       }
       state.image2imageReplacements.push([from, to]);
-      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/image2image</code> runs with no prompt.`);
+      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/i2i</code> runs with no prompt.`);
       return;
     }
 
-    if (cmd === '/image2image-replacement-reset') {
+    if (cmd === '/i2i-replacement-reset') {
       addMessage('user', escapeHtml(raw), raw);
       state.image2imageReplacements = [];
       addMessage('bot', 'Image2image replacements cleared.');
@@ -834,31 +834,31 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/image2image-set-prompt') {
+    if (cmd === '/i2i-set-prompt') {
       addMessage('user', escapeHtml(raw), raw);
-      const override = raw.slice('/image2image-set-prompt'.length).trim();
+      const override = raw.slice('/i2i-set-prompt'.length).trim();
       if (!override) {
         if (state.image2imageOverridePrompt) {
-          addMessage('bot', `Current image2image override prompt: <code>${escapeHtml(state.image2imageOverridePrompt)}</code><br>Usage: <code>/image2image-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/image2image</code> (or the 🎨 button) runs without its own prompt. <code>/image2image-set-prompt-reset</code> clears it.`);
+          addMessage('bot', `Current image2image override prompt: <code>${escapeHtml(state.image2imageOverridePrompt)}</code><br>Usage: <code>/i2i-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/i2i</code> (or the 🎨 button) runs without its own prompt. <code>/i2i-set-prompt-reset</code> clears it.`);
         } else {
-          addMessage('bot', 'No image2image override prompt set.<br>Usage: <code>/image2image-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/image2image</code> (or the 🎨 button) runs without its own prompt. Useful after a <code>/review</code> when the original prompts aren\'t available.');
+          addMessage('bot', 'No image2image override prompt set.<br>Usage: <code>/i2i-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/i2i</code> (or the 🎨 button) runs without its own prompt. Useful after a <code>/review</code> when the original prompts aren\'t available.');
         }
         return;
       }
       state.image2imageOverridePrompt = override;
-      addMessage('bot', `Image2image override prompt set: <code>${escapeHtml(override)}</code>. It will be used by <code>/image2image</code> and the 🎨 button until cleared with <code>/image2image-set-prompt-reset</code>.`);
+      addMessage('bot', `Image2image override prompt set: <code>${escapeHtml(override)}</code>. It will be used by <code>/i2i</code> and the 🎨 button until cleared with <code>/i2i-set-prompt-reset</code>.`);
       return;
     }
 
-    if (cmd === '/image2image-set-prompt-reset') {
+    if (cmd === '/i2i-set-prompt-reset') {
       addMessage('user', escapeHtml(raw), raw);
       state.image2imageOverridePrompt = null;
       addMessage('bot', 'Image2image override prompt cleared.');
       return;
     }
 
-    if (cmd === '/image2image-workflow') {
-      const wfArg = raw.slice('/image2image-workflow'.length).trim();
+    if (cmd === '/i2i-workflow') {
+      const wfArg = raw.slice('/i2i-workflow'.length).trim();
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentImage2ImageWorkflow = wfArg;
@@ -878,86 +878,86 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/image2image-workflow-reset') {
+    if (cmd === '/i2i-workflow-reset') {
       addMessage('user', escapeHtml(raw), raw);
       state.currentImage2ImageWorkflow = null;
       addMessage('bot', 'Image2image workflow reset to default.');
       return;
     }
 
-    if (cmd === '/image2video-replacement') {
+    if (cmd === '/i2v-replacement') {
       addMessage('user', escapeHtml(raw), raw);
       if (!parts[1]) {
         if (!state.image2videoReplacements.length) {
-          addMessage('bot', `No image2video replacements set.<br>Usage: <code>/image2video-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to the original generation prompt when <code>/image2video</code> is run with no prompt.<br><code>/image2video-replacement-reset</code> removes them all.`);
+          addMessage('bot', `No image2video replacements set.<br>Usage: <code>/i2v-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Applied to the original generation prompt when <code>/i2v</code> is run with no prompt.<br><code>/i2v-replacement-reset</code> removes them all.`);
         } else {
           const list = state.image2videoReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
-          addMessage('bot', `<strong>Image2video replacements:</strong><br>${list}<br><br><code>/image2video-replacement-reset</code> removes them all.`);
+          addMessage('bot', `<strong>Image2video replacements:</strong><br>${list}<br><br><code>/i2v-replacement-reset</code> removes them all.`);
         }
         return;
       }
       const from = parts[1];
       const to   = parts.slice(2).join(' ');
       if (!to) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/image2video-replacement Dog Cat</code></span>');
+        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/i2v-replacement Dog Cat</code></span>');
         return;
       }
       state.image2videoReplacements.push([from, to]);
-      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/image2video</code> runs with no prompt.`);
+      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/i2v</code> runs with no prompt.`);
       return;
     }
 
-    if (cmd === '/image2video-replacement-reset') {
+    if (cmd === '/i2v-replacement-reset') {
       addMessage('user', escapeHtml(raw), raw);
       state.image2videoReplacements = [];
       addMessage('bot', 'Image2video replacements cleared.');
       return;
     }
 
-    if (cmd === '/image2video-set-prompt') {
+    if (cmd === '/i2v-set-prompt') {
       addMessage('user', escapeHtml(raw), raw);
-      const override = raw.slice('/image2video-set-prompt'.length).trim();
+      const override = raw.slice('/i2v-set-prompt'.length).trim();
       if (!override) {
         if (state.image2videoOverridePrompt) {
-          addMessage('bot', `Current image2video override prompt: <code>${escapeHtml(state.image2videoOverridePrompt)}</code><br>Usage: <code>/image2video-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/image2video</code> (or the 🎬 button) runs without its own prompt. <code>/image2video-set-prompt-reset</code> clears it.`);
+          addMessage('bot', `Current image2video override prompt: <code>${escapeHtml(state.image2videoOverridePrompt)}</code><br>Usage: <code>/i2v-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/i2v</code> (or the 🎬 button) runs without its own prompt. <code>/i2v-set-prompt-reset</code> clears it.`);
         } else {
-          addMessage('bot', 'No image2video override prompt set.<br>Usage: <code>/image2video-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/image2video</code> (or the 🎬 button) runs without its own prompt. Useful after a <code>/review</code> when the original prompts aren\'t available.');
+          addMessage('bot', 'No image2video override prompt set.<br>Usage: <code>/i2v-set-prompt &lt;prompt&gt;</code> — overrides the per-image original prompt when <code>/i2v</code> (or the 🎬 button) runs without its own prompt. Useful after a <code>/review</code> when the original prompts aren\'t available.');
         }
         return;
       }
       state.image2videoOverridePrompt = override;
-      addMessage('bot', `Image2video override prompt set: <code>${escapeHtml(override)}</code>. It will be used by <code>/image2video</code> and the 🎬 button until cleared with <code>/image2video-set-prompt-reset</code>.`);
+      addMessage('bot', `Image2video override prompt set: <code>${escapeHtml(override)}</code>. It will be used by <code>/i2v</code> and the 🎬 button until cleared with <code>/i2v-set-prompt-reset</code>.`);
       return;
     }
 
-    if (cmd === '/image2video-set-prompt-reset') {
+    if (cmd === '/i2v-set-prompt-reset') {
       addMessage('user', escapeHtml(raw), raw);
       state.image2videoOverridePrompt = null;
       addMessage('bot', 'Image2video override prompt cleared.');
       return;
     }
 
-    if (cmd === '/image2video-set-ref-image') {
+    if (cmd === '/i2v-set-ref-image') {
       addMessage('user', escapeHtml(raw), raw);
       if (!state.sessionImages.length) {
-        addMessage('bot', 'No image in this chat yet to use as a reference. Generate or load one first, then run <code>/image2video-set-ref-image</code>.');
+        addMessage('bot', 'No image in this chat yet to use as a reference. Generate or load one first, then run <code>/i2v-set-ref-image</code>.');
         return;
       }
       const url = state.sessionImages[state.sessionImages.length - 1];
       state.refImageUrl = url;
-      addMessage('bot', `Reference image set to the last image. It will be used as the identity reference for face-preserving image2video (the LTX face-ID workflows) until cleared with <code>/image2video-set-ref-image-reset</code>.`);
+      addMessage('bot', `Reference image set to the last image. It will be used as the identity reference for face-preserving image2video (the LTX face-ID workflows) until cleared with <code>/i2v-set-ref-image-reset</code>.`);
       return;
     }
 
-    if (cmd === '/image2video-set-ref-image-reset') {
+    if (cmd === '/i2v-set-ref-image-reset') {
       addMessage('user', escapeHtml(raw), raw);
       state.refImageUrl = null;
       addMessage('bot', 'Reference image cleared. Face-ID image2video will use the image you run it on (its first frame, for the first/last-frame workflow).');
       return;
     }
 
-    if (cmd === '/image2video-workflow') {
-      const wfArg = raw.slice('/image2video-workflow'.length).trim();
+    if (cmd === '/i2v-workflow') {
+      const wfArg = raw.slice('/i2v-workflow'.length).trim();
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentImage2VideoWorkflow = wfArg;
@@ -977,27 +977,27 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/image2video-workflow-reset') {
+    if (cmd === '/i2v-workflow-reset') {
       addMessage('user', escapeHtml(raw), raw);
       state.currentImage2VideoWorkflow = null;
       addMessage('bot', 'Image2video workflow reset to default.');
       return;
     }
 
-    if (cmd === '/image2video') {
+    if (cmd === '/i2v') {
       addMessage('user', escapeHtml(raw), raw);
       if (!state.sessionImages.length) {
         addMessage('bot', 'No image from this session for image2video — generate one first.');
         return;
       }
-      const i2vArg = raw.slice('/image2video'.length).trim();
+      const i2vArg = raw.slice('/i2v'.length).trim();
       if (i2vArg !== '' && !/^\d+$/.test(i2vArg)) {
-        addMessage('bot', '<span style="color:#f87171">⚠ <code>/image2video</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/image2video-set-prompt &lt;prompt&gt;</code> first.</span>');
+        addMessage('bot', '<span style="color:#f87171">⚠ <code>/i2v</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/i2v-set-prompt &lt;prompt&gt;</code> first.</span>');
         return;
       }
       const i2vN = i2vArg !== '' ? parseInt(i2vArg, 10) : 1;
       if (i2vN < 1) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/image2video</code> or <code>/image2video &lt;N&gt;</code></span>');
+        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/i2v</code> or <code>/i2v &lt;N&gt;</code></span>');
         return;
       }
       const i2vTargets = state.sessionImages.slice(-i2vN);
@@ -1014,7 +1014,7 @@ export function makeCommandHandler(deps) {
             const meta = state.imageVideoMeta[img];
             if (!orig && !(meta && meta.action)) {
               i2vAborted = true;
-              addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
+              addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/i2v-set-prompt &lt;prompt&gt;</code></span>');
               return;
             }
             const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
@@ -1137,20 +1137,20 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/image2image') {
+    if (cmd === '/i2i') {
       addMessage('user', escapeHtml(raw), raw);
       if (!state.sessionImages.length) {
         addMessage('bot', 'No image from this session for image2image — generate one first.');
         return;
       }
-      const i2iArg = raw.slice('/image2image'.length).trim();
+      const i2iArg = raw.slice('/i2i'.length).trim();
       if (i2iArg !== '' && !/^\d+$/.test(i2iArg)) {
-        addMessage('bot', '<span style="color:#f87171">⚠ <code>/image2image</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/image2image-set-prompt &lt;prompt&gt;</code> first.</span>');
+        addMessage('bot', '<span style="color:#f87171">⚠ <code>/i2i</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/i2i-set-prompt &lt;prompt&gt;</code> first.</span>');
         return;
       }
       const i2iN = i2iArg !== '' ? parseInt(i2iArg, 10) : 1;
       if (i2iN < 1) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/image2image</code> or <code>/image2image &lt;N&gt;</code></span>');
+        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/i2i</code> or <code>/i2i &lt;N&gt;</code></span>');
         return;
       }
       const i2iTargets = state.sessionImages.slice(-i2iN);
@@ -1166,7 +1166,7 @@ export function makeCommandHandler(deps) {
             const orig = state.imagePrompts[img];
             if (!orig) {
               i2iAborted = true;
-              addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
+              addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/i2i-set-prompt &lt;prompt&gt;</code></span>');
               return;
             }
             prompt = applyReplacements(orig, state.image2imageReplacements);
@@ -1178,11 +1178,11 @@ export function makeCommandHandler(deps) {
       return i2iChain;
     }
 
-    if (cmd === '/workflow-iterate') {
-      const master = raw.slice('/workflow-iterate'.length).trim();
+    if (cmd === '/t2i-workflow-iterate') {
+      const master = raw.slice('/t2i-workflow-iterate'.length).trim();
       addMessage('user', escapeHtml(raw), raw);
       if (!master) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/workflow-iterate a cat astronaut</code> — then tick the workflows to run it against</span>');
+        addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/t2i-workflow-iterate a cat astronaut</code> — then tick the workflows to run it against</span>');
         return;
       }
       const bubble = addMessage('bot', '<div class="status-text">Loading workflows…</div>').parentElement.querySelector('.bubble');
@@ -1363,22 +1363,22 @@ export function makeCommandHandler(deps) {
         { sig: '/fscheck', desc: 'check and auto-repair the encrypted volumes (archive checked now; output volume checked at container startup)', notes: 'needs the <code>archive-agent</code> running on the host; runs <code>e2fsck -fy</code>' },
         { sig: '/generation-add-prompt <prompt>', desc: 'silently append extra text to every image generation prompt before it is sent (may include <code>&lt;lora:…&gt;</code> tags); no args clears it', notes: 'applies only to base image generation, not face-detail/upscale/inpaint/image2image/image2video; saved with the session' },
         { sig: '/help', desc: 'show this message' },
-        { sig: '/image2image [N]', desc: 're-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set' },
-        { sig: '/image2image-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/image2image</code> runs with no override (no args lists them)' },
-        { sig: '/image2image-replacement-reset', desc: 'clear all image2image replacements' },
-        { sig: '/image2image-set-prompt <prompt>', desc: 'override prompt used by <code>/image2image</code> and the 🎨 button instead of each image\'s original prompt (handy after a <code>/review</code>); no args shows it' },
-        { sig: '/image2image-set-prompt-reset', desc: 'clear the override prompt' },
-        { sig: '/image2image-workflow [name]', desc: 'choose which image2image workflow <code>/image2image</code> uses (no arg = picker)' },
-        { sig: '/image2image-workflow-reset', desc: 'reset the image2image workflow to its default' },
-        { sig: '/image2video [N]', desc: 'run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set' },
-        { sig: '/image2video-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/image2video</code> runs with no override (no args lists them)' },
-        { sig: '/image2video-replacement-reset', desc: 'clear all image2video replacements' },
-        { sig: '/image2video-set-prompt <prompt>', desc: 'override prompt used by <code>/image2video</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
-        { sig: '/image2video-set-prompt-reset', desc: 'clear the override prompt' },
-        { sig: '/image2video-set-ref-image', desc: 'pin the last image as the identity reference for face-preserving image2video (the LTX face-ID workflows); no arg needed' },
-        { sig: '/image2video-set-ref-image-reset', desc: 'clear the pinned reference; face-ID image2video then uses the image you run it on' },
-        { sig: '/image2video-workflow [name]', desc: 'choose which image2video workflow <code>/image2video</code> uses (no arg = picker)' },
-        { sig: '/image2video-workflow-reset', desc: 'reset the image2video workflow to its default' },
+        { sig: '/i2i [N]', desc: 're-run an image2image workflow over the last N images (default 1), each from its own original prompt, or the override prompt if set' },
+        { sig: '/i2i-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/i2i</code> runs with no override (no args lists them)' },
+        { sig: '/i2i-replacement-reset', desc: 'clear all image2image replacements' },
+        { sig: '/i2i-set-prompt <prompt>', desc: 'override prompt used by <code>/i2i</code> and the 🎨 button instead of each image\'s original prompt (handy after a <code>/review</code>); no args shows it' },
+        { sig: '/i2i-set-prompt-reset', desc: 'clear the override prompt' },
+        { sig: '/i2i-workflow [name]', desc: 'choose which image2image workflow <code>/i2i</code> uses (no arg = picker)' },
+        { sig: '/i2i-workflow-reset', desc: 'reset the image2image workflow to its default' },
+        { sig: '/i2v [N]', desc: 'run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set' },
+        { sig: '/i2v-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/i2v</code> runs with no override (no args lists them)' },
+        { sig: '/i2v-replacement-reset', desc: 'clear all image2video replacements' },
+        { sig: '/i2v-set-prompt <prompt>', desc: 'override prompt used by <code>/i2v</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
+        { sig: '/i2v-set-prompt-reset', desc: 'clear the override prompt' },
+        { sig: '/i2v-set-ref-image', desc: 'pin the last image as the identity reference for face-preserving image2video (the LTX face-ID workflows); no arg needed' },
+        { sig: '/i2v-set-ref-image-reset', desc: 'clear the pinned reference; face-ID image2video then uses the image you run it on' },
+        { sig: '/i2v-workflow [name]', desc: 'choose which image2video workflow <code>/i2v</code> uses (no arg = picker)' },
+        { sig: '/i2v-workflow-reset', desc: 'reset the image2video workflow to its default' },
         { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },
         { sig: '/inpaint-workflow [name]', desc: 'choose which inpainting workflow the 🩹 button uses (no arg = picker)' },
         { sig: '/inpaint-workflow-reset', desc: 'reset the inpainting workflow to its default' },
@@ -1418,9 +1418,9 @@ export function makeCommandHandler(deps) {
         { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
         { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video' },
         { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
-        { sig: '/workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
-        { sig: '/workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
-        { sig: '/workflow-reset', desc: 'reset the main generation workflow to its default' },
+        { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
+        { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
+        { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
       ];
 
       function hlHtml(html, term) {
@@ -1499,8 +1499,8 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/workflow') {
-      const wfArg = raw.slice('/workflow'.length).trim();
+    if (cmd === '/t2i-workflow') {
+      const wfArg = raw.slice('/t2i-workflow'.length).trim();
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentWorkflow = wfArg;
@@ -1520,7 +1520,7 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/workflow-reset') {
+    if (cmd === '/t2i-workflow-reset') {
       addMessage('user', escapeHtml(raw), raw);
       state.currentWorkflow = null;
       deps.updateHeaderStatus();

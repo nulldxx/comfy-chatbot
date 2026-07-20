@@ -11,7 +11,7 @@ A self-hosted web chat interface for generating images with [ComfyUI](https://gi
 - **Chat UI** — prompt history (↑/↓), LoRA chip shortcuts, lightbox image viewer
 - **LoRA tags** — include `<lora:name:strength>` anywhere in a prompt
 - **Live progress** — Server-Sent Events stream status updates while ComfyUI runs
-- **Slash commands** — `/help`, `/server`, `/addserver`, `/workflow`
+- **Slash commands** — `/help`, `/server`, `/addserver`, `/t2i-workflow`
 - **Multi-server** — switch between ComfyUI instances at runtime; supports both Unix and Windows path conventions
 - **Persistent output** — generated images saved to a configurable host directory
 
@@ -87,7 +87,7 @@ volumes:
 | `/help` | List available commands |
 | `/server` | Pick a ComfyUI server from the catalogue |
 | `/addserver <name> <host:port:os>` | Add a server (`os`: `unix` or `windows`) |
-| `/workflow` | Pick a workflow template |
+| `/t2i-workflow` | Pick a workflow template |
 | `/face-detail <prompt>` | Run a face-detailer workflow over the last generated image (supports `<lora:…>` tags) |
 | `/face-detail-workflow` | Pick which face-detailer workflow `/face-detail` uses (from the `facedetailer/` subdir) |
 | `/archive-session [name]` | Copy this session's images into the encrypted volume, then delete the originals |
