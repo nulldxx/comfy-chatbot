@@ -39,12 +39,9 @@ export function initSidebar(deps) {
     if (!collapsed) refreshChatList();
   }
 
-  // Default is collapsed; only expand if localStorage explicitly says so.
-  let startCollapsed = true;
-  try { startCollapsed = localStorage.getItem('sidebar-collapsed') !== '0'; } catch (e) {}
-  // Never auto-open the overlay sidebar on a phone at load.
-  if (!startCollapsed && isMobile()) startCollapsed = true;
-  sidebar.classList.toggle('collapsed', startCollapsed);
+  // Always start collapsed on load (e.g. straight after logging in),
+  // regardless of any previously persisted state.
+  sidebar.classList.toggle('collapsed', true);
   applyToggleGlyph();
 
   toggleBtn.addEventListener('click', () => setCollapsed(isExpanded()));
