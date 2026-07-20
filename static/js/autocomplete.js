@@ -68,6 +68,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/sequence-replacement-reset',   desc: 'clear all sequence replacements',                                                    args: ''  },
   { cmd: '/sequence-review',              desc: 'show the last sequence\'s prompts in a grid; ▶ to generate one',                     args: ''  },
   { cmd: '/server',                       desc: 'choose a ComfyUI server',                                                            args: ''  },
+  { cmd: '/settings',                     desc: 'open a menu of all settings commands',                                               args: ''  },
   { cmd: '/chat-summary',                 desc: 'show active settings (workflow, replacements, etc.)',                                args: ''  },
   { cmd: '/settings-backup',             desc: 'download a ZIP backup of all settings (macros, aliases, sessions, servers)',          args: ''  },
   { cmd: '/settings-restore',            desc: 'pop and reapply the most recent /settings-save snapshot',                            args: ''  },

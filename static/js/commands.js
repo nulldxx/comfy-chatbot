@@ -4,7 +4,7 @@ import {
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS } from './state.js';
-import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat } from './dom.js';
+import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
 
@@ -776,6 +776,61 @@ export function makeCommandHandler(deps) {
     scrollBottom();
   }
 
+  // Declarative registry backing the /settings launcher menu. Each item runs an
+  // existing command: mode 'run' executes it inline (its own editor/picker
+  // renders in a new bubble below); mode 'insert' prefills the input box for
+  // commands that take an argument and shouldn't be run bare (/generation-add-prompt
+  // bare CLEARS; /iterations bare only prints its value).
+  const SETTINGS_MENU = [
+    { group: 'Generation', items: [
+      { label: 'Image settings (resolution & steps)', cmd: '/image-settings',        mode: 'run'    },
+      { label: 'Video settings (duration/fps/res)',   cmd: '/video-settings',        mode: 'run'    },
+      { label: 'Denoise defaults',                    cmd: '/denoise',               mode: 'run'    },
+      { label: 'Iterations per prompt',               cmd: '/iterations',            mode: 'insert' },
+      { label: 'Add-prompt (append to every gen)',    cmd: '/generation-add-prompt', mode: 'insert' },
+    ]},
+    { group: 'Workflows & server', items: [
+      { label: 'Workflows (all types)',               cmd: '/workflows',             mode: 'run'    },
+      { label: 'ComfyUI server',                      cmd: '/server',                mode: 'run'    },
+    ]},
+    { group: 'Manage settings', items: [
+      { label: 'Chat summary (view active settings)', cmd: '/chat-summary',          mode: 'run'    },
+      { label: 'Save settings snapshot',              cmd: '/settings-save',         mode: 'run'    },
+      { label: 'Restore last snapshot',               cmd: '/settings-restore',      mode: 'run'    },
+      { label: 'Backup settings (ZIP)',               cmd: '/settings-backup',       mode: 'run'    },
+    ]},
+  ];
+
+  // Render the /settings menu: grouped rows, each a .sel-btn that launches an
+  // existing settings command. Mirrors renderWorkflowsTable's bubble + .sel-list
+  // house style.
+  function renderSettingsMenu() {
+    const bubble = addMessage('bot',
+      '<strong>Settings</strong> <span style="color:#475569;font-size:0.8rem">— pick one to configure</span>')
+      .parentElement.querySelector('.bubble');
+    const list = document.createElement('div');
+    list.className = 'sel-list';
+    SETTINGS_MENU.forEach(section => {
+      const h = document.createElement('div');
+      h.style.cssText = 'color:#64748b;font-size:0.75rem;margin:6px 0 2px;text-transform:uppercase;letter-spacing:0.05em';
+      h.textContent = section.group;
+      list.appendChild(h);
+      section.items.forEach(item => {
+        const btn = document.createElement('button');
+        btn.className = 'sel-btn';
+        btn.innerHTML = `${escapeHtml(item.label)} ` +
+          `<span style="color:#475569;font-size:0.8rem">${escapeHtml(item.cmd)}</span>`;
+        btn.addEventListener('click', () => {
+          if (item.mode === 'insert') { inputEl.value = item.cmd + ' '; inputEl.focus(); }
+          else handleSlashCommand(item.cmd);
+        });
+        list.appendChild(btn);
+      });
+    });
+    bubble.appendChild(list);
+    scrollBottom();
+  }
+
   function handleSlashCommand(raw) {
     const parts = raw.trim().split(/\s+/);
     const cmd   = parts[0].toLowerCase();
@@ -1528,6 +1583,7 @@ export function makeCommandHandler(deps) {
         { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
         { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
         { sig: '/server', desc: 'choose a ComfyUI server' },
+        { sig: '/settings', desc: 'open a menu of all configuration commands (image/video settings, denoise, iterations, workflows, server, save/restore/backup)' },
         { sig: '/chat-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
         { sig: '/settings-backup', desc: 'download a ZIP of all server-side settings for backup — macros, prompt aliases, saved sessions and the server catalogue (<code>servers.json</code>)', notes: 'server-side files only; per-tab generation settings live in a saved session' },
         { sig: '/settings-save', desc: 'push a snapshot of all generation settings (workflows, resolution, denoise, video settings, override prompts, replacements) onto an in-memory stack; pair with <code>/settings-restore</code> to bracket a macro so it leaves settings unchanged' },
@@ -1628,6 +1684,11 @@ export function makeCommandHandler(deps) {
     if (cmd === '/workflows') {
       addMessage('user', escapeHtml(raw), raw);
       renderWorkflowsTable();
+      return;
+    }
+
+    if (cmd === '/settings') {
+      renderSettingsMenu();
       return;
     }
 
