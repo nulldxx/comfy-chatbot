@@ -190,7 +190,7 @@ header a:hover { color: #a78bfa; }
 .message.user .bubble { background: #7c3aed; color: #fff; border-bottom-right-radius: 4px; position: relative; cursor: pointer; }
 
 .message.user .bubble .edit-icon {
-  position: absolute; top: 5px; right: 8px;
+  position: absolute; top: 5px; right: 28px;
   font-size: 0.68rem; opacity: 0;
   transition: opacity 0.15s; pointer-events: none;
   color: rgba(255,255,255,0.85);
@@ -224,6 +224,27 @@ header a:hover { color: #a78bfa; }
 }
 .retry-btn:hover:not(:disabled) { border-color: #a78bfa; color: #a78bfa; }
 .retry-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* Generic per-item dismiss ✕ — present on every chat item (added in addMessage),
+   revealed on hover. Suppressed on media bubbles (they keep their own 🗑 delete)
+   and on live-generation bubbles that already carry a ✕ cancel / ⟳ retry. */
+.msg-close {
+  position: absolute; top: 6px; right: 6px;
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 2px 7px; font-size: 0.8rem;
+  cursor: pointer; line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.message:hover .msg-close { opacity: 1; }
+.msg-close:hover { border-color: #f87171; color: #f87171; }
+@media (hover: none) {
+  .msg-close { opacity: 0.5; }
+}
+.bubble.has-media .msg-close { display: none; }
+.bubble:has(.cancel-btn) .msg-close,
+.bubble:has(.retry-btn) .msg-close { display: none; }
 
 .bubble img {
   display: block;

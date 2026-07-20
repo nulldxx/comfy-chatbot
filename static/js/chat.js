@@ -762,6 +762,8 @@ function makeLastFrameButton(url, extraClass) {
 // ---------------------------------------------------------------------------
 
 function appendChatImage(container, url) {
+  container.classList.add('has-media');
+
   const wrap = document.createElement('div');
   wrap.className = 'img-wrap';
 
@@ -1111,6 +1113,10 @@ function scheduleRecordSave() {
   clearTimeout(recordSaveTimer);
   recordSaveTimer = setTimeout(doRecordSave, 1500);
 }
+
+// Dismissing a chat item removes its .message node; persist the removal so a
+// dismissed user prompt does not reappear when the session is reloaded.
+document.addEventListener('message-dismissed', scheduleRecordSave);
 
 function doRecordSave() {
   if (!state.recordingName) return;

@@ -24,6 +24,16 @@ export function addMessage(role, contentHtml, rawText) {
     icon.textContent = '✏';
     bubble.appendChild(icon);
   }
+  const close = document.createElement('button');
+  close.className = 'msg-close';
+  close.title = 'Dismiss';
+  close.innerHTML = '&#10005;';
+  close.addEventListener('click', e => {
+    e.stopPropagation();
+    wrap.remove();
+    document.dispatchEvent(new CustomEvent('message-dismissed'));
+  });
+  bubble.appendChild(close);
   wrap.appendChild(avatar);
   wrap.appendChild(bubble);
   messagesEl.appendChild(wrap);
