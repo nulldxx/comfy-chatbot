@@ -86,6 +86,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/upscale-workflow-reset',       desc: 'reset the upscaler workflow to its default',                                         args: ''  },
   { cmd: '/video-sequence',               desc: 'like /sequence, plus per-shot action & audio for video (Grok)',                      args: ' ' },
   { cmd: '/video-settings',               desc: 'set video duration, frames, fps, resolution & audio (lock one, the others follow)',  args: ''  },
+  { cmd: '/workflows',                    desc: 'table of every workflow type & its current selection; click a row to switch',       args: ''  },
 ];
 
 const LORA_TRIGGER_RE = /(?:^|\s)(\/lora(?: (\S*))?)$/i;

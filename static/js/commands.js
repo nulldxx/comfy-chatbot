@@ -651,6 +651,131 @@ export function makeCommandHandler(deps) {
     })();
   }
 
+  // Single source of truth for the /workflows table. Each entry maps a workflow
+  // "type" (an operation) to its listing endpoint and the client-side selection
+  // it drives. Lives inside makeCommandHandler so set() can call deps.updateHeaderStatus.
+  const WORKFLOW_TYPES = [
+    { label: 'Text → image',  url: '/api/workflows',
+      get: () => state.currentWorkflow,            def: () => DEFAULT_WORKFLOW,
+      set: wf => { state.currentWorkflow = wf; deps.updateHeaderStatus(); } },
+    { label: 'Image → image', url: '/api/image2image-workflows',
+      get: () => state.currentImage2ImageWorkflow, def: () => DEFAULT_IMAGE2IMAGE_WORKFLOW,
+      set: wf => { state.currentImage2ImageWorkflow = wf; } },
+    { label: 'Image → video', url: '/api/image2video-workflows',
+      get: () => state.currentImage2VideoWorkflow, def: () => DEFAULT_IMAGE2VIDEO_WORKFLOW,
+      set: wf => { state.currentImage2VideoWorkflow = wf; } },
+    { label: 'Face-detail',   url: '/api/facedetailer-workflows',
+      get: () => state.currentFaceWorkflow,        def: () => DEFAULT_FACE_WORKFLOW,
+      set: wf => { state.currentFaceWorkflow = wf; } },
+    { label: 'Upscale',       url: '/api/upscaler-workflows',
+      get: () => state.currentUpscaleWorkflow,     def: () => DEFAULT_UPSCALE_WORKFLOW,
+      set: wf => { state.currentUpscaleWorkflow = wf; } },
+    { label: 'Inpaint',       url: '/api/inpainting-workflows',
+      get: () => state.currentInpaintingWorkflow,  def: () => DEFAULT_INPAINTING_WORKFLOW,
+      set: wf => { state.currentInpaintingWorkflow = wf; } },
+    { label: 'Removal',       url: '/api/removal-workflows',
+      get: () => state.currentRemovalWorkflow,     def: () => DEFAULT_REMOVAL_WORKFLOW,
+      set: wf => { state.currentRemovalWorkflow = wf; } },
+  ];
+
+  // Render the /workflows table: one row per type showing its current selection.
+  // Clicking a row expands the available workflows for that type inline; picking
+  // one collapses the row and updates its shown value live. Mirrors
+  // renderWorkflowPicker's fetch + .sel-btn + current-tick pattern.
+  function renderWorkflowsTable() {
+    const bubble = addMessage('bot',
+      '<strong>Workflow types</strong> <span style="color:#475569;font-size:0.8rem">— click a row to switch</span>')
+      .parentElement.querySelector('.bubble');
+    const list = document.createElement('div');
+    list.className = 'sel-list';
+    bubble.appendChild(list);
+
+    const rows = [];
+
+    function valueHtml(t) {
+      const cur = t.get();
+      const active = cur || t.def();
+      if (!active) return '<span style="color:#475569">not set</span>';
+      const suffix = cur ? '' : ' <span style="color:#475569">(default)</span>';
+      return `<span style="color:#a78bfa">${escapeHtml(active)}</span>${suffix}`;
+    }
+
+    function collapse(row) {
+      row.choices.style.display = 'none';
+      row.caret.textContent = '▸';
+    }
+
+    function renderChoices(row, workflows) {
+      const t = row.type;
+      if (!workflows.length) {
+        row.choices.innerHTML = '<span style="color:#94a3b8;font-size:0.85rem">No workflows available — add one to the matching workflows folder.</span>';
+        return;
+      }
+      const cur = t.get() || t.def();
+      row.choices.innerHTML = '';
+      const inner = document.createElement('div');
+      inner.className = 'sel-list';
+      inner.style.marginTop = '0';
+      workflows.forEach(wf => {
+        const isCur = wf === cur;
+        const btn = document.createElement('button');
+        btn.className = 'sel-btn' + (isCur ? ' current' : '');
+        btn.innerHTML = escapeHtml(wf) + (isCur ? ' <span style="color:#7c3aed">✓</span>' : '');
+        btn.addEventListener('click', () => {
+          t.set(wf);
+          row.valueEl.innerHTML = valueHtml(t);
+          collapse(row);
+        });
+        inner.appendChild(btn);
+      });
+      row.choices.appendChild(inner);
+    }
+
+    function loadChoices(row) {
+      row.choices.innerHTML = '<div class="status-text">Loading…</div>';
+      fetch(row.type.url).then(r => r.json()).then(workflows => {
+        row.workflows = workflows;
+        renderChoices(row, workflows);
+      }).catch(() => {
+        row.choices.innerHTML = '<span style="color:#f87171">Failed to load workflows.</span>';
+      });
+    }
+
+    WORKFLOW_TYPES.forEach(t => {
+      const header = document.createElement('button');
+      header.className = 'sel-btn';
+      header.innerHTML =
+        '<span class="wf-caret" style="display:inline-block;width:1em;color:#64748b">▸</span>' +
+        `<strong style="color:#cbd5e1">${escapeHtml(t.label)}</strong> ` +
+        '<span class="wf-value"></span>';
+      const caret = header.querySelector('.wf-caret');
+      const valueEl = header.querySelector('.wf-value');
+      valueEl.innerHTML = valueHtml(t);
+
+      const choices = document.createElement('div');
+      choices.style.display = 'none';
+      choices.style.margin = '2px 0 6px 1.4em';
+
+      const row = { type: t, header, caret, valueEl, choices, workflows: null };
+      rows.push(row);
+
+      header.addEventListener('click', () => {
+        const isOpen = choices.style.display !== 'none';
+        rows.forEach(r => { if (r !== row) collapse(r); });
+        if (isOpen) { collapse(row); return; }
+        choices.style.display = 'block';
+        caret.textContent = '▾';
+        if (row.workflows) renderChoices(row, row.workflows);
+        else loadChoices(row);
+      });
+
+      list.appendChild(header);
+      list.appendChild(choices);
+    });
+
+    scrollBottom();
+  }
+
   function handleSlashCommand(raw) {
     const parts = raw.trim().split(/\s+/);
     const cmd   = parts[0].toLowerCase();
@@ -1421,6 +1546,7 @@ export function makeCommandHandler(deps) {
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
         { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
         { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
+        { sig: '/workflows', desc: 'table of every workflow type and its current selection; click a row to switch it inline' },
       ];
 
       function hlHtml(html, term) {
@@ -1496,6 +1622,12 @@ export function makeCommandHandler(deps) {
         });
         scrollBottom();
       }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load servers.</span>'; });
+      return;
+    }
+
+    if (cmd === '/workflows') {
+      addMessage('user', escapeHtml(raw), raw);
+      renderWorkflowsTable();
       return;
     }
 
