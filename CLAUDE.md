@@ -308,3 +308,15 @@ The `docker-compose.yml` in this repo is an **example only**. The live deploymen
 
 - **Docker Compose file**: `~/dot-files/docker-compose/comfy-chatbot.yml`
 - **ComfyUI workflows**: `~/comfy-workflows/` on the host `moria` (bind-mounted into the container at `/app/workflows` per that compose file; image2video templates live in `~/comfy-workflows/image2video/`)
+
+## Releasing & deploying (the `push-to-portainer` skill)
+
+After **successfully completing a feature** (change implemented, tests/build passing),
+run the **`push-to-portainer`** skill to release and deploy it: it commits & pushes to
+`main`, cuts a release with `scripts/make-release`, watches the GitHub Actions build
+(fixing any failures), and then redeploys the live `comfy-chatbot` stack on the Portainer
+server (moria) to pull the new image.
+
+**Always get explicit confirmation from the user before the Portainer update (Stage 4).**
+The redeploy restarts the live service, so pause after the release build is green and ask
+the user to approve before running the redeploy — never update Portainer automatically.
