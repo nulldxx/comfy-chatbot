@@ -30,6 +30,7 @@ COPY --from=builder /root/.local /usr/local
 # Copy application code
 COPY app.py .
 COPY agent_client.py .
+COPY auth_store.py .
 COPY catalogue.py .
 COPY ComfyServer.py .
 COPY config.py .
