@@ -176,8 +176,18 @@ def _rekey_and_commit(current, new):
     # Only volumes whose backing file already exists can be re-keyed. A volume that
     # doesn't exist yet (e.g. the archive volume before the first archive) is created
     # later directly with effective_passphrase(), so it never needs migration.
-    targets = [(v, t) for v, t in (
-        (ARCHIVE_VOLUME, "archive"), (OUTPUT_VOLUME, "output")) if v and Path(v).exists()]
+    #
+    # Existence MUST be checked via the agent, not Path(v).exists(): these are host
+    # paths mounted by the agent, not into this container, so an in-container stat is
+    # always False and would skip every volume (the historic re-key bug). Fail closed
+    # — if the agent can't tell us, abort before committing so we never leave an
+    # existing volume un-rekeyed and therefore unopenable with the new password.
+    configured = [(v, t) for v, t in (
+        (ARCHIVE_VOLUME, "archive"), (OUTPUT_VOLUME, "output")) if v]
+    try:
+        targets = [(v, t) for v, t in configured if _volume_exists(v)]
+    except RuntimeError as exc:
+        return False, f"could not determine volume state: {exc}", None
 
     if not targets:
         try:
@@ -1782,6 +1792,21 @@ def api_images():
 def _agent_request(payload: dict, timeout: float = 120.0) -> dict:
     """Send one request to the host archive agent; raise RuntimeError on failure."""
     return agent_send(payload, ARCHIVE_AGENT_SOCKET, timeout)
+
+
+def _volume_exists(volume: str) -> bool:
+    """True if the agent reports the volume's backing file exists on the host.
+
+    The re-key flow must ask the agent rather than stat the path itself: the volume
+    backing files (e.g. ``/data/.../archive.iso``) live on the host and are NOT
+    mounted into this container, so ``Path(volume).exists()`` here is always False.
+    That was the historic bug — the re-key silently found "no volumes" and skipped
+    them all while still committing the new password. Raises RuntimeError if the agent
+    errors, so callers can fail closed rather than skip an existing volume."""
+    resp = _agent_request({"action": "exists", "volume": volume})
+    if not resp.get("ok"):
+        raise RuntimeError(resp.get("error", "volume existence probe failed"))
+    return bool(resp.get("exists"))
 
 
 def _output_already_mounted() -> bool:

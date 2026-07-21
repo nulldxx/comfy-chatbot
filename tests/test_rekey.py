@@ -69,6 +69,8 @@ class RekeyTestBase(unittest.TestCase):
         def fake(payload, timeout=120.0):
             action = payload.get("action")
             events.append((action, payload.get("volume"), payload))
+            if action == "exists":
+                return {"ok": True, "exists": True}
             if action == "status":
                 return {"ok": True, "host_mounted": False}
             if fail_on and action == fail_on:
@@ -180,6 +182,8 @@ class TestRekeyFailureSafety(RekeyTestBase):
 
     def test_host_mounted_refuses_with_409(self):
         def fake(payload, timeout=120.0):
+            if payload.get("action") == "exists":
+                return {"ok": True, "exists": True}
             if payload.get("action") == "status":
                 return {"ok": True, "host_mounted": True}
             return {"ok": True}
@@ -190,6 +194,76 @@ class TestRekeyFailureSafety(RekeyTestBase):
             })
         self.assertEqual(r.status_code, 409)
         self.assertFalse(auth_store.password_is_set())
+
+
+class TestExistenceViaAgent(RekeyTestBase):
+    """The re-key must decide which volumes exist from the AGENT, not a local stat.
+
+    In production the volume backing files live on the host and are NOT mounted into
+    the container, so Path(v).exists() there is always False — the bug that made the
+    re-key silently skip every volume while still committing the new password."""
+
+    def test_rekey_runs_when_paths_absent_in_container(self):
+        # Point the config at paths that do NOT exist in this (container-like) fs, so a
+        # local Path.exists() would be False for both — yet the agent reports them.
+        app_module.ARCHIVE_VOLUME = "/nonexistent/archive.iso"
+        app_module.OUTPUT_VOLUME = "/nonexistent/output.iso"
+        self.assertFalse(Path(app_module.ARCHIVE_VOLUME).exists())
+        self.assertFalse(Path(app_module.OUTPUT_VOLUME).exists())
+
+        events = []
+        with patch.object(app_module, "_agent_request", self._recorder(events)):
+            r = self.client.post("/api/change-password", json={
+                "current": "bootpass1", "new": "brandnew123", "confirm": "brandnew123",
+            })
+        self.assertEqual(r.status_code, 200, r.get_json())
+        # Both agent-reported-existing volumes were actually header-backed and re-keyed.
+        for vol in ("/nonexistent/archive.iso", "/nonexistent/output.iso"):
+            per_vol = [a for a, v, _p in events if v == vol]
+            self.assertIn("header-backup", per_vol)
+            self.assertIn("add-key", per_vol)
+        self.assertTrue(auth_store.password_is_set())
+
+    def test_absent_volume_is_skipped(self):
+        # Archive genuinely absent (never created), output present: re-key only output.
+        def fake(payload, timeout=120.0):
+            action = payload.get("action")
+            if action == "exists":
+                return {"ok": True, "exists": payload.get("volume") == self.output_vol}
+            if action == "status":
+                return {"ok": True, "host_mounted": False}
+            return {"ok": True, "added": True, "removed": True}
+
+        events = []
+
+        def recording(payload, timeout=120.0):
+            events.append((payload.get("action"), payload.get("volume")))
+            return fake(payload, timeout)
+
+        with patch.object(app_module, "_agent_request", recording):
+            r = self.client.post("/api/change-password", json={
+                "current": "bootpass1", "new": "brandnew123", "confirm": "brandnew123",
+            })
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertNotIn("header-backup", [a for a, v in events if v == self.archive_vol])
+        self.assertIn("header-backup", [a for a, v in events if v == self.output_vol])
+        self.assertTrue(auth_store.password_is_set())
+
+    def test_probe_failure_aborts_before_commit(self):
+        # If the agent can't report existence, fail closed: commit nothing so we never
+        # leave an existing volume un-rekeyed but unlockable with the new password.
+        def fake(payload, timeout=120.0):
+            if payload.get("action") == "exists":
+                return {"ok": False, "error": "agent unreachable"}
+            return {"ok": True}
+
+        with patch.object(app_module, "_agent_request", fake):
+            r = self.client.post("/api/change-password", json={
+                "current": "bootpass1", "new": "brandnew123", "confirm": "brandnew123",
+            })
+        self.assertEqual(r.status_code, 500)
+        self.assertFalse(auth_store.password_is_set())
+        self.assertTrue(auth_store.verify_password("bootpass1"))
 
 
 class TestSecondChange(RekeyTestBase):

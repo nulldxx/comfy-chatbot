@@ -70,6 +70,23 @@ migration (`SECRET_KEY`, or `OUTPUT_PASSWORD` for output) and the derived-from-c
 key thereafter. Volumes whose backing file doesn't exist yet are skipped — they are
 later created directly with `effective_passphrase()`, so they never need migration.
 
+**Correction (existence must be probed via the agent).** "Which volumes exist" was
+originally decided with `Path(v).exists()` *inside the container*. But `ARCHIVE_VOLUME`
+/`OUTPUT_VOLUME` are **host paths mounted by the agent, not into the container**, so that
+stat was always `False`: the re-key found "no volumes", skipped every one, yet still
+committed the new password. Net effect on the live box — the password changed, the hash
+was saved, but **neither volume was ever re-keyed** (both stayed on the bootstrap
+`SECRET_KEY`), so `m`/host-mount failed to open the archive with the derived key and the
+security goal was silently not met. Fixed by adding an agent `exists` action and a
+`_volume_exists()` probe; the re-key now builds its target list from the agent's answer
+and **fails closed** (aborts before the commit) if the agent can't report existence, so
+an existing volume can never be left un-rekeyed. A second latent bug surfaced by this:
+the agent's keyslot ops shell out to `cryptsetup`, which was absent on the host (the
+`.deb` declares the dependency, but the deployed agent predated it) — install
+`cryptsetup` on the host. Regression coverage lives in `TestExistenceViaAgent`
+(`tests/test_rekey.py`) and `TestAgentExists` (`tests/test_agent_rekey.py`); the earlier
+tests masked the bug by creating real local backing files so the in-container stat passed.
+
 ### 5. Effective passphrase at every open site — `app.py`
 `api_archive`, `api_fscheck`, `api_host_mount` now pass `effective_passphrase()` instead
 of the literal `SECRET_KEY`.

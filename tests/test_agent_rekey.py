@@ -7,6 +7,7 @@ normal unit-test/CI environment and is meant to be run manually on the host:
     sudo python -m pytest tests/test_agent_rekey.py -v
 """
 
+import importlib.machinery
 import importlib.util
 import os
 import shutil
@@ -23,11 +24,41 @@ IS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
 
 def _load_agent():
-    spec = importlib.util.spec_from_file_location("archive_agent_mod", AGENT_PATH)
+    # archive-agent has no .py extension, so give importlib an explicit source loader
+    # (spec_from_file_location can't infer one for an extensionless file).
+    loader = importlib.machinery.SourceFileLoader("archive_agent_mod", AGENT_PATH)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+class TestAgentExists(unittest.TestCase):
+    """handle_exists is a plain os.path.exists probe — no root/cryptsetup needed. It
+    exists because the app can't stat the host-side volume paths from its container."""
+
+    def setUp(self):
+        self.agent = _load_agent()
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_reports_present_and_absent(self):
+        present = os.path.join(self.tmp.name, "vol.img")
+        with open(present, "xb") as fh:
+            fh.write(b"x")
+        absent = os.path.join(self.tmp.name, "nope.img")
+
+        self.assertEqual(self.agent.handle_exists({}, {"volume": present}),
+                         {"ok": True, "exists": True})
+        self.assertEqual(self.agent.handle_exists({}, {"volume": absent}),
+                         {"ok": True, "exists": False})
+
+    def test_missing_volume_arg_errors(self):
+        r = self.agent.handle_exists({}, {})
+        self.assertFalse(r["ok"])
 
 
 @unittest.skipUnless(HAVE_CRYPTSETUP and IS_ROOT,

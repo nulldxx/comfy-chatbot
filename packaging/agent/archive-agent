@@ -16,6 +16,7 @@ Requests:
   {"action": "add-key",      "volume": "<host path>", "password": "<old>", "new_password": "<new>"}
   {"action": "remove-key",   "volume": "<host path>", "password": "<remove>", "keep_password": "<keep>"}
   {"action": "header-backup","volume": "<host path>"}
+  {"action": "exists",       "volume": "<host path>"}
 
 add-key/remove-key/header-backup re-key a volume by editing only its LUKS header (a
 few KB), so they work while the volume is mounted and never touch the master key or
@@ -716,6 +717,19 @@ def handle_host_unmount(cfg, req):
     return handle_unmount(cfg, dict(req, target="host"))
 
 
+def handle_exists(cfg, req):
+    """Report whether a volume's backing file exists on the host.
+
+    The app's re-key flow (/api/change-password) uses this to decide which volumes to
+    migrate. It cannot stat these paths itself: they live on the host and are mounted
+    by this agent, NOT bind-mounted into the unprivileged container — so an in-container
+    ``os.path.exists`` is always False and would silently skip every volume."""
+    volume = req.get("volume")
+    if not volume:
+        return {"ok": False, "error": "exists requires 'volume'"}
+    return {"ok": True, "exists": os.path.exists(volume)}
+
+
 def handle_status(cfg, req):
     """Report mount state so the container can gate archive/fsck ops (see
     /api/host-status) without tracking state itself — which would drift across
@@ -744,6 +758,8 @@ def handle(cfg, req):
         return handle_fsck(cfg, req)
     if action == "status":
         return handle_status(cfg, req)
+    if action == "exists":
+        return handle_exists(cfg, req)
     if action == "add-key":
         return handle_add_key(cfg, req)
     if action == "remove-key":
