@@ -51,8 +51,9 @@ from image_store import (
     select_images,
 )
 from persistence import (
-    aliases_file, delete_session, list_sessions, load_aliases, load_macros,
-    load_session, macros_file, save_aliases, save_macros,
+    aliases_file, default_macro_file, delete_session, list_sessions,
+    load_aliases, load_default_macro, load_macros, load_session, macros_file,
+    save_aliases, save_default_macro, save_macros,
     save_session, sessions_dir, slugify,
 )
 app = Flask(__name__)
@@ -1312,6 +1313,7 @@ def api_settings_backup():
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for path, arcname in [
                 (macros_file(), "macros.json"),
+                (default_macro_file(), "default-macro.json"),
                 (aliases_file(), "aliases.json"),
                 (COMFY_WORKFLOW_DIR / "servers.json", "servers.json"),
             ]:
@@ -1461,12 +1463,14 @@ def _handle_restore_zip(raw, fname, apply):
     except zipfile.BadZipFile:
         return jsonify({"error": "Not a valid ZIP file"}), 400
 
-    macros = aliases = servers = None
+    macros = aliases = servers = default_macro = None
     sessions = []  # list of (stem, data)
     for member in zf.namelist():
         base = member.rsplit("/", 1)[-1]
         if "/" not in member and base == "macros.json":
             macros = _load_json_bytes(zf.read(member))
+        elif "/" not in member and base == "default-macro.json":
+            default_macro = _load_json_bytes(zf.read(member))
         elif "/" not in member and base == "aliases.json":
             aliases = _load_json_bytes(zf.read(member))
         elif "/" not in member and base == "servers.json":
@@ -1476,13 +1480,15 @@ def _handle_restore_zip(raw, fname, apply):
             if isinstance(data, dict):
                 sessions.append((base[:-5], data))
 
+    default_macro_name = (default_macro.get("name")
+                          if isinstance(default_macro, dict) else None)
     counts = {
         "macros": len(macros) if isinstance(macros, dict) else 0,
         "aliases": len(aliases) if isinstance(aliases, dict) else 0,
         "servers": len(servers.get("servers", [])) if isinstance(servers, dict) else 0,
         "sessions": len(sessions),
     }
-    if not any(counts.values()):
+    if not any(counts.values()) and not default_macro_name:
         return jsonify({"detected": {"kind": "unknown", "name": fname}})
 
     summary = (f"a settings backup ({counts['macros']} macros, "
@@ -1503,6 +1509,10 @@ def _handle_restore_zip(raw, fname, apply):
         name = _restore_session(data, stem)
         if name:
             restored["sessions"].append(name)
+    # Only restore a default that points at a macro we actually have after restore.
+    if isinstance(default_macro_name, str) and default_macro_name in load_macros():
+        save_default_macro(default_macro_name)
+        restored["default_macro"] = default_macro_name
     return jsonify({"restored": restored,
                     "summary": summary, "kind": "backup"})
 
@@ -2006,7 +2016,33 @@ def api_macro_delete(macro_name):
         save_macros(macros)
     except OSError as e:
         return jsonify({"error": f"Could not save macros: {e}"}), 500
+    # A default pointing at the deleted macro is now stale — clear it.
+    if load_default_macro() == macro_name:
+        save_default_macro(None)
     return jsonify({"ok": True})
+
+
+@app.route("/api/default-macro")
+@login_required
+def api_default_macro():
+    return jsonify({"name": load_default_macro()})
+
+
+@app.route("/api/default-macro", methods=["POST"])
+@login_required
+def api_default_macro_set():
+    data = request.json or {}
+    name = data.get("name")
+    if name is not None and not isinstance(name, str):
+        return jsonify({"error": "name must be a string or null"}), 400
+    name = (name or "").strip() or None
+    if name is not None and name not in load_macros():
+        return jsonify({"error": "Macro not found"}), 404
+    try:
+        save_default_macro(name)
+    except OSError as e:
+        return jsonify({"error": f"Could not save default macro: {e}"}), 500
+    return jsonify({"ok": True, "name": name})
 
 
 # ---------------------------------------------------------------------------

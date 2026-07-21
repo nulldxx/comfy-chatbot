@@ -56,7 +56,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/lora',                         desc: 'fuzzy-find a LoRA to insert',                                                        args: ' ' },
   { cmd: '/macro-create',                 desc: 'create or update a macro (name + inline step editor)',                               args: ' ' },
   { cmd: '/macro-list',                   desc: 'list all defined macros',                                                            args: ''  },
-  { cmd: '/macro-set-default',            desc: 'choose the default macro for the 🤖 image button',                                  args: ''  },
+  { cmd: '/macro-set-default',            desc: 'choose the default macro for the 🤖 image button (optionally pass a name to skip the picker)', args: '[name]'  },
   { cmd: '/multi-prompt',                 desc: 'generate images for multiple prompts (one per line)',                                args: '\n' },
   { cmd: '/purge',                        desc: 'free GPU memory on active server',                                                   args: ''  },
   { cmd: '/review',                       desc: 'grid of the last N images, oldest first',                                            args: ' ' },

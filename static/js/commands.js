@@ -612,6 +612,17 @@ export function makeCommandHandler(deps) {
     document.dispatchEvent(new CustomEvent('chats-changed'));
   }
 
+  // Persist the default macro server-side so it survives a reload. Pass null to
+  // clear it. Fire-and-forget: the in-memory state.defaultMacro is the source of
+  // truth for this session; persistence just makes it stick to the next one.
+  function persistDefaultMacro(name) {
+    fetch('/api/default-macro', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name || null }),
+    }).catch(() => {});
+  }
+
   function runDefaultMacroOnImage(url) {
     if (!state.defaultMacro) {
       addMessage('bot', '<span style="color:#f87171">⚠ No default macro set — use <code>/macro-set-default</code> to choose one.</span>');
@@ -621,6 +632,7 @@ export function makeCommandHandler(deps) {
     const macroSteps = state.MACROS[name];
     if (!macroSteps || !macroSteps.length) {
       state.defaultMacro = null;
+      persistDefaultMacro(null);
       addMessage('bot', `<span style="color:#f87171">⚠ Default macro <code>#${escapeHtml(name)}</code> no longer exists — use <code>/macro-set-default</code> to choose a new one.</span>`);
       return Promise.resolve();
     }
@@ -1569,7 +1581,7 @@ export function makeCommandHandler(deps) {
         { sig: '/lora', desc: 'fuzzy-find a LoRA to insert (works anywhere in a prompt)' },
         { sig: '/macro-create <name>', desc: 'open an inline editor to define a named macro — a sequence of prompts and/or /commands run in order', notes: 'invoke the macro later by typing <code>#name</code> — e.g. <code>/macro-create warmup</code> then <code>#warmup</code><br>re-run <code>/macro-create name</code> to edit an existing macro' },
         { sig: '/macro-list', desc: 'list all defined macros with a delete button for each' },
-        { sig: '/macro-set-default', desc: 'choose a default macro for the 🤖 button on images — clicking 🤖 runs that macro with the image URL substituted for <code>&lt;PARAM&gt;</code>' },
+        { sig: '/macro-set-default', desc: 'choose a default macro for the 🤖 button on images — clicking 🤖 runs that macro with the image URL substituted for <code>&lt;PARAM&gt;</code>', notes: 'pass a name (e.g. <code>/macro-set-default warmup</code>) to set it directly without the picker' },
         { sig: '/multi-prompt', desc: 'generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)' },
         { sig: '/purge', desc: 'free GPU memory on the active ComfyUI server' },
         { sig: '/review <n>', desc: 'grid of the last N images, oldest first' },
@@ -3002,6 +3014,9 @@ export function makeCommandHandler(deps) {
           .then(data => {
             if (data.error) throw new Error(data.error);
             delete state.MACROS[name];
+            // The server clears a default pointing at the deleted macro; mirror
+            // that in memory so the 🤖 button doesn't reference a ghost.
+            if (state.defaultMacro === name) state.defaultMacro = null;
             row.remove();
             if (!selList.querySelector('.sel-row')) {
               bubble.innerHTML = 'No macros defined. Use <code>/macro-create &lt;name&gt;</code> to create one.';
@@ -3038,6 +3053,19 @@ export function makeCommandHandler(deps) {
         addMessage('bot', 'No macros defined. Use <code>/macro-create &lt;name&gt;</code> to create one.');
         return;
       }
+      // Optional name argument: set the default directly without showing the picker.
+      // A leading # (how macros are invoked) is accepted and stripped.
+      const arg = parts.slice(1).join(' ').replace(/^#/, '').trim();
+      if (arg) {
+        if (!Object.prototype.hasOwnProperty.call(state.MACROS, arg)) {
+          addMessage('bot', `<span style="color:#f87171">⚠ Macro <code>#${escapeHtml(arg)}</code> does not exist — use <code>/macro-list</code> to see defined macros.</span>`);
+          return;
+        }
+        state.defaultMacro = arg;
+        persistDefaultMacro(arg);
+        addMessage('bot', `Default macro set to <code>#${escapeHtml(arg)}</code> — the 🤖 button on images will now run it.`);
+        return;
+      }
       const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
       const header = document.createElement('strong');
       header.textContent = 'Select default macro for the 🤖 button:';
@@ -3052,6 +3080,7 @@ export function makeCommandHandler(deps) {
         btn.innerHTML = `<code>#${escapeHtml(name)}</code> <span style="color:#475569">— ${macroStepList.length} step(s)</span>${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}`;
         btn.addEventListener('click', () => {
           state.defaultMacro = name;
+          persistDefaultMacro(name);
           bubble.innerHTML = `Default macro set to <code>#${escapeHtml(name)}</code> — the 🤖 button on images will now run it.`;
           scrollBottom();
         });
@@ -3065,6 +3094,7 @@ export function makeCommandHandler(deps) {
         clearBtn.textContent = '✕ Clear default macro';
         clearBtn.addEventListener('click', () => {
           state.defaultMacro = null;
+          persistDefaultMacro(null);
           bubble.innerHTML = 'Default macro cleared — the 🤖 button will show an error until a new one is set.';
           scrollBottom();
         });

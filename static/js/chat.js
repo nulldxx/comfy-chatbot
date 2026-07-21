@@ -49,6 +49,11 @@ fetch('/api/macros')
   .then(data => { if (data && typeof data === 'object') state.MACROS = data; })
   .catch(() => {});
 
+fetch('/api/default-macro')
+  .then(r => r.json())
+  .then(data => { if (data && typeof data.name === 'string') state.defaultMacro = data.name; })
+  .catch(() => {});
+
 // ---------------------------------------------------------------------------
 // Header status
 // ---------------------------------------------------------------------------

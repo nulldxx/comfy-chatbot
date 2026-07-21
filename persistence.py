@@ -265,3 +265,36 @@ def load_macros():
 
 def save_macros(macros):
     macros_file().write_text(json.dumps(macros, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Default macro (target of the 🤖 button on images)
+# ---------------------------------------------------------------------------
+
+def default_macro_file():
+    return IMAGES_DIR / "default-macro.json"
+
+
+def load_default_macro():
+    """Return the persisted default macro name, or None if unset."""
+    f = default_macro_file()
+    if not f.is_file():
+        return None
+    try:
+        name = json.loads(f.read_text()).get("name")
+        return name if isinstance(name, str) and name else None
+    except Exception:
+        return None
+
+
+def save_default_macro(name):
+    """Persist the default macro name; a falsy name clears it (removes the file)."""
+    f = default_macro_file()
+    if not name:
+        if f.is_file():
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        return
+    f.write_text(json.dumps({"name": name}, indent=2))
