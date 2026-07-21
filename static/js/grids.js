@@ -3,7 +3,7 @@ import {
   buildVideoPrompt, i2vTooltip, reorderList,
 } from './utils.js';
 import { state } from './state.js';
-import { messagesEl, sendBtn, addMessage, scrollBottom, createMediaElement, deleteImageFile, removeImageFromChat } from './dom.js';
+import { messagesEl, sendBtn, addMessage, scrollBottom, createMediaElement, deleteImageFile, removeImageFromChat, clearBubble } from './dom.js';
 import { openLightbox } from './lightbox.js';
 import { openMaskEditor } from './editors.js';
 
@@ -342,7 +342,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
 // Renders a draggable grid of videos for /video-splice.
 // The ✓ button calls compositeVideos(orderedUrls) which is injected from chat.js.
 export function renderCompositeGrid(bubble, urls, { compositeVideos }) {
-  bubble.innerHTML = '';
+  clearBubble(bubble);
 
   const hint = document.createElement('div');
   hint.className = 'composite-hint';

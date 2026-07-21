@@ -41,6 +41,15 @@ export function addMessage(role, contentHtml, rawText) {
   return bubble;
 }
 
+// Empties a bubble's content while preserving the .msg-close dismiss button
+// that addMessage() appended, so grid renderers that rebuild a bubble don't
+// strip away its ✕.
+export function clearBubble(bubble) {
+  const close = bubble.querySelector('.msg-close');
+  bubble.innerHTML = '';
+  if (close) bubble.appendChild(close);
+}
+
 export function createMediaElement(url, { autoplay = false } = {}) {
   if (isVideoUrl(url)) {
     const video = document.createElement('video');
