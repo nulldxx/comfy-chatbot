@@ -1593,7 +1593,7 @@ export function makeCommandHandler(deps) {
         { sig: '/slideshow-reverse', desc: 'browse every image, newest first' },
         { sig: '/slideshow-session', desc: 'browse this session\'s images', notes: '← → keys on desktop &nbsp;·&nbsp; Del deletes the current image &nbsp;·&nbsp; swipe left/right on mobile &nbsp;·&nbsp; auto-advances every 3s' },
         { sig: '/slideshow-today', desc: 'browse today\'s images, oldest first' },
-        { sig: '/splice-session', desc: 'drag this session\'s videos into order, then press ✓ to join them into one clip' },
+        { sig: '/video-splice', desc: 'drag this session\'s videos into order, tick which to include, then press ✓ to join them into one clip' },
         { sig: '/upscale [N]', desc: 'run an upscaler workflow over the last N generated images (default 1, no prompt needed)' },
         { sig: '/upscale-workflow [name]', desc: 'choose which upscaler workflow the <code>/upscale</code> command and ⬆ button use (no arg = picker)' },
         { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
@@ -1845,7 +1845,7 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/splice-session') {
+    if (cmd === '/video-splice') {
       const videos = state.sessionImages.filter(isVideoUrl);
       if (videos.length < 2) {
         addMessage('bot', videos.length

@@ -107,7 +107,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     const isVideo = isVideoUrl(url);
     const media = createMediaElement(url);
     if (isVideo) {
-      // Match the /splice-session preview: show the first frame so the
+      // Match the /video-splice preview: show the first frame so the
       // cell isn't a blank black square, and start muted so native controls play
       // without surprising the user.
       media.muted = true;
@@ -339,26 +339,32 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
   scrollBottom();
 }
 
-// Renders a draggable grid of videos for /splice-session.
+// Renders a draggable grid of videos for /video-splice.
 // The ✓ button calls compositeVideos(orderedUrls) which is injected from chat.js.
 export function renderCompositeGrid(bubble, urls, { compositeVideos }) {
   bubble.innerHTML = '';
 
   const hint = document.createElement('div');
   hint.className = 'composite-hint';
-  hint.textContent = 'Drag the ⠿ handle to reorder, play each to preview, then press ✓ to join them into one clip.';
+  hint.textContent = 'Drag the ⠿ handle to reorder, play each to preview, untick any to exclude, then press ✓ to join them into one clip.';
   bubble.appendChild(hint);
 
   let order = urls.slice();
+  const selected = new Set(urls); // every clip is included by default
   const cells = new Map();
 
   const grid = document.createElement('div');
   grid.className = 'composite-grid';
 
+  // Number the included clips 1..N in order; excluded clips show no badge.
   function renderBadges() {
-    order.forEach((url, i) => {
+    let n = 0;
+    order.forEach(url => {
       const cell = cells.get(url);
-      if (cell) cell.querySelector('.composite-order').textContent = String(i + 1);
+      if (!cell) return;
+      const on = selected.has(url);
+      cell.classList.toggle('composite-excluded', !on);
+      cell.querySelector('.composite-order').textContent = on ? String(++n) : '';
     });
   }
 
@@ -421,6 +427,22 @@ export function renderCompositeGrid(bubble, urls, { compositeVideos }) {
     const badge = document.createElement('span');
     badge.className = 'composite-order';
 
+    const select = document.createElement('button');
+    select.className = 'composite-select selected';
+    select.title = 'Include in splice';
+    select.setAttribute('aria-label', 'Include in splice');
+    select.setAttribute('aria-pressed', 'true');
+    select.textContent = '☑';
+    select.addEventListener('click', () => {
+      const on = !selected.has(url);
+      if (on) selected.add(url); else selected.delete(url);
+      select.classList.toggle('selected', on);
+      select.setAttribute('aria-pressed', on ? 'true' : 'false');
+      select.textContent = on ? '☑' : '☐';
+      select.title = on ? 'Include in splice' : 'Excluded from splice';
+      renderBadges();
+    });
+
     const handle = document.createElement('button');
     handle.className = 'composite-handle';
     handle.title = 'Drag to reorder';
@@ -429,6 +451,7 @@ export function renderCompositeGrid(bubble, urls, { compositeVideos }) {
 
     cell.appendChild(video);
     cell.appendChild(badge);
+    cell.appendChild(select);
     cell.appendChild(handle);
     cells.set(url, cell);
     grid.appendChild(cell);
@@ -446,8 +469,13 @@ export function renderCompositeGrid(bubble, urls, { compositeVideos }) {
   go.textContent = '✓';
   go.addEventListener('click', () => {
     if (go.disabled) return;
+    const chosen = order.filter(url => selected.has(url));
+    if (chosen.length < 2) {
+      hint.textContent = 'Tick at least two clips to splice them together.';
+      return;
+    }
     go.disabled = true;
-    compositeVideos(order.slice()).finally(() => { go.disabled = false; });
+    compositeVideos(chosen).finally(() => { go.disabled = false; });
   });
   controls.appendChild(go);
   bubble.appendChild(controls);

@@ -858,7 +858,7 @@ header a:hover { color: #a78bfa; }
   }
 }
 
-/* /splice-session: drag-to-reorder grid of session videos + a ✓ button. */
+/* /video-splice: drag-to-reorder grid of session videos + a ✓ button. */
 .composite-hint { font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px; }
 .composite-grid {
   display: grid;
@@ -889,6 +889,17 @@ header a:hover { color: #a78bfa; }
   font-size: 0.75rem; line-height: 1;
   pointer-events: none;
 }
+.composite-select {
+  position: absolute;
+  top: 4px; left: 50%; transform: translateX(-50%);
+  background: rgba(15,23,42,0.85); border: 1px solid #334155;
+  color: #64748b; border-radius: 8px;
+  padding: 2px 6px; font-size: 0.95rem; line-height: 1;
+  cursor: pointer; user-select: none;
+}
+.composite-select.selected { color: #4ade80; border-color: #4ade80; }
+.composite-select:hover { border-color: #38bdf8; }
+.composite-excluded video { opacity: 0.35; filter: grayscale(0.6); }
 .composite-handle {
   position: absolute;
   top: 4px; right: 4px;

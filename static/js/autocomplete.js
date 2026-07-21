@@ -78,7 +78,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/slideshow-reverse',            desc: 'browse every image, newest first',                                                   args: ''  },
   { cmd: '/slideshow-session',            desc: 'browse this session\'s images',                                                      args: ''  },
   { cmd: '/slideshow-today',              desc: 'browse today\'s images, oldest first',                                               args: ''  },
-  { cmd: '/splice-session',               desc: 'drag to reorder this session\'s videos, then ✓ to join them into one',               args: ''  },
+  { cmd: '/video-splice',                 desc: 'drag to reorder this session\'s videos, tick which to include, then ✓ to join them into one', args: ''  },
   { cmd: '/t2i-workflow',                 desc: 'choose an image generation workflow template (no arg = picker)',                     args: ' ' },
   { cmd: '/t2i-workflow-iterate',         desc: 'run a prompt against several image generation workflows',                            args: ' ' },
   { cmd: '/t2i-workflow-reset',           desc: 'reset the main generation workflow to its default',                                   args: ''  },
