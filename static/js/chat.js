@@ -1143,6 +1143,7 @@ function doRecordSave() {
         image2imageOverridePrompt: state.image2imageOverridePrompt,
         image2videoReplacements: state.image2videoReplacements.slice(),
         image2videoOverridePrompt: state.image2videoOverridePrompt,
+        refImageUrl: state.refImageUrl,
         faceDetailReplacements: state.faceDetailReplacements.slice(),
         autoFaceDetail: state.autoFaceDetail,
         lastFaceDetailPrompt: state.lastFaceDetailPrompt,
@@ -1179,6 +1180,7 @@ function restoreSession(data) {
   for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
   for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
   state.lastSequence = null;
+  state.refImageUrl = null;
   state.fauxFullscreenEls.clear();
   document.body.style.overflow = '';
   messagesEl.innerHTML = '';
@@ -1199,6 +1201,7 @@ function restoreSession(data) {
   if (s.image2imageOverridePrompt !== undefined) state.image2imageOverridePrompt = s.image2imageOverridePrompt;
   if (s.image2videoReplacements !== undefined) state.image2videoReplacements = s.image2videoReplacements;
   if (s.image2videoOverridePrompt !== undefined) state.image2videoOverridePrompt = s.image2videoOverridePrompt;
+  if (s.refImageUrl             !== undefined) state.refImageUrl              = s.refImageUrl;
   if (s.faceDetailReplacements  !== undefined) state.faceDetailReplacements  = s.faceDetailReplacements;
   if (s.autoFaceDetail          !== undefined) state.autoFaceDetail          = s.autoFaceDetail;
   if (s.lastFaceDetailPrompt    !== undefined) state.lastFaceDetailPrompt    = s.lastFaceDetailPrompt;

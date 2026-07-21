@@ -29,7 +29,8 @@
       "Bash(mkdir -p /tmp/claude-1000/-home-ben-Code-comfy-chatbot/dc10dd36-b758-4414-8100-dfb5c3ea043f/scratchpad/wf)",
       "Bash(scp -q ben@moria:'~/comfy-workflows/image2video/ltx2_3_i2v.json' /tmp/claude-1000/-home-ben-Code-comfy-chatbot/dc10dd36-b758-4414-8100-dfb5c3ea043f/scratchpad/wf/ltx2_3_i2v.json)",
       "Bash(scp -q ben@moria:'~/comfy-workflows/image2video/eros-ltx23_i2v.json' /tmp/claude-1000/-home-ben-Code-comfy-chatbot/dc10dd36-b758-4414-8100-dfb5c3ea043f/scratchpad/wf/eros-ltx23_i2v.json)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(sort -t: -k1 -n)"
     ],
     "deny": [],
     "ask": []
