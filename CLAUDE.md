@@ -191,6 +191,10 @@ Or use `sed -i "s/'/'/g; s/'/'/g" static/js/chat.js` to replace all curly single
 /test-docker/           # Docker container testing
 ```
 
+### Plans and ADRs
+- Plans should always be saved as markdown, with a meaningful name, and committed to plans/ before implementation
+- Once implementation is complete, the plan should be rewritten to reflect how it was implemented at a high level and saved in ADR/
+
 ### Deployment Notes
 - Uses multi-stage Docker build to minimize image size
 - Gunicorn configuration optimized for container deployment
