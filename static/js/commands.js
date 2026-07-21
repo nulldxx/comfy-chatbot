@@ -810,6 +810,7 @@ export function makeCommandHandler(deps) {
       { label: 'Save settings snapshot',              cmd: '/settings-save',         mode: 'run'    },
       { label: 'Restore last snapshot',               cmd: '/settings-restore',      mode: 'run'    },
       { label: 'Backup settings (ZIP)',               cmd: '/settings-backup',       mode: 'run'    },
+      { label: 'Change login password',               cmd: '/change-password',       mode: 'run'    },
     ]},
   ];
 
@@ -840,6 +841,102 @@ export function makeCommandHandler(deps) {
       });
     });
     bubble.appendChild(list);
+    scrollBottom();
+  }
+
+  // Render the /change-password inline form: current / new / confirm password
+  // fields plus a submit button, posting to /api/change-password. Matches the
+  // dark-theme input + .sel-btn house style used by the settings editors.
+  function renderChangePasswordForm() {
+    const bubble = addMessage('bot',
+      '<strong>Change login password</strong> ' +
+      '<span style="color:#475569;font-size:0.8rem">— stored securely, survives restarts</span>')
+      .parentElement.querySelector('.bubble');
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px;max-width:320px';
+
+    const inputStyle = 'background:#1e293b;border:1px solid #334155;border-radius:4px;' +
+      'color:#f1f5f9;padding:4px 6px;font-size:0.85rem';
+    const mkField = (labelText, placeholder) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;flex-direction:column;gap:2px';
+      const lbl = document.createElement('label');
+      lbl.textContent = labelText;
+      lbl.style.cssText = 'color:#94a3b8;font-size:0.78rem';
+      const inp = document.createElement('input');
+      inp.type = 'password';
+      inp.autocomplete = 'off';
+      inp.placeholder = placeholder;
+      inp.style.cssText = inputStyle;
+      row.appendChild(lbl); row.appendChild(inp);
+      wrap.appendChild(row);
+      return inp;
+    };
+
+    const currentInp = mkField('Current password', 'current password');
+    const newInp     = mkField('New password', 'at least 8 characters');
+    const confirmInp = mkField('Confirm new password', 'repeat new password');
+
+    const status = document.createElement('div');
+    status.style.cssText = 'font-size:0.8rem;min-height:1.1em';
+
+    const submit = document.createElement('button');
+    submit.className = 'sel-btn';
+    submit.textContent = 'Update password';
+    submit.style.cssText = 'align-self:flex-start;padding:4px 12px';
+
+    const doSubmit = () => {
+      const current = currentInp.value;
+      const nw = newInp.value;
+      const confirm = confirmInp.value;
+      if (nw.length < 8) {
+        status.style.color = '#f87171';
+        status.textContent = 'New password must be at least 8 characters.';
+        return;
+      }
+      if (nw !== confirm) {
+        status.style.color = '#f87171';
+        status.textContent = 'New password and confirmation do not match.';
+        return;
+      }
+      submit.disabled = true;
+      status.style.color = '#94a3b8';
+      status.textContent = 'Updating…';
+      fetch('/api/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current, new: nw, confirm }),
+      })
+        .then(r => r.json().then(d => ({ ok: r.ok, d })))
+        .then(({ ok, d }) => {
+          if (ok && d.ok) {
+            wrap.remove();
+            const ok2 = document.createElement('div');
+            ok2.style.cssText = 'color:#4ade80;font-size:0.85rem;margin-top:6px';
+            ok2.textContent = '✓ Password changed. It takes effect at your next login.';
+            bubble.appendChild(ok2);
+          } else {
+            submit.disabled = false;
+            status.style.color = '#f87171';
+            status.textContent = (d && d.error) || 'Could not change password.';
+          }
+          scrollBottom();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          status.style.color = '#f87171';
+          status.textContent = 'Network error — please try again.';
+        });
+    };
+
+    submit.addEventListener('click', doSubmit);
+    confirmInp.addEventListener('keydown', e => { if (e.key === 'Enter') doSubmit(); });
+
+    wrap.appendChild(submit);
+    wrap.appendChild(status);
+    bubble.appendChild(wrap);
+    currentInp.focus();
     scrollBottom();
   }
 
@@ -1701,6 +1798,11 @@ export function makeCommandHandler(deps) {
 
     if (cmd === '/settings') {
       renderSettingsMenu();
+      return;
+    }
+
+    if (cmd === '/change-password') {
+      renderChangePasswordForm();
       return;
     }
 

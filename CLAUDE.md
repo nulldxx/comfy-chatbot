@@ -113,6 +113,38 @@ Environment variables for deployment:
 - `APP_PASSWORD`: Authentication password (default: 'password')  
 - `SECRET_KEY`: Flask session secret (change in production)
 
+### User-changeable login password (`/change-password`)
+
+The login **password** is user-changeable at runtime via the `/change-password` slash
+command (also reachable from `/settings`), which POSTs `{current, new, confirm}` to
+`@login_required POST /api/change-password` in `app.py`. The username stays env-driven.
+
+Storage lives in `auth_store.py`, which writes a salted, memory-hard **scrypt** hash
+(implemented directly against `hashlib.scrypt` — the pinned Werkzeug 2.3.7 predates
+`generate_password_hash(method="scrypt")`, so we don't depend on werkzeug's helper) to
+`/app/workflows/.auth.json` (`COMFY_WORKFLOW_DIR/.auth.json`), written atomically with
+`0600` perms. This path is chosen deliberately: it's the only writable, **non-encrypted**
+mount that survives a push-to-portainer redeploy — the encrypted `IMAGES_DIR` is ruled
+out, and the container's writable layer is wiped on redeploy.
+
+Precedence (`auth_store.verify_password`): once a password has been set via the UI, the
+stored hash is **authoritative** and the env `APP_PASSWORD` **no longer works** (it is
+only a first-boot bootstrap). **Reset** = delete `~/comfy-workflows/.auth.json` on the
+host to revert to `APP_PASSWORD`.
+
+Notes: `SECRET_KEY` is intentionally **never** touched here (it doubles as the LUKS
+passphrase for the encrypted volumes). The hash file is dot-prefixed so workflow `*.json`
+globs skip it, and it sits outside `IMAGES_DIR` so the `/api/settings-backup` bundle
+(which only zips `IMAGES_DIR`) never carries password hashes off the box. Login/change
+are still cleartext-in-transit (no TLS/CSRF layer) — the improvement is at-rest hashing
+plus user self-service, not transport security.
+
+**Possible follow-up (not implemented):** making the LUKS passphrase depend on the
+password (`SECRET_KEY + password`) so a leaked compose file can't decrypt the archives.
+That's a keyslot change (`luksAddKey`/`luksRemoveKey`, not full re-encryption) but forces
+the output volume to mount lazily on first login instead of at startup, and carries real
+data-loss risk (needs header backups + a recovery keyslot). Deliberately deferred.
+
 ## Known Pitfalls
 
 ### Curly/smart quote corruption in JS files

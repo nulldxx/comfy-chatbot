@@ -36,7 +36,7 @@ from config import (
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     FSCK_TIMEOUT,
     IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT, OUTPUT_MARKER,
-    OUTPUT_VOLUME, PASSWORD, SECRET_KEY, USERNAME,
+    OUTPUT_VOLUME, SECRET_KEY, USERNAME,
     VIDEO_EXTS,
 )
 from generation_service import (
@@ -56,6 +56,7 @@ from persistence import (
     save_aliases, save_default_macro, save_macros,
     save_session, sessions_dir, slugify,
 )
+from auth_store import save_password_hash, verify_password
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
@@ -81,7 +82,7 @@ def login_required(f):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if request.form.get("username") == USERNAME and request.form.get("password") == PASSWORD:
+        if request.form.get("username") == USERNAME and verify_password(request.form.get("password")):
             session["authenticated"] = True
             return redirect(request.args.get("next") or url_for("index"))
         return render_template("login.html", error="Invalid username or password")
@@ -92,6 +93,31 @@ def login():
 def logout():
     session.pop("authenticated", None)
     return redirect(url_for("login"))
+
+
+@app.route("/api/change-password", methods=["POST"])
+@login_required
+def change_password():
+    data = request.get_json(silent=True) or {}
+    current = data.get("current") or ""
+    new = data.get("new") or ""
+    confirm = data.get("confirm") or ""
+
+    if not verify_password(current):
+        return jsonify({"ok": False, "error": "Current password is incorrect"}), 401
+    if len(new) < 8:
+        return jsonify({"ok": False, "error": "New password must be at least 8 characters"}), 400
+    if new != confirm:
+        return jsonify({"ok": False, "error": "New password and confirmation do not match"}), 400
+    if new == current:
+        return jsonify({"ok": False, "error": "New password must differ from the current one"}), 400
+
+    try:
+        save_password_hash(new)
+    except OSError as e:
+        return jsonify({"ok": False, "error": f"Could not save password: {e}"}), 500
+    # Session stays authenticated; the changed hash takes effect on the next login.
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------
