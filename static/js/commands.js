@@ -916,6 +916,39 @@ export function makeCommandHandler(deps) {
             ok2.style.cssText = 'color:#4ade80;font-size:0.85rem;margin-top:6px';
             ok2.textContent = '✓ Password changed. It takes effect at your next login.';
             bubble.appendChild(ok2);
+            // First time a password is set, the server re-keys the encrypted volumes
+            // and returns a one-time recovery passphrase — the ONLY way back into the
+            // archive if the password is forgotten. It is never stored server-side, so
+            // show it once and tell the user to save it offline.
+            if (d.recovery) {
+              const rec = document.createElement('div');
+              rec.style.cssText = 'margin-top:10px;padding:10px;border:1px solid #f59e0b;' +
+                'border-radius:6px;background:#1e293b;max-width:420px';
+              const hdr = document.createElement('div');
+              hdr.style.cssText = 'color:#fbbf24;font-size:0.82rem;font-weight:600;margin-bottom:6px';
+              hdr.textContent = '⚠ Recovery key — store this offline now';
+              const body = document.createElement('div');
+              body.style.cssText = 'color:#cbd5e1;font-size:0.78rem;margin-bottom:8px';
+              body.textContent = 'This is the only way to recover the encrypted archive if ' +
+                'you forget your password. It is shown once and is not stored on the server.';
+              const key = document.createElement('code');
+              key.style.cssText = 'display:block;user-select:all;word-break:break-all;' +
+                'background:#0f172a;border:1px solid #334155;border-radius:4px;color:#f1f5f9;' +
+                'padding:6px 8px;font-size:0.82rem';
+              key.textContent = d.recovery;
+              const copy = document.createElement('button');
+              copy.className = 'sel-btn';
+              copy.textContent = 'Copy';
+              copy.style.cssText = 'margin-top:8px;padding:3px 12px';
+              copy.addEventListener('click', () => {
+                navigator.clipboard.writeText(d.recovery).then(() => {
+                  copy.textContent = 'Copied ✓';
+                }).catch(() => { copy.textContent = 'Copy failed'; });
+              });
+              rec.appendChild(hdr); rec.appendChild(body);
+              rec.appendChild(key); rec.appendChild(copy);
+              bubble.appendChild(rec);
+            }
           } else {
             submit.disabled = false;
             status.style.color = '#f87171';

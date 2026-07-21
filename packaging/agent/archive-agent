@@ -13,6 +13,19 @@ Requests:
   {"action": "host-unmount", "volume": "<host path>"}
   {"action": "fsck",         "volume": "<host path>", "password": "<passphrase>"}
   {"action": "status",       "volume": "<host path>"}
+  {"action": "add-key",      "volume": "<host path>", "password": "<old>", "new_password": "<new>"}
+  {"action": "remove-key",   "volume": "<host path>", "password": "<remove>", "keep_password": "<keep>"}
+  {"action": "header-backup","volume": "<host path>"}
+
+add-key/remove-key/header-backup re-key a volume by editing only its LUKS header (a
+few KB), so they work while the volume is mounted and never touch the master key or
+the data. add-key adds a new keyslot (authenticated by the existing passphrase) and
+verifies the new one opens; remove-key drops a keyslot but refuses unless the key it
+must keep still opens the volume first (never leave a volume with no working key).
+header-backup writes the LUKS header to HEADER_BACKUP_DIR (0600) as a rollback before
+the first re-key. Together they support making the volume passphrase depend on the
+user's login password (see the app's /api/change-password re-key flow) so a leaked
+compose SECRET_KEY alone can no longer decrypt the volumes.
 
 mount/unmount/fsck take an optional "target": "archive" (default) or "output". The
 output target is a second, persistently mounted volume the container uses for its
@@ -59,6 +72,7 @@ import os
 import pwd
 import sys
 import json
+import time
 import socket
 import logging
 import tempfile
@@ -86,6 +100,10 @@ DEFAULTS = {
     # path. HOST_MOUNT_USER owns the mount root so that user can manage it directly.
     "HOST_MOUNT_DIR": "/run/media/private/ben/secure",
     "HOST_MOUNT_USER": "ben",
+    # Where LUKS header backups are written before a re-key (add-key). Sensitive: a
+    # header backup + a known passphrase can decrypt the volume, so keep it 0700 and
+    # off any shared/exported path.
+    "HEADER_BACKUP_DIR": "/var/lib/archive-agent/header-backups",
 }
 
 log = logging.getLogger("archive-agent")
@@ -277,6 +295,152 @@ def _cryptsetup_open(volume, password, mapper):
 def _cryptsetup_close(mapper):
     """Close the /dev/mapper/`mapper` device. Harmless (and quiet) if not open."""
     subprocess.run(["cryptsetup", "close", mapper], capture_output=True, text=True)
+
+
+def _cryptsetup_test_passphrase(volume, password):
+    """True if `password` opens LUKS `volume`. Uses --test-passphrase, which
+    verifies a keyslot WITHOUT creating a mapper or mounting anything, so it is safe
+    to call on a volume that is currently mounted. Passphrase via 0600 tmpfs keyfile."""
+    keyfile = None
+    try:
+        keyfile = _write_keyfile(password)
+        proc = subprocess.run(
+            ["cryptsetup", "open", "--test-passphrase", "--key-file", keyfile, volume],
+            capture_output=True, text=True, timeout=120,
+        )
+        return proc.returncode == 0
+    finally:
+        if keyfile and os.path.exists(keyfile):
+            os.remove(keyfile)
+
+
+def handle_add_key(cfg, req):
+    """Add a new LUKS keyslot to `volume`, authenticated by the existing passphrase.
+
+    Keyslot-only (header edit), so it is safe while the volume is mounted. Idempotent:
+    if `new_password` already opens the volume (a retry after a partial run), it is a
+    no-op success — we don't burn a fresh keyslot each attempt. Verifies the new key
+    actually opens the volume before reporting success."""
+    volume = req.get("volume")
+    old = req.get("password")
+    new = req.get("new_password")
+    if not volume or old is None or new is None:
+        return {"ok": False, "error": "add-key requires 'volume', 'password', 'new_password'"}
+    if not os.path.exists(volume):
+        return {"ok": False, "error": f"volume {volume} does not exist"}
+
+    if _cryptsetup_test_passphrase(volume, new):
+        return {"ok": True, "added": False}
+
+    oldkf = newkf = None
+    try:
+        oldkf = _write_keyfile(old)
+        newkf = _write_keyfile(new)
+        proc = subprocess.run(
+            ["cryptsetup", "luksAddKey", "--key-file", oldkf, volume, newkf],
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode != 0:
+            return {"ok": False,
+                    "error": f"luksAddKey failed: {(proc.stdout + proc.stderr).strip()}"}
+    finally:
+        for kf in (oldkf, newkf):
+            if kf and os.path.exists(kf):
+                os.remove(kf)
+
+    if not _cryptsetup_test_passphrase(volume, new):
+        return {"ok": False,
+                "error": "luksAddKey reported success but the new passphrase does "
+                         "not open the volume"}
+    log.info("add-key: added a keyslot to %s", volume)
+    return {"ok": True, "added": True}
+
+
+def handle_remove_key(cfg, req):
+    """Remove a LUKS keyslot from `volume`, but never leave it without a working key.
+
+    Requires `keep_password` to open the volume first (safety), and refuses to remove
+    the very key it must keep. Idempotent: if `password` (the key to remove) no longer
+    opens the volume, it is already gone → no-op success."""
+    volume = req.get("volume")
+    remove = req.get("password")
+    keep = req.get("keep_password")
+    if not volume or remove is None or keep is None:
+        return {"ok": False,
+                "error": "remove-key requires 'volume', 'password', 'keep_password'"}
+    if not os.path.exists(volume):
+        return {"ok": False, "error": f"volume {volume} does not exist"}
+    if remove == keep:
+        return {"ok": False, "error": "refusing to remove the key that must be kept"}
+
+    # Never leave the volume with no working key.
+    if not _cryptsetup_test_passphrase(volume, keep):
+        return {"ok": False,
+                "error": "keep_password does not open the volume; refusing to remove any key"}
+    # Already gone → nothing to do.
+    if not _cryptsetup_test_passphrase(volume, remove):
+        return {"ok": True, "removed": False}
+
+    removekf = None
+    try:
+        removekf = _write_keyfile(remove)
+        proc = subprocess.run(
+            ["cryptsetup", "luksRemoveKey", volume, removekf],
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode != 0:
+            return {"ok": False,
+                    "error": f"luksRemoveKey failed: {(proc.stdout + proc.stderr).strip()}"}
+    finally:
+        if removekf and os.path.exists(removekf):
+            os.remove(removekf)
+
+    if not _cryptsetup_test_passphrase(volume, keep):
+        return {"ok": False,
+                "error": "keep_password no longer opens the volume after removal"}
+    log.info("remove-key: removed a keyslot from %s", volume)
+    return {"ok": True, "removed": True}
+
+
+def handle_header_backup(cfg, req):
+    """Back up the LUKS header of `volume` to HEADER_BACKUP_DIR (0600) as the
+    rollback for a corrupted-header risk during a re-key. Sensitive — see the config
+    comment. Each backup gets a unique timestamped name (luksHeaderBackup refuses to
+    overwrite)."""
+    volume = req.get("volume")
+    if not volume:
+        return {"ok": False, "error": "header-backup requires 'volume'"}
+    if not os.path.exists(volume):
+        return {"ok": False, "error": f"volume {volume} does not exist"}
+
+    backup_dir = cfg.get("HEADER_BACKUP_DIR", DEFAULTS["HEADER_BACKUP_DIR"])
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+        os.chmod(backup_dir, 0o700)
+    except OSError as exc:
+        return {"ok": False, "error": f"could not prepare {backup_dir}: {exc}"}
+
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    base = os.path.basename(volume) or "volume"
+    path = os.path.join(backup_dir, f"{base}-{ts}.img")
+    n = 0
+    while os.path.exists(path):  # same-second collision guard
+        n += 1
+        path = os.path.join(backup_dir, f"{base}-{ts}-{n}.img")
+
+    proc = subprocess.run(
+        ["cryptsetup", "luksHeaderBackup", volume, "--header-backup-file", path],
+        capture_output=True, text=True, timeout=120,
+    )
+    if proc.returncode != 0:
+        return {"ok": False,
+                "error": f"luksHeaderBackup failed: {(proc.stdout + proc.stderr).strip()}"}
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    log.info("header-backup: %s -> %s", volume, path)
+    return {"ok": True, "backup": path}
 
 
 def _create_volume(volume, size, password):
@@ -580,6 +744,12 @@ def handle(cfg, req):
         return handle_fsck(cfg, req)
     if action == "status":
         return handle_status(cfg, req)
+    if action == "add-key":
+        return handle_add_key(cfg, req)
+    if action == "remove-key":
+        return handle_remove_key(cfg, req)
+    if action == "header-backup":
+        return handle_header_backup(cfg, req)
     return {"ok": False, "error": f"unknown action: {action!r}"}
 
 

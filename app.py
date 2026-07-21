@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 import zipfile
 from datetime import datetime
@@ -36,7 +37,7 @@ from config import (
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     FSCK_TIMEOUT,
     IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT, OUTPUT_MARKER,
-    OUTPUT_VOLUME, SECRET_KEY, USERNAME,
+    OUTPUT_PASSWORD, OUTPUT_SIZE, OUTPUT_VOLUME, SECRET_KEY, USERNAME,
     VIDEO_EXTS,
 )
 from generation_service import (
@@ -56,7 +57,9 @@ from persistence import (
     save_aliases, save_default_macro, save_macros,
     save_session, sessions_dir, slugify,
 )
+import auth_store
 from auth_store import save_password_hash, verify_password
+from crypto_key import derive_passphrase, effective_passphrase as _effective_passphrase
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
@@ -64,6 +67,29 @@ print(f"comfy-chatbot starting — build {BUILD_VERSION}", flush=True)
 
 # Only one archive mount/copy/unmount cycle at a time (gunicorn runs gthread workers).
 archive_lock = threading.Lock()
+# Serialises the lazy output-volume check+mount so two simultaneous first-logins
+# (or a login racing an in-flight mount) don't both drive the agent at once.
+output_mount_lock = threading.Lock()
+
+
+def effective_passphrase():
+    """The LUKS passphrase to open a volume, for the current auth state.
+
+    SECRET_KEY until a UI login password is set; the password-derived passphrase
+    once one is (see crypto_key). login_required guarantees the in-memory password
+    is primed whenever a password is set, so this never raises for a request handler."""
+    return _effective_passphrase(
+        SECRET_KEY, auth_store.password_is_set(), auth_store.current_password()
+    )
+
+
+def _bootstrap_passphrase(target):
+    """The pre-migration passphrase a volume was originally keyed with — used as the
+    'old' key the very first time a password is set. The output volume may have a
+    distinct OUTPUT_PASSWORD; everything else was keyed on SECRET_KEY."""
+    if target == "output":
+        return OUTPUT_PASSWORD or SECRET_KEY
+    return SECRET_KEY
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +101,15 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if not session.get("authenticated"):
             return redirect(url_for("login"))
+        # Once a UI password is set, the encrypted volumes derive their key from it,
+        # and the process only holds that password after a login. A signed session
+        # cookie survives a restart (it's signed with the stable SECRET_KEY), so an
+        # "authenticated" request can arrive with no in-memory password — the volumes
+        # are locked. Force a fresh login so the password is re-primed and the output
+        # volume can be unlocked, matching the accepted "no access until login" posture.
+        if auth_store.password_is_set() and auth_store.current_password() is None:
+            session.pop("authenticated", None)
+            return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
 
@@ -82,8 +117,14 @@ def login_required(f):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if request.form.get("username") == USERNAME and verify_password(request.form.get("password")):
+        password = request.form.get("password")
+        if request.form.get("username") == USERNAME and verify_password(password):
             session["authenticated"] = True
+            # Hold the plaintext in memory (never persisted) so the encrypted volumes
+            # can be unlocked with the password-derived passphrase, and unlock the
+            # output volume now if it was deferred at startup (see _lazy_output_mount).
+            auth_store.set_session_password(password)
+            _start_lazy_output_mount()
             return redirect(request.args.get("next") or url_for("index"))
         return render_template("login.html", error="Invalid username or password")
     return render_template("login.html")
@@ -91,8 +132,108 @@ def login():
 
 @app.route("/logout")
 def logout():
+    # Deliberately keep the in-memory password: the output volume stays mounted in the
+    # host namespace regardless, and clearing it would only break archive ops for this
+    # single-user appliance. It is dropped naturally on process restart.
     session.pop("authenticated", None)
     return redirect(url_for("login"))
+
+
+def _rekey_and_commit(current, new):
+    """Re-key the encrypted volumes to the new password-derived passphrase, then commit
+    the new login password. Returns (ok, error, recovery); ``recovery`` is the one-time
+    recovery passphrase generated on the first migration, else None.
+
+    Ordering is the safety contract (see the archive-rekeying ADR):
+
+      1. header-backup every existing target volume
+      2. add-key old->new on every target (add-key verifies the new key opens)
+      3. (first migration only) add-key old->recovery on every target
+      4. COMMIT: save_password_hash(new) + set the in-memory password
+      5. remove-key old from every target (post-commit cleanup, best-effort)
+
+    The login password (step 4) is persisted only after the new LUKS key is proven to
+    open every volume, so "password changed" <=> "the new key unlocks the data" — you
+    can never end up with a changed password that doesn't unlock, nor locked out of the
+    data. A failure before step 4 commits nothing (the old password still logs in and
+    still opens the volumes; a half-added keyslot is a harmless extra a retry reuses).
+    A failure during step 5 causes no lockout and no data loss — the new password works
+    everywhere; only a stale old keyslot lingers until a later re-key removes it. The
+    header backup from step 1 is the rollback for the one irreversible step (luksAddKey
+    edits the header)."""
+    first_migration = not auth_store.password_is_set()
+    new_pp = derive_passphrase(SECRET_KEY, new)
+    recovery = auth_store.generate_recovery_passphrase() if first_migration else None
+
+    def old_pp_for(target):
+        # On the first migration each volume is still on its original bootstrap key
+        # (SECRET_KEY, or OUTPUT_PASSWORD for the output volume). Thereafter every
+        # volume is on the passphrase derived from the *current* login password.
+        if first_migration:
+            return _bootstrap_passphrase(target)
+        return derive_passphrase(SECRET_KEY, current)
+
+    # Only volumes whose backing file already exists can be re-keyed. A volume that
+    # doesn't exist yet (e.g. the archive volume before the first archive) is created
+    # later directly with effective_passphrase(), so it never needs migration.
+    targets = [(v, t) for v, t in (
+        (ARCHIVE_VOLUME, "archive"), (OUTPUT_VOLUME, "output")) if v and Path(v).exists()]
+
+    if not targets:
+        try:
+            save_password_hash(new)
+        except OSError as e:
+            return False, f"Could not save password: {e}", None
+        auth_store.set_session_password(new)
+        return True, None, None
+
+    with archive_lock:
+        # One physical archive volume; refuse while the host has it mounted (via `m`).
+        if _host_mount_active():
+            return False, _HOST_MOUNT_BUSY, None
+
+        # Steps 1-3: header-backup, add new key, add recovery key (first migration).
+        try:
+            for volume, target in targets:
+                old_pp = old_pp_for(target)
+                hb = _agent_request({"action": "header-backup", "volume": volume})
+                if not hb.get("ok"):
+                    return False, f"header backup failed for the {target} volume: {hb.get('error')}", None
+                ak = _agent_request({"action": "add-key", "volume": volume,
+                                     "password": old_pp, "new_password": new_pp})
+                if not ak.get("ok"):
+                    return False, f"could not add the new key to the {target} volume: {ak.get('error')}", None
+                if first_migration:
+                    rk = _agent_request({"action": "add-key", "volume": volume,
+                                         "password": old_pp, "new_password": recovery})
+                    if not rk.get("ok"):
+                        return False, f"could not add the recovery key to the {target} volume: {rk.get('error')}", None
+        except RuntimeError as exc:
+            return False, f"archive agent error during re-key: {exc}", None
+
+        # Step 4: COMMIT — every volume's new key is proven to open (add-key verifies).
+        try:
+            save_password_hash(new)
+        except OSError as e:
+            return False, f"Could not save password: {e}", None
+        auth_store.set_session_password(new)
+
+        # Step 5: post-commit cleanup — drop the old keyslot everywhere. Best-effort:
+        # a failure here is a stale extra keyslot, never a lockout or data loss.
+        for volume, target in targets:
+            old_pp = old_pp_for(target)
+            if old_pp == new_pp:
+                continue
+            try:
+                rr = _agent_request({"action": "remove-key", "volume": volume,
+                                     "password": old_pp, "keep_password": new_pp})
+                if not rr.get("ok"):
+                    app.logger.warning("re-key: could not remove old key from %s volume: %s",
+                                       target, rr.get("error"))
+            except RuntimeError as exc:
+                app.logger.warning("re-key: remove-key error on %s volume: %s", target, exc)
+
+    return True, None, recovery
 
 
 @app.route("/api/change-password", methods=["POST"])
@@ -112,12 +253,21 @@ def change_password():
     if new == current:
         return jsonify({"ok": False, "error": "New password must differ from the current one"}), 400
 
-    try:
-        save_password_hash(new)
-    except OSError as e:
-        return jsonify({"ok": False, "error": f"Could not save password: {e}"}), 500
-    # Session stays authenticated; the changed hash takes effect on the next login.
-    return jsonify({"ok": True})
+    # Re-key the encrypted volumes and commit the new password (add new key -> verify ->
+    # persist hash -> remove old key). On any pre-commit failure the old password still
+    # works, so the user can safely retry.
+    ok, err, recovery = _rekey_and_commit(current, new)
+    if not ok:
+        status = 409 if err == _HOST_MOUNT_BUSY else 500
+        return jsonify({"ok": False, "error": err}), status
+
+    # Session stays authenticated; the in-memory password is updated so the volumes
+    # stay unlocked. `recovery` (first migration only) is returned once — the UI shows
+    # it and it is never stored server-side.
+    resp: dict = {"ok": True}
+    if recovery:
+        resp["recovery"] = recovery
+    return jsonify(resp)
 
 
 # ---------------------------------------------------------------------------
@@ -1634,6 +1784,94 @@ def _agent_request(payload: dict, timeout: float = 120.0) -> dict:
     return agent_send(payload, ARCHIVE_AGENT_SOCKET, timeout)
 
 
+def _output_already_mounted() -> bool:
+    """True if the encrypted output volume's mount marker is visible here."""
+    return bool(OUTPUT_VOLUME) and (IMAGES_DIR / OUTPUT_MARKER).exists()
+
+
+def _write_output_fscheck(resp: dict) -> None:
+    """Record the output volume's fsck result (with a timestamp) for /api/fscheck to
+    surface — the app-side equivalent of agent_client._write_fscheck_result, used on
+    the lazy (post-login) output check. Best-effort."""
+    record = {"checked_at": time.time()}
+    record.update(resp)
+    try:
+        with open(OUTPUT_FSCHECK_RESULT, "w", encoding="utf-8") as fh:
+            json.dump(record, fh)
+    except OSError as exc:
+        app.logger.warning("could not write output fscheck result: %s", exc)
+
+
+def _lazy_output_check_and_mount() -> None:
+    """Unlock the output volume on first login, when a UI password is set.
+
+    Once a password is set the output volume can no longer auto-mount at startup (no
+    password is available then — the entrypoint skips it), so it becomes mount-on-
+    first-login: fsck it while still unmounted, then mount it with the password-derived
+    passphrase and wait for the marker. Runs on a background thread so login returns
+    at once; image/session endpoints stay guarded by output_storage_error() until the
+    marker appears. Idempotent — a login while already mounted is a no-op."""
+    if not OUTPUT_VOLUME or not auth_store.password_is_set():
+        return
+    with output_mount_lock:
+        if _output_already_mounted():
+            return
+        try:
+            passphrase = effective_passphrase()
+        except Exception as exc:  # VolumeLockedError etc. — shouldn't happen post-login
+            app.logger.warning("lazy output mount: %s", exc)
+            return
+
+        # fsck first: e2fsck needs the fs unmounted, and the entrypoint no longer
+        # checks it at startup once a password is set. Clear any stale mount left by
+        # an unclean stop, then check. Best-effort — never blocks the mount.
+        try:
+            _agent_request({"action": "unmount", "target": "output",
+                            "volume": OUTPUT_VOLUME})
+        except RuntimeError:
+            pass
+        try:
+            result = _agent_request({
+                "action": "fsck", "target": "output",
+                "volume": OUTPUT_VOLUME, "password": passphrase,
+            }, timeout=FSCK_TIMEOUT)
+            _write_output_fscheck(result)
+        except RuntimeError as exc:
+            app.logger.warning("lazy output fsck: %s", exc)
+            _write_output_fscheck({"ok": False, "error": str(exc)})
+
+        # Mount (create-if-missing) with the derived passphrase.
+        try:
+            resp = _agent_request({
+                "action": "mount", "target": "output",
+                "volume": OUTPUT_VOLUME, "password": passphrase,
+                "create": True, "size": OUTPUT_SIZE,
+            })
+        except RuntimeError as exc:
+            app.logger.error("lazy output mount failed: %s", exc)
+            return
+        if not resp.get("ok"):
+            app.logger.error("lazy output mount failed: %s", resp.get("error"))
+            return
+
+        # Wait for the marker to propagate in via the rshared bind (as the entrypoint
+        # does), so we never treat IMAGES_DIR as ready before it actually is.
+        for _ in range(50):
+            if _output_already_mounted():
+                app.logger.info("output volume unlocked and mounted")
+                return
+            time.sleep(0.1)
+        app.logger.error("output volume mounted but marker never appeared at %s",
+                         IMAGES_DIR / OUTPUT_MARKER)
+
+
+def _start_lazy_output_mount() -> None:
+    """Kick off the lazy output check+mount on a daemon thread (non-blocking login)."""
+    if not OUTPUT_VOLUME or not auth_store.password_is_set():
+        return
+    threading.Thread(target=_lazy_output_check_and_mount, daemon=True).start()
+
+
 def _host_mount_active() -> bool:
     """True if the archive volume is currently exposed to the host (via `m`).
     While it is, archive/fsck ops must not run — they share the one physical
@@ -1683,7 +1921,7 @@ def api_archive():
             resp = _agent_request({
                 "action": "mount",
                 "volume": ARCHIVE_VOLUME,
-                "password": SECRET_KEY,
+                "password": effective_passphrase(),
                 # Self-provision on first archive if the volume file is absent
                 # (mirrors the output volume). Safe on an existing volume: the
                 # agent's open(volume, "xb") never clobbers one that exists.
@@ -1789,7 +2027,7 @@ def api_fscheck():
                         "action": "fsck",
                         "target": "archive",
                         "volume": ARCHIVE_VOLUME,
-                        "password": SECRET_KEY,
+                        "password": effective_passphrase(),
                     }, timeout=FSCK_TIMEOUT)
                 except RuntimeError as exc:
                     result["archive"] = {"ok": False, "error": str(exc)}
@@ -1818,7 +2056,7 @@ def api_host_mount():
                 "action": "host-mount",
                 "target": "host",
                 "volume": ARCHIVE_VOLUME,
-                "password": SECRET_KEY,
+                "password": effective_passphrase(),
                 "create": True,
                 "size": ARCHIVE_SIZE,
             })

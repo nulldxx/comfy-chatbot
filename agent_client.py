@@ -58,6 +58,21 @@ def _env(name, default=""):
     return os.environ.get(name, default)
 
 
+def _password_deferred():
+    """True once a UI login password has been set. When it is, the encrypted volumes
+    are keyed on a password-derived passphrase (see crypto_key) that isn't available
+    at startup, so the entrypoint must NOT auto-mount/-check the output volume — it is
+    deferred to the app's first-login flow (app._lazy_output_check_and_mount). The
+    login-hash file lives on the unencrypted workflows mount, readable at startup."""
+    try:
+        import auth_store
+        return auth_store.password_is_set()
+    except Exception:
+        # If we can't tell (e.g. workflows mount not ready), behave as today rather
+        # than silently skipping the mount and starting with no output storage.
+        return False
+
+
 def _mount_output():
     """Ask the agent to create-if-missing + mount the output volume, then block
     until the mount marker propagates into COMFY_OUTPUT_DIR. Returns a process
@@ -65,6 +80,10 @@ def _mount_output():
     volume = _env("OUTPUT_VOLUME")
     if not volume:
         return 0  # output encryption disabled — nothing to do
+    if _password_deferred():
+        print("output-volume: a login password is set — output mount deferred to "
+              "first login", file=sys.stderr)
+        return 0
     # Passphrase: explicit OUTPUT_PASSWORD, else reuse SECRET_KEY so a deployment
     # only has to declare one secret. SECRET_KEY is always set, so this never
     # leaves the volume passphrase-less.
@@ -147,6 +166,10 @@ def _check_output():
     volume = _env("OUTPUT_VOLUME")
     if not volume:
         return 0  # output encryption disabled — nothing to check
+    if _password_deferred():
+        print("output-fsck: a login password is set — output check deferred to "
+              "first login", file=sys.stderr)
+        return 0
     password = _env("OUTPUT_PASSWORD") or _env("SECRET_KEY")
     if not password:
         print("output-fsck: OUTPUT_VOLUME set but no OUTPUT_PASSWORD/SECRET_KEY; "

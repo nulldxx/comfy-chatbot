@@ -133,6 +133,13 @@ ARCHIVE_MARKER = '.comfy-archive'
 # bind/propagation failure never silently writes plaintext images to disk.
 OUTPUT_VOLUME = os.environ.get('OUTPUT_VOLUME', '')   # host path to the output volume
 OUTPUT_MARKER = ARCHIVE_MARKER                        # same marker file the agent drops
+# Size of the output volume auto-created on first mount (mirrors ARCHIVE_SIZE).
+OUTPUT_SIZE = os.environ.get('OUTPUT_SIZE', '20G')
+# Optional distinct passphrase for the output volume. When unset the volume is keyed
+# on SECRET_KEY (the deployment's single secret). Once a UI login password is set the
+# volume is re-keyed to a password-derived passphrase (see crypto_key); this value is
+# only the FIRST-migration/bootstrap key for the output volume.
+OUTPUT_PASSWORD = os.environ.get('OUTPUT_PASSWORD', '')
 
 # Filesystem check (/fscheck). e2fsck can only run on an unmounted volume, so the
 # output volume — mounted for the container's whole life — is checked at startup

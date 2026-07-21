@@ -139,11 +139,37 @@ globs skip it, and it sits outside `IMAGES_DIR` so the `/api/settings-backup` bu
 are still cleartext-in-transit (no TLS/CSRF layer) — the improvement is at-rest hashing
 plus user self-service, not transport security.
 
-**Possible follow-up (not implemented):** making the LUKS passphrase depend on the
-password (`SECRET_KEY + password`) so a leaked compose file can't decrypt the archives.
-That's a keyslot change (`luksAddKey`/`luksRemoveKey`, not full re-encryption) but forces
-the output volume to mount lazily on first login instead of at startup, and carries real
-data-loss risk (needs header backups + a recovery keyslot). Deliberately deferred.
+### Password-derived LUKS keys (re-keying)
+
+**Implemented** (see `ADR/archive-rekeying.md`). The LUKS passphrase for **both** the
+archive and output volumes now depends on the login password, so a leaked compose file
+(`SECRET_KEY`) alone no longer decrypts the archives.
+
+- **`crypto_key.py`** — `derive_passphrase(secret_key, password)` = `sha256(secret_key
+  \x00 password)` (**pinned**); `effective_passphrase(...)` returns `SECRET_KEY` until a
+  UI password is set (bootstrap), the derived value once set, and raises
+  `VolumeLockedError` if set-but-not-logged-in. `app.effective_passphrase()` wraps it and
+  is used at every volume-open site (`api_archive`, `api_fscheck`, `api_host_mount`).
+- **In-memory password** (`auth_store.set_session_password`/`current_password`) — the
+  plaintext login password, held in memory after login, never persisted; gone on restart.
+- **Re-key on change** (`app._rekey_and_commit`, `/api/change-password`): under
+  `archive_lock`, header-backup → add-key old→new (+ recovery on first set) → **commit**
+  (save hash + set in-memory password) → remove-key old. Password is persisted only after
+  the new key is proven to open every volume, so "password changed ⟺ new key unlocks".
+- **Agent actions** (`packaging/agent/archive-agent`): `add-key`, `remove-key` (refuses
+  to drop the last working key), `header-backup` — keyslot-only, safe while mounted.
+- **Lazy output mount**: once a password is set the output volume no longer auto-mounts
+  at startup (`agent_client` skips it); it mounts on first login
+  (`app._lazy_output_check_and_mount`, fsck-then-mount with the derived passphrase).
+  `login_required` forces a fresh login when a password is set but the process holds none
+  (stale cookie after restart). Consequence: **no images/sessions until login** after a
+  restart.
+- **Recovery keyslot**: a one-time random recovery passphrase is generated on the first
+  password set, added to a spare keyslot on each volume, and shown **once** in the
+  change-password UI (`commands.js`) — never stored server-side. Forgotten password +
+  lost recovery key = archive unrecoverable.
+- **`~/dot-files/scripts/m`** (separate repo) prompts for the password when the compose
+  `APP_PASSWORD` is superseded, priming the app's in-memory password for host-mount.
 
 ## Known Pitfalls
 

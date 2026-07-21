@@ -42,6 +42,50 @@ AUTH_FILE = COMFY_WORKFLOW_DIR / ".auth.json"
 # single lock suffices, mirroring persistence.sessions_write_lock.
 _auth_write_lock = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# In-memory login password (for deriving the LUKS passphrase — see crypto_key).
+# ---------------------------------------------------------------------------
+# The plaintext login password is held in memory for the process lifetime after a
+# successful login and is NEVER persisted. It is the second input (with SECRET_KEY)
+# to the derived LUKS passphrase, so once a UI password is set the encrypted volumes
+# can only be unlocked while someone has logged in since the process started. On
+# restart it is gone until the next login — that is the whole point (see the
+# archive-rekeying plan / lazy output mount). One Gunicorn worker with shared
+# threads, so a module-global guarded by a lock is process-wide.
+_session_password = None
+_session_password_lock = threading.Lock()
+
+
+def set_session_password(plaintext):
+    """Record the plaintext login password in memory (called on successful login
+    and after a password change). Never written to disk."""
+    global _session_password
+    with _session_password_lock:
+        _session_password = plaintext
+
+
+def current_password():
+    """Return the in-memory login password, or None if nobody has logged in since
+    this process started."""
+    with _session_password_lock:
+        return _session_password
+
+
+def clear_session_password():
+    """Forget the in-memory login password (relocks the volumes on next open)."""
+    global _session_password
+    with _session_password_lock:
+        _session_password = None
+
+
+def generate_recovery_passphrase():
+    """Return a fresh high-entropy recovery passphrase for a spare LUKS keyslot.
+
+    Shown to the user once on the first password set and never stored server-side;
+    it is the only way to recover the archive if the login password is forgotten.
+    URL-safe base64 of 32 random bytes (~256 bits)."""
+    return secrets.token_urlsafe(32)
+
 
 def _hash_password(plaintext, salt):
     """Return the scrypt digest (bytes) of ``plaintext`` with ``salt`` (bytes)."""

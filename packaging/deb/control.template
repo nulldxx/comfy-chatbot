@@ -3,7 +3,7 @@ Version: __VERSION__
 Section: utils
 Priority: optional
 Architecture: all
-Depends: zulucrypt-cli, python3 (>= 3.9), mount, e2fsprogs
+Depends: zulucrypt-cli, cryptsetup, python3 (>= 3.9), mount, e2fsprogs
 Maintainer: comfy-chatbot maintainers <noreply@example.com>
 Description: Privileged mount helper for comfy-chatbot archiving
  A small root daemon that mounts and unmounts a password-encrypted volume with

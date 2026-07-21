@@ -34,6 +34,7 @@ COPY auth_store.py .
 COPY catalogue.py .
 COPY ComfyServer.py .
 COPY config.py .
+COPY crypto_key.py .
 COPY generation_service.py .
 COPY grok.py .
 COPY gunicorn.conf.py .
