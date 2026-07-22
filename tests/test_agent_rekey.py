@@ -152,5 +152,69 @@ class TestAgentKeyslotOps(unittest.TestCase):
         self.assertTrue(self._opens("A"))
 
 
+class TestMtimeFreeze(unittest.TestCase):
+    """The mtime-freezing helpers work on any backing file (no LUKS/root needed) — they
+    only stat/utime the outer host file — so they run in normal CI."""
+
+    def setUp(self):
+        self.agent = _load_agent()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.volume = os.path.join(self.tmp.name, "vol.img")
+        with open(self.volume, "xb") as fh:
+            fh.truncate(1024)
+        self.baseline_dir = os.path.join(self.tmp.name, "baselines")
+        self.cfg = dict(self.agent.DEFAULTS, MTIME_BASELINE_DIR=self.baseline_dir)
+        # Start from a known, old mtime so any drift is unambiguous.
+        self.base_ns = 1_000_000_000 * 1_000_000_000  # 2001-09-09, in ns
+        os.utime(self.volume, ns=(self.base_ns, self.base_ns))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _bump(self):
+        """Simulate an op that advanced the backing file's mtime."""
+        os.utime(self.volume, ns=(self.base_ns + 5 * 10**9, self.base_ns + 5 * 10**9))
+
+    def test_freeze_restores_after_a_bump(self):
+        self.agent._load_or_init_baseline(self.cfg, self.volume)  # bootstrap at base_ns
+        self._bump()
+        self.assertNotEqual(os.stat(self.volume).st_mtime_ns, self.base_ns)
+        self.agent._freeze_mtime(self.cfg, self.volume)
+        self.assertEqual(os.stat(self.volume).st_mtime_ns, self.base_ns)
+
+    def test_baseline_bootstraps_once_and_is_immutable(self):
+        first = self.agent._load_or_init_baseline(self.cfg, self.volume)
+        self.assertEqual(first, self.base_ns)
+        sidecar = self.agent._baseline_path(self.cfg, self.volume)
+        self.assertTrue(os.path.exists(sidecar))
+        self.assertEqual(stat.S_IMODE(os.stat(sidecar).st_mode), 0o600)
+        # A later drift must NOT move the stored baseline.
+        self._bump()
+        self.assertEqual(self.agent._load_or_init_baseline(self.cfg, self.volume),
+                         self.base_ns)
+
+    def test_freeze_after_drift_uses_original_baseline_not_current(self):
+        # Baseline captured at base_ns; freezing after a drift returns to base_ns,
+        # proving the frozen value is the persisted baseline, not "now".
+        self.agent._load_or_init_baseline(self.cfg, self.volume)
+        self._bump()
+        self.agent._freeze_mtime(self.cfg, self.volume)
+        self.assertEqual(os.stat(self.volume).st_mtime_ns, self.base_ns)
+
+    def test_disabled_is_a_noop(self):
+        cfg = dict(self.cfg, PRESERVE_MTIME="0")
+        self.assertIsNone(self.agent._load_or_init_baseline(cfg, self.volume))
+        self._bump()
+        drifted = os.stat(self.volume).st_mtime_ns
+        self.agent._freeze_mtime(cfg, self.volume)
+        self.assertEqual(os.stat(self.volume).st_mtime_ns, drifted)  # untouched
+        self.assertFalse(os.path.exists(self.agent._baseline_path(cfg, self.volume)))
+
+    def test_absent_volume_is_safe(self):
+        missing = os.path.join(self.tmp.name, "nope.img")
+        self.assertIsNone(self.agent._load_or_init_baseline(self.cfg, missing))
+        self.agent._freeze_mtime(self.cfg, missing)  # must not raise
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -328,6 +328,34 @@ The agent's `fsck` action needs `e2fsprogs` (declared in `packaging/deb/control.
 corruption can mean data loss without a prompt. This is the deliberate, chosen policy
 for an unattended appliance.
 
+### Frozen backing-file mtime
+
+The agent keeps each volume's **backing file** mtime pinned to a fixed baseline so that
+routine housekeeping (mount/unmount, `e2fsck`, LUKS keyslot edits on password change,
+the marker/chmod/superblock writes) never advances it. `_freeze_mtime()` in
+`packaging/agent/archive-agent` `os.utime()`s the file back to a per-volume baseline
+after every op that leaves the volume closed (`handle_unmount`/`host-unmount`,
+`handle_fsck`, `handle_add_key`/`remove_key`). The baseline is a tiny 0600 sidecar under
+`MTIME_BASELINE_DIR` (`/var/lib/archive-agent/mtime-baselines`), written **once** at
+volume creation (or bootstrapped from the current mtime the first time an existing volume
+is touched) and **never changed** thereafter — so even archiving new images doesn't move
+the mtime (`api_archive`'s mount→copy→unmount ends in `handle_unmount`). Toggle with the
+`PRESERVE_MTIME` config key (default `"1"`); reset by deleting the volume's sidecar.
+
+- **Archive volume** (unmounted at rest): fully frozen — every observable at-rest moment
+  shows the baseline date.
+- **Output volume** (mounted continuously): frozen only when **closed** (container stop,
+  rekey/lazy-mount cycle); its mtime drifts while live-mounted and cannot be pinned
+  without freezing the running filesystem.
+- Only the *outer* host file's mtime is changed, never the *inner* ext4 superblock
+  timestamps `e2fsck` uses — fs integrity and cryptsetup/zuluCrypt open are unaffected.
+  `ctime` still moves (a `utime` side effect); this only matters to backup tools that key
+  on `ctime` rather than mtime+size.
+
+**Backup implication:** the LUKS file is a **fixed size**, so with mtime frozen a
+size+mtime backup (plain `rsync`, tar `--newer-mtime`) will never re-copy it — use a
+content-aware backup (`rsync -c`, `restic`, `borg`) if the archive must be backed up.
+
 ## Host access to the archive volume (`m` → `/api/host-mount`)
 
 The container is the **sole owner** of the encrypted archive volume. External host

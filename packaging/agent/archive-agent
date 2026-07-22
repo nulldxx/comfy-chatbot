@@ -105,6 +105,14 @@ DEFAULTS = {
     # header backup + a known passphrase can decrypt the volume, so keep it 0700 and
     # off any shared/exported path.
     "HEADER_BACKUP_DIR": "/var/lib/archive-agent/header-backups",
+    # Where per-volume mtime baselines are stored so agent housekeeping never advances
+    # a backing file's modified time (see _freeze_mtime). One tiny sidecar per volume.
+    "MTIME_BASELINE_DIR": "/var/lib/archive-agent/mtime-baselines",
+    # Freeze each volume's backing-file mtime to its baseline after every write op
+    # ("1" = on). A backing file is a fixed-size LUKS container, so freezing mtime means
+    # size+mtime backup tools (plain rsync) won't re-copy it — use content-aware backups
+    # (rsync -c / restic / borg). Set to "0" to let mtime move normally.
+    "PRESERVE_MTIME": "1",
 }
 
 log = logging.getLogger("archive-agent")
@@ -255,6 +263,62 @@ def _write_keyfile(password):
     return keyfile
 
 
+def _preserve_mtime(cfg):
+    """True unless PRESERVE_MTIME is explicitly a falsy value."""
+    return str(cfg.get("PRESERVE_MTIME", DEFAULTS["PRESERVE_MTIME"])).strip().lower() \
+        not in ("0", "false", "no", "off", "")
+
+
+def _baseline_path(cfg, volume):
+    """Path of the mtime-baseline sidecar for `volume`: the absolute volume path
+    flattened into a single filename under MTIME_BASELINE_DIR."""
+    d = cfg.get("MTIME_BASELINE_DIR", DEFAULTS["MTIME_BASELINE_DIR"])
+    key = volume.strip("/").replace("/", "_") or "root"
+    return os.path.join(d, key + ".mtime")
+
+
+def _load_or_init_baseline(cfg, volume):
+    """Return the frozen mtime_ns for `volume`. The baseline is written once (from the
+    file's current mtime) the first time we ever see the volume and never changes after,
+    so existing deployments freeze at "now" and freshly created ones at their creation
+    time. Returns None when preserving is disabled or the volume file is absent."""
+    if not _preserve_mtime(cfg) or not volume or not os.path.exists(volume):
+        return None
+    path = _baseline_path(cfg, volume)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        pass  # missing or corrupt -> (re)bootstrap below
+    try:
+        ns = os.stat(volume).st_mtime_ns
+    except OSError:
+        return None
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.chmod(os.path.dirname(path), 0o700)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(str(ns))
+        log.info("mtime baseline for %s set to %d", volume, ns)
+    except OSError as exc:
+        log.warning("could not persist mtime baseline for %s: %s", volume, exc)
+    return ns
+
+
+def _freeze_mtime(cfg, volume):
+    """Restore `volume`'s backing-file mtime (and atime) to its frozen baseline so agent
+    housekeeping (mount/unmount/fsck/rekey and even archive writes) never advances it.
+    Only meaningful once the volume is closed. Best-effort: never fail an op over it."""
+    ns = _load_or_init_baseline(cfg, volume)
+    if ns is None:
+        return
+    try:
+        os.utime(volume, ns=(ns, ns))
+    except OSError as exc:
+        log.warning("could not freeze mtime on %s: %s", volume, exc)
+
+
 def _cryptsetup_format(volume, password):
     """luksFormat `volume` with `password`. Returns None on success or an error
     string. Passphrase via 0600 tmpfs keyfile."""
@@ -353,6 +417,7 @@ def handle_add_key(cfg, req):
         return {"ok": False,
                 "error": "luksAddKey reported success but the new passphrase does "
                          "not open the volume"}
+    _freeze_mtime(cfg, volume)  # the header keyslot edit bumped mtime
     log.info("add-key: added a keyslot to %s", volume)
     return {"ok": True, "added": True}
 
@@ -399,6 +464,7 @@ def handle_remove_key(cfg, req):
     if not _cryptsetup_test_passphrase(volume, keep):
         return {"ok": False,
                 "error": "keep_password no longer opens the volume after removal"}
+    _freeze_mtime(cfg, volume)  # the header keyslot edit bumped mtime
     log.info("remove-key: removed a keyslot from %s", volume)
     return {"ok": True, "removed": True}
 
@@ -444,7 +510,7 @@ def handle_header_backup(cfg, req):
     return {"ok": True, "backup": path}
 
 
-def _create_volume(volume, size, password):
+def _create_volume(cfg, volume, size, password):
     """Auto-provision a new LUKS volume file at `volume` of `size` with an ext4
     filesystem inside (first-deploy path for the output volume). Uses cryptsetup
     + mkfs directly — deterministic and non-interactive — so zuluCrypt-cli -o can
@@ -487,6 +553,9 @@ def _create_volume(volume, size, password):
             except OSError:
                 pass
         return err
+    # Pin the mtime baseline to the creation time; the open/mount/marker writes that
+    # follow will bump it, but the paired unmount freezes it back to this value.
+    _load_or_init_baseline(cfg, volume)
     log.info("created encrypted volume %s (%s)", volume, size)
     return None
 
@@ -565,6 +634,7 @@ def handle_fsck(cfg, req):
                 "error": f"e2fsck timed out after {E2FSCK_TIMEOUT_SECONDS}s"}
     finally:
         _cryptsetup_close(mapper)
+        _freeze_mtime(cfg, volume)  # e2fsck's superblock last-check write bumped mtime
 
     result = interpret_e2fsck(rc, out[-4000:])  # cap the echoed output
     if result["clean"]:
@@ -623,7 +693,7 @@ def _mount_target(cfg, req):
 
     # First-deploy auto-provisioning: create the volume if asked and it's absent.
     if req.get("create") and not os.path.exists(volume):
-        err = _create_volume(volume, req.get("size") or "20G", password)
+        err = _create_volume(cfg, volume, req.get("size") or "20G", password)
         if err is not None:
             return mount_dir, False, {"ok": False, "error": err}
 
@@ -706,6 +776,10 @@ def handle_unmount(cfg, req):
     if rc != 0:
         log.error("close failed (rc=%s): %s", rc, out)
         return {"ok": False, "error": f"zuluCrypt-cli close failed: {out}"}
+    # Volume is now closed: restore the frozen mtime so this whole mount session
+    # (marker/chmod/superblock writes, any archived data, the close-flush) leaves the
+    # backing file's mtime unchanged. Covers host-unmount and the api_archive path too.
+    _freeze_mtime(cfg, volume)
     log.info("unmounted %s", volume)
     return {"ok": True}
 
