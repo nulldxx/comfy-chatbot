@@ -721,6 +721,23 @@ header a:hover { color: #a78bfa; }
 .ba-overlay .ba-slider { max-width: none; }
 
 /* Review grid (/review) */
+.review-frame {
+  position: relative;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 14px 10px 10px;
+  margin-top: 8px;
+}
+.review-count {
+  position: absolute;
+  top: -8px;
+  left: 12px;
+  padding: 0 8px;
+  background: #1e293b;      /* match the bot bubble so it sits cleanly on the border */
+  font-size: 0.72rem;
+  color: #94a3b8;
+  line-height: 1.2;
+}
 .review-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));

@@ -80,8 +80,21 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     bubble.appendChild(hint);
   }
 
+  // Bordered frame with a legend-style count that sits on the top border.
+  const frame = document.createElement('div');
+  frame.className = 'review-frame';
+
+  const countLabel = document.createElement('div');
+  countLabel.className = 'review-count';
+  frame.appendChild(countLabel);
+
   const grid = document.createElement('div');
   grid.className = onReorder ? 'review-grid review-draggable' : 'review-grid';
+
+  function updateCount() {
+    const n = grid.children.length;
+    countLabel.textContent = `${n} image${n === 1 ? '' : 's'}`;
+  }
 
   let order = urls.slice();
   const cells = new Map();
@@ -134,6 +147,8 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
           cell.remove();
           if (!grid.children.length) {
             bubble.innerHTML = 'All session images deleted.';
+          } else {
+            updateCount();
           }
         })
         .catch(err => {
@@ -335,7 +350,9 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     grid.appendChild(cell);
   });
 
-  bubble.appendChild(grid);
+  updateCount();
+  frame.appendChild(grid);
+  bubble.appendChild(frame);
   scrollBottom();
 }
 
