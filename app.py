@@ -43,7 +43,7 @@ from config import (
 from generation_service import (
     cancel_auto_purge, get_last_sent_workflow, jobs, jobs_lock,
     rename_and_retarget_session, run_generation, start_background_job,
-    start_generation_job, start_sequence_run_job,
+    start_face_detail_super_job, start_generation_job, start_sequence_run_job,
 )
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
@@ -861,6 +861,10 @@ def api_face_detail():
     The workflow is loaded from the facedetailer/ subdir and supports the usual
     <PROMPT> and <lora:...> tags plus an <INPUT_IMAGE> placeholder, which is
     filled with the uploaded source image.
+
+    An optional ``count`` (2–16) runs the detailer that many times ("super" mode),
+    returning all the variations together for a client-side tile picker; absent or
+    1 keeps the ordinary single-generation + before/after slider path.
     """
     data = request.get_json(force=True)
     raw_prompt = (data.get("prompt") or "").strip()
@@ -870,6 +874,16 @@ def api_face_detail():
     prompt, loras = parse_loras_from_prompt(raw_prompt)
     if not prompt:
         return jsonify({"error": "Prompt is empty after removing LoRA tags"}), 400
+
+    # Validated up front so an obviously-bad count fails fast, before any upload.
+    count = data.get("count")
+    if count is not None:
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            return jsonify({"error": "count must be an integer"}), 400
+        if count < 1 or count > 16:
+            return jsonify({"error": "count must be between 1 and 16"}), 400
 
     image_url = (data.get("image") or "").strip()
     if not image_url:
@@ -894,6 +908,14 @@ def api_face_detail():
     err = output_storage_error()
     if err:
         return err
+
+    if count and count > 1:
+        job_id = start_face_detail_super_job(
+            prompt, loras, server_address, server_os, workflow_name, count,
+            workflow_dir=COMFY_FACEDETAILER_DIR, input_image=image_path,
+            preserve_mtime_from=safe, denoise=denoise,
+        )
+        return jsonify({"job_id": job_id})
 
     job_id = start_generation_job(
         prompt, loras, server_address, server_os, workflow_name,

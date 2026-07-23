@@ -16,6 +16,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/delete-today',                 desc: 'delete every image generated today',                                                 args: ''  },
   { cmd: '/denoise',                      desc: 'set denoise defaults for face-detail, image2image, inpainting, upscale',             args: ''  },
   { cmd: '/face-detail',                  desc: 'face-detail the last N images (default 1)',                                          args: ' ' },
+  { cmd: '/face-detail-super',            desc: 'N-variation face detail: face icon shows a tile picker (1 = off)',                     args: ' ' },
   { cmd: '/face-detail-prompt',           desc: 'set the prompt the face-detail icons use',                                           args: ' ' },
   { cmd: '/face-detail-prompt-reset',     desc: 'clear the override; derive prompts again',                                           args: ''  },
   { cmd: '/face-detail-replacement',      desc: 'add a find→replace applied to face-detail prompts',                                  args: ' ' },

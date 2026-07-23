@@ -20,6 +20,10 @@ export const state = {
   currentInpaintingWorkflow:   null,
   currentRemovalWorkflow:      null,
 
+  // Face-detail "super" mode: when >1, the face icon runs N detailer
+  // variations and shows a tile picker instead of a single before/after slider.
+  faceSuperN:                  1,
+
   // Prompt overrides
   lastFaceDetailPrompt:        null,
   lastInpaintingPrompt:        null,

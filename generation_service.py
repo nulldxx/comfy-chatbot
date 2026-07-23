@@ -535,6 +535,90 @@ def start_generation_job(prompt, loras, server_address, server_os, workflow_name
     return job_id
 
 
+def run_face_detail_super(job_id, prompt, loras, server_address, server_os,
+                          workflow_name, count, **kwargs):
+    """Run the face-detailer ``count`` times over the same source image.
+
+    Each pass calls _run_generation_core with identical inputs; the only thing
+    that varies is the seed (randomize_seeds gives every submission a fresh one),
+    so the result is ``count`` variations of the same detailed face. All the URLs
+    are collected and returned together in the terminal ``done`` event, where the
+    client renders them as a tile picker. Mirrors run_generation's lifecycle
+    ownership but loops instead of running once.
+    """
+    with jobs_lock:
+        channel = jobs[job_id]["channel"]
+        cancel_event = jobs[job_id]["cancel"]
+        jobs[job_id]["status"] = "running"
+
+    def send(msg_type, **kwargs2):
+        channel.send(json.dumps({"type": msg_type, **kwargs2}))
+
+    all_urls = []
+    try:
+        for i in range(1, count + 1):
+            if cancel_event.is_set():
+                raise JobCancelled()
+            send("progress", message=f"Detail {i}/{count}…")
+            urls = _run_generation_core(
+                job_id, channel, cancel_event, prompt, loras,
+                server_address, server_os, workflow_name, **kwargs,
+            )
+            all_urls.extend(urls)
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "done", images=all_urls, assets=all_urls)
+        send("done", images=all_urls)
+    except JobCancelled:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls)
+        send("cancelled", message="Cancelled")
+    except Exception as e:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls)
+        send("error", message=str(e))
+    finally:
+        channel.close()
+
+
+def start_face_detail_super_job(prompt, loras, server_address, server_os,
+                                workflow_name, count, **kwargs):
+    """Create a tracked N-variation face-detail job; return its job_id.
+
+    Sibling of start_generation_job for the /face-detail-super path: the record
+    is identical (an image job) but the thread runs run_face_detail_super, which
+    loops ``count`` times and returns all the variations at once.
+    """
+    job_id = str(uuid.uuid4())
+    summary = _build_summary(workflow_name, prompt, "image")
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "channel": _JobChannel(),
+            "images": [],
+            "assets": [],
+            "cancel": threading.Event(),
+            "server": server_address,
+            "prompt_id": None,
+            "kind": "image",
+            "workflow_name": workflow_name,
+            "prompt": prompt,
+            "summary": summary,
+            "started_at": time.time(),
+            "finished_at": None,
+            "error": None,
+        }
+        _evict_old_jobs_locked()
+
+    t = threading.Thread(
+        target=run_face_detail_super,
+        args=(job_id, prompt, loras, server_address, server_os, workflow_name, count),
+        kwargs=kwargs,
+        daemon=True,
+    )
+    t.start()
+    return job_id
+
+
 # ---------------------------------------------------------------------------
 # Grok prompt-sequence jobs
 # ---------------------------------------------------------------------------

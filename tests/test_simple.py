@@ -86,6 +86,47 @@ class TestComfyChatbot(unittest.TestCase):
         data = response.get_json()
         self.assertIn('error', data)
 
+    def test_face_detail_requires_auth(self):
+        response = self.client.post('/api/face-detail',
+                                    json={'prompt': 'a face', 'image': '/images/x.png'},
+                                    content_type='application/json')
+        self.assertEqual(response.status_code, 302)
+
+    def test_face_detail_super_count_not_integer(self):
+        with self.client.session_transaction() as sess:
+            sess['authenticated'] = True
+        response = self.client.post('/api/face-detail',
+                                    json={'prompt': 'a face', 'image': '/images/x.png',
+                                          'count': 'abc'},
+                                    content_type='application/json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('count', response.get_json()['error'])
+
+    def test_face_detail_super_count_out_of_range(self):
+        with self.client.session_transaction() as sess:
+            sess['authenticated'] = True
+        for bad in (0, 17, 100):
+            response = self.client.post('/api/face-detail',
+                                        json={'prompt': 'a face', 'image': '/images/x.png',
+                                              'count': bad},
+                                        content_type='application/json')
+            self.assertEqual(response.status_code, 400, f'count={bad}')
+            self.assertIn('between 1 and 16', response.get_json()['error'])
+
+    def test_face_detail_super_valid_count_passes_validation(self):
+        # A valid count clears the count check; the request then proceeds to
+        # image resolution (which fails here because the image doesn't exist),
+        # proving the count itself was accepted rather than rejected.
+        with self.client.session_transaction() as sess:
+            sess['authenticated'] = True
+        response = self.client.post('/api/face-detail',
+                                    json={'prompt': 'a face', 'image': '/images/nope.png',
+                                          'count': 4},
+                                    content_type='application/json')
+        error = response.get_json().get('error', '')
+        self.assertNotIn('count', error)
+        self.assertNotIn('between 1 and 16', error)
+
     def test_cancel_requires_auth(self):
         response = self.client.post('/api/cancel/some-job-id')
         self.assertEqual(response.status_code, 302)

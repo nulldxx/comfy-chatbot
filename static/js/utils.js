@@ -201,3 +201,38 @@ export function recomputeVideo(s, lock, edited) {
   derive(third);
   derive(edited);
 }
+
+// Find the bounding box of pixels that differ between two same-size RGBA images
+// — used by the face-detail-super tile picker to locate the face a detailer
+// changed, by diffing a result against the original. `a` and `b` are RGBA byte
+// arrays (Uint8ClampedArray, length w*h*4). Returns a padded, clamped
+// {x, y, w, h} in pixels, or null when nothing meaningful differs (or the inputs
+// don't match) — the caller then falls back to showing the whole image.
+//   threshold: summed |ΔR|+|ΔG|+|ΔB| above which a pixel counts as changed.
+//   pad:       fraction of the box size added on every side.
+//   minFrac:   ignore boxes smaller than this fraction of the image area (noise).
+export function computeDiffBox(a, b, w, h, { threshold = 40, pad = 0.15, minFrac = 0.0004 } = {}) {
+  if (!a || !b || a.length !== b.length || a.length !== w * h * 4) return null;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const d = Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+      if (d > threshold) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;                       // nothing changed
+  const bw = maxX - minX + 1, bh = maxY - minY + 1;
+  if (bw * bh < minFrac * w * h) return null;      // too small — treat as noise
+  const px = Math.round(bw * pad), py = Math.round(bh * pad);
+  const x0 = Math.max(0, minX - px);
+  const y0 = Math.max(0, minY - py);
+  const x1 = Math.min(w, maxX + 1 + px);
+  const y1 = Math.min(h, maxY + 1 + py);
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}

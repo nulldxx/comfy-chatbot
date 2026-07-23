@@ -14,7 +14,7 @@ import {
   updateSlashAc, hideSlashAc, selectSlashAcItem, tryExpandAlias,
   renderSlashAc, getAcState, setAcFocused, tabCompleteSlashAc,
 } from './autocomplete.js';
-import { openMaskEditor, buildComparisonSlider, openCropEditor } from './editors.js';
+import { openMaskEditor, buildComparisonSlider, buildFaceSuperTiles, openCropEditor } from './editors.js';
 import { makeCommandHandler } from './commands.js';
 import { initSidebar } from './sidebar.js';
 
@@ -663,6 +663,19 @@ function runFaceDetail(prompt, image, imgWrap, denoiseOverride) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+// Super face-detail: run the detailer N times (state.faceSuperN) on the same
+// image and present the variations as a tile picker (superTileReplace) instead
+// of a single before/after slider.
+function runFaceDetailSuper(prompt, image, imgWrap, denoiseOverride) {
+  state.iterationsFromSequence = false;
+  sendBtn.disabled = true;
+  return runGeneration(prompt, '', null, {
+    face: { image, workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW, denoiseOverride, count: state.faceSuperN },
+    superTileReplace: imgWrap || null,
+  })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
 // Auto face-detail: like runFaceDetail but silently replaces the original
 // image in place (replaceWrap) instead of showing a comparison slider.
 function runAutoFaceDetail(prompt, image, imgWrap) {
@@ -832,7 +845,10 @@ function appendChatImage(container, url) {
     face.disabled = true;
     showI2IDialog(wrap, prompt, state.currentDenoise.face, 'Face detail')
       .then(({ prompt: dlgPrompt, denoise }) => {
-        runFaceDetail(dlgPrompt, url, wrap, denoise).finally(() => { face.disabled = false; });
+        const run = state.faceSuperN > 1
+          ? runFaceDetailSuper(dlgPrompt, url, wrap, denoise)
+          : runFaceDetail(dlgPrompt, url, wrap, denoise);
+        run.finally(() => { face.disabled = false; });
       })
       .catch(() => { face.disabled = false; });
   });
@@ -1724,9 +1740,10 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const videoMeta = opts.videoMeta || null;
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
+  const superTileReplace = opts.superTileReplace || null;
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
   const stepsOverride = opts.stepsOverride != null ? opts.stepsOverride : null;
-  const inPlaceWrap = sliderReplace || replaceWrap;
+  const inPlaceWrap = sliderReplace || superTileReplace || replaceWrap;
   const job = face || upscale || image2image || image2video || inpaint || removal;
   const endpoint = face ? '/api/face-detail'
                  : upscale ? '/api/upscale'
@@ -1778,6 +1795,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(inpaint && inpaint.drawToken ? { draw_token: inpaint.drawToken } : {}),
       ...(removal ? { mask: removal.mask } : {}),
       ...(face        ? { denoise: face.denoiseOverride != null ? face.denoiseOverride : state.currentDenoise.face } : {}),
+      ...(face && face.count ? { count: face.count } : {}),
       ...(upscale     ? { denoise: upscale.denoiseOverride != null ? upscale.denoiseOverride : state.currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
@@ -1816,6 +1834,39 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         statusLine.textContent = `Done — ${msg.images.length} result(s) in ${elapsed}s${label}`;
         const originPrompt = job ? (state.imagePrompts[job.image] || '') : (raw || '');
         const originVideoMeta = videoMeta || (job ? state.imageVideoMeta[job.image] : null);
+
+        if (superTileReplace && superTileReplace.parentNode && msg.images.length >= 1) {
+          const oldUrl = superTileReplace.querySelector('img').getAttribute('src');
+          const results = msg.images.slice();
+          // Keep the picked variation in place of the original (inherits its
+          // prompt + gallery slot); delete the original and the losers.
+          const onPick = (pickedUrl, tileEl) => {
+            deleteImageFile(oldUrl).catch(() => {});
+            results.forEach(u => { if (u !== pickedUrl) deleteImageFile(u).catch(() => {}); });
+            const idx = state.sessionImages.indexOf(oldUrl);
+            if (idx !== -1) state.sessionImages.splice(idx, 1, pickedUrl);
+            else state.sessionImages.push(pickedUrl);
+            delete state.imagePrompts[oldUrl];
+            delete state.imageVideoMeta[oldUrl];
+            delete state.imageMasks[oldUrl];
+            if (originPrompt) state.imagePrompts[pickedUrl] = originPrompt;
+            if (originVideoMeta) state.imageVideoMeta[pickedUrl] = originVideoMeta;
+            const tmp = document.createElement('div');
+            appendChatImage(tmp, pickedUrl);
+            tileEl.replaceWith(tmp.firstChild);
+          };
+          // Reject all N variations and restore the untouched original.
+          const onKeepOriginal = tileEl => {
+            results.forEach(u => deleteImageFile(u).catch(() => {}));
+            const tmp = document.createElement('div');
+            appendChatImage(tmp, oldUrl);
+            tileEl.replaceWith(tmp.firstChild);
+          };
+          superTileReplace.replaceWith(buildFaceSuperTiles(oldUrl, results, { onPick, onKeepOriginal }));
+          botBubble.parentElement.remove();
+          resolve(true);
+          return;
+        }
 
         if (sliderReplace && sliderReplace.parentNode && msg.images.length === 1) {
           const oldUrl = sliderReplace.querySelector('img').getAttribute('src');

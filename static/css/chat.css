@@ -679,6 +679,41 @@ header a:hover { color: #a78bfa; }
 .ba-pick-both:hover:not(:disabled) { border-color: #fbbf24; color: #fde68a; }
 .ba-pick:disabled { opacity: 0.4; cursor: default; }
 
+/* Face-detail-super tile picker: N variations cropped to the face + numbered
+   buttons (1…N) plus an "orig" button to reject them all. */
+.fs-container { display: flex; flex-direction: column; gap: 8px; }
+.fs-picks { display: flex; flex-wrap: wrap; gap: 8px; }
+.fs-pick {
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 5px 14px; font-size: 1rem; font-weight: 600;
+  cursor: pointer; line-height: 1;
+  transition: border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.fs-pick:hover:not(:disabled) { border-color: #34d399; color: #6ee7b7; }
+.fs-pick-orig { margin-left: auto; }
+.fs-pick-orig:hover:not(:disabled) { border-color: #f87171; color: #fca5a5; }
+.fs-pick:disabled { opacity: 0.4; cursor: default; }
+.fs-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.fs-tile {
+  position: relative; cursor: pointer;
+  border: 1px solid #334155; border-radius: 8px; overflow: hidden;
+  transition: border-color 0.15s;
+}
+.fs-tile:hover { border-color: #34d399; }
+.fs-tile canvas { display: block; width: 100%; height: auto; }
+.fs-tile-badge {
+  position: absolute; top: 4px; left: 4px;
+  background: rgba(15,23,42,0.85); color: #e2e8f0;
+  border-radius: 6px; padding: 1px 7px;
+  font-size: 0.8rem; font-weight: 700; line-height: 1.4;
+  pointer-events: none;
+}
+
 /* Selective-composite (🩹) button — paints which parts of image 2 to keep */
 .ba-composite-btn {
   background: rgba(15,23,42,0.75); border: 1px solid #334155;

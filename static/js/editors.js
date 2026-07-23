@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js';
+import { escapeHtml, computeDiffBox } from './utils.js';
 import { state } from './state.js';
 import { addMessage } from './dom.js';
 
@@ -1309,4 +1309,116 @@ export function openCropEditor(imageUrl) {
     }
     document.addEventListener('keydown', onKey);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Face-detail-super tile picker
+// ---------------------------------------------------------------------------
+
+// Load an image URL into a decoded HTMLImageElement. Same-origin (/images/…),
+// so drawing it to a canvas keeps the canvas untainted and getImageData works.
+function loadImageEl(url) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = reject;
+    im.src = url;
+  });
+}
+
+// Locate the face crop by diffing the original against the first variation, then
+// draw each variation's crop into its tile canvas. Falls back to the whole image
+// when the diff finds nothing usable or anything throws (e.g. size mismatch).
+async function renderFaceTiles(originalUrl, tiles) {
+  const TILE = 256; // square canvas backing size
+  let rect = null;
+  try {
+    const [orig, first] = await Promise.all([loadImageEl(originalUrl), loadImageEl(tiles[0].url)]);
+    const w = orig.naturalWidth, h = orig.naturalHeight;
+    if (w > 0 && w === first.naturalWidth && h === first.naturalHeight) {
+      const off = document.createElement('canvas');
+      off.width = w; off.height = h;
+      const octx = off.getContext('2d', { willReadFrequently: true });
+      octx.drawImage(orig, 0, 0);
+      const a = octx.getImageData(0, 0, w, h).data;
+      octx.drawImage(first, 0, 0);
+      const b = octx.getImageData(0, 0, w, h).data;
+      rect = computeDiffBox(a, b, w, h);
+    }
+  } catch (_) {
+    rect = null;
+  }
+
+  await Promise.all(tiles.map(async ({ canvas, url }) => {
+    let im;
+    try { im = await loadImageEl(url); } catch (_) { return; }
+    const src = rect || { x: 0, y: 0, w: im.naturalWidth, h: im.naturalHeight };
+    const scale = Math.min(TILE / src.w, TILE / src.h);
+    const dw = Math.round(src.w * scale), dh = Math.round(src.h * scale);
+    canvas.width = TILE; canvas.height = TILE;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0b0f19';
+    ctx.fillRect(0, 0, TILE, TILE);
+    ctx.drawImage(im, src.x, src.y, src.w, src.h, (TILE - dw) / 2, (TILE - dh) / 2, dw, dh);
+  }));
+}
+
+// Tile picker for /face-detail-super: shows the N detailer variations cropped to
+// the face, with numbered buttons 1…N plus "orig" to reject them all. Selecting
+// commits exactly once via onPick(url, container) / onKeepOriginal(container),
+// mirroring the before/after slider's settle-once behaviour.
+export function buildFaceSuperTiles(originalUrl, resultUrls, { onPick, onKeepOriginal }) {
+  const container = document.createElement('div');
+  container.className = 'fs-container';
+
+  const picks = document.createElement('div');
+  picks.className = 'fs-picks';
+
+  const tilesWrap = document.createElement('div');
+  tilesWrap.className = 'fs-tiles';
+
+  let settled = false;
+  const commit = fn => {
+    if (settled) return;
+    settled = true;
+    container.querySelectorAll('.fs-pick').forEach(b => { b.disabled = true; });
+    fn(container);
+  };
+
+  const tiles = [];
+  resultUrls.forEach((url, i) => {
+    const tile = document.createElement('div');
+    tile.className = 'fs-tile';
+    tile.title = `Keep variation ${i + 1}`;
+    const canvas = document.createElement('canvas');
+    tile.appendChild(canvas);
+    const badge = document.createElement('div');
+    badge.className = 'fs-tile-badge';
+    badge.textContent = String(i + 1);
+    tile.appendChild(badge);
+    tile.addEventListener('click', () => commit(c => onPick(url, c)));
+    tilesWrap.appendChild(tile);
+    tiles.push({ canvas, url });
+
+    const pick = document.createElement('button');
+    pick.className = 'fs-pick';
+    pick.textContent = String(i + 1);
+    pick.title = `Keep variation ${i + 1}`;
+    pick.addEventListener('click', () => commit(c => onPick(url, c)));
+    picks.appendChild(pick);
+  });
+
+  const orig = document.createElement('button');
+  orig.className = 'fs-pick fs-pick-orig';
+  orig.textContent = 'orig';
+  orig.title = 'Discard all variations, keep the original';
+  orig.addEventListener('click', () => commit(c => onKeepOriginal(c)));
+  picks.appendChild(orig);
+
+  container.appendChild(picks);
+  container.appendChild(tilesWrap);
+
+  renderFaceTiles(originalUrl, tiles).catch(() => {});
+
+  return container;
 }

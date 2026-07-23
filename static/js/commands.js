@@ -1653,6 +1653,23 @@ export function makeCommandHandler(deps) {
       return fdChain;
     }
 
+    if (cmd === '/face-detail-super') {
+      addMessage('user', escapeHtml(raw), raw);
+      const fsArg = raw.slice('/face-detail-super'.length).trim();
+      const fsN = fsArg ? parseInt(fsArg, 10) : NaN;
+      if (isNaN(fsN) || fsN < 1 || fsN > 16 || String(fsN) !== fsArg) {
+        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/face-detail-super &lt;N&gt;</code> — make the face icon produce N (2–16) detailer variations with a tile picker; <code>/face-detail-super 1</code> restores the normal before/after slider</span>');
+        return;
+      }
+      state.faceSuperN = fsN;
+      if (fsN === 1) {
+        addMessage('bot', 'Face detail restored to single-pass before/after mode.');
+      } else {
+        addMessage('bot', `Face icon now runs <b>${fsN}</b> detailer variations and shows a tile picker. Use <code>/face-detail-super 1</code> to go back to the normal slider.`);
+      }
+      return;
+    }
+
     addMessage('user', escapeHtml(raw), raw);
 
     if (cmd === '/help') {
@@ -1673,6 +1690,7 @@ export function makeCommandHandler(deps) {
         { sig: '/delete-today', desc: 'delete every image generated today (asks y/n first)' },
         { sig: '/denoise', desc: 'set the default denoise strength for this session for face-detail, image2image, inpainting and upscale (sliders; Reset restores defaults 0.35 / 0.30 / 0.45 / 0.15)', notes: 'session-only; snapshotted by <code>/settings-save</code> and shown under <code>/settings</code>' },
         { sig: '/face-detail [N]', desc: 'run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image\'s prompt' },
+        { sig: '/face-detail-super <N>', desc: 'put the face (&#128100;) icon into N-variation mode: it runs the detailer N (2–16) times and shows a tile picker cropped to the face; pick the best one. <code>/face-detail-super 1</code> restores the normal before/after slider' },
         { sig: '/face-detail-prompt <prompt>', desc: 'set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image\'s own prompt (needs a <code>&lt;lora:…&gt;</code> tag)' },
         { sig: '/face-detail-prompt-reset', desc: 'clear that override so the face icons derive a prompt from each image again' },
         { sig: '/face-detail-replacement <from> <to>', desc: 'find→replace applied to every face-detail prompt (override or derived) before it is run (no args lists them)' },

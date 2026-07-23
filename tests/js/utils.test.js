@@ -1,6 +1,73 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
          fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList,
-         formatFscheckResult } from '../../static/js/utils.js';
+         formatFscheckResult, computeDiffBox } from '../../static/js/utils.js';
+
+// ---------------------------------------------------------------------------
+// computeDiffBox — locates the changed (face) region for the super tile picker
+// ---------------------------------------------------------------------------
+
+// Build a w×h solid-grey RGBA buffer, optionally painting a white rectangle.
+function makeImage(w, h, rect) {
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = 128;
+    data[i * 4 + 3] = 255;
+  }
+  if (rect) {
+    for (let y = rect.y; y < rect.y + rect.h; y++) {
+      for (let x = rect.x; x < rect.x + rect.w; x++) {
+        const i = (y * w + x) * 4;
+        data[i] = data[i + 1] = data[i + 2] = 255;
+      }
+    }
+  }
+  return data;
+}
+
+describe('computeDiffBox', () => {
+  test('identical images → null (caller falls back to full image)', () => {
+    const a = makeImage(20, 20);
+    const b = makeImage(20, 20);
+    expect(computeDiffBox(a, b, 20, 20)).toBeNull();
+  });
+
+  test('a changed rectangle → padded box containing it', () => {
+    const a = makeImage(100, 100);
+    const b = makeImage(100, 100, { x: 40, y: 40, w: 20, h: 20 });
+    const box = computeDiffBox(a, b, 100, 100, { pad: 0.15, minFrac: 0 });
+    // The 20px change padded by 15% (3px) on each side, clamped to the canvas.
+    expect(box).toEqual({ x: 37, y: 37, w: 26, h: 26 });
+  });
+
+  test('padding is clamped at the image edges', () => {
+    const a = makeImage(50, 50);
+    const b = makeImage(50, 50, { x: 0, y: 0, w: 10, h: 10 });
+    const box = computeDiffBox(a, b, 50, 50, { pad: 0.5, minFrac: 0 });
+    expect(box.x).toBe(0);
+    expect(box.y).toBe(0);
+    expect(box.x + box.w).toBeLessThanOrEqual(50);
+  });
+
+  test('a change smaller than minFrac is treated as noise → null', () => {
+    const a = makeImage(100, 100);
+    const b = makeImage(100, 100, { x: 0, y: 0, w: 1, h: 1 });
+    expect(computeDiffBox(a, b, 100, 100)).toBeNull();
+  });
+
+  test('mismatched buffer sizes → null', () => {
+    const a = makeImage(20, 20);
+    const b = makeImage(21, 20);
+    expect(computeDiffBox(a, b, 20, 20)).toBeNull();
+  });
+
+  test('a sub-threshold difference does not register', () => {
+    const a = makeImage(30, 30);
+    const b = makeImage(30, 30);
+    // Nudge one pixel by less than the default threshold (40) across 3 channels.
+    b[0] += 5; b[1] += 5; b[2] += 5;
+    expect(computeDiffBox(a, b, 30, 30)).toBeNull();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // reorderList
