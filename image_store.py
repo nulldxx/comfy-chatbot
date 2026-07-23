@@ -26,6 +26,9 @@ MAX_MASK_BYTES = 10 * 1024 * 1024  # 10 MB decoded
 
 def register_mask_token(user, image_bytes):
     """Save mask bytes to MASKS_DIR and return an opaque single-use token."""
+    # Created here, not at import: MASKS_DIR lives on the encrypted output volume,
+    # which isn't mounted at process start when the mount is deferred (see config).
+    MASKS_DIR.mkdir(parents=True, exist_ok=True)
     mask_path = MASKS_DIR / f"mask_{uuid.uuid4().hex}.png"
     mask_path.write_bytes(image_bytes)
     token = secrets.token_urlsafe(32)
@@ -36,6 +39,8 @@ def register_mask_token(user, image_bytes):
 
 def register_draw_token(user, image_bytes):
     """Save drawn-input bytes to INPAINT_INPUTS_DIR and return an opaque single-use token."""
+    # Created here, not at import: see register_mask_token (deferred output volume).
+    INPAINT_INPUTS_DIR.mkdir(parents=True, exist_ok=True)
     draw_path = INPAINT_INPUTS_DIR / f"draw_{uuid.uuid4().hex}.png"
     draw_path.write_bytes(image_bytes)
     token = secrets.token_urlsafe(32)

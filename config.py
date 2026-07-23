@@ -93,18 +93,32 @@ COMFY_IMAGE2VIDEO_DIR = COMFY_WORKFLOW_DIR / 'image2video'
 # Default image2video workflow, normalised to match list_image2video_workflows().
 COMFY_IMAGE2VIDEO_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_IMAGE2VIDEO_WORKFLOW'))
 
+def _best_effort_mkdir(p):
+    """mkdir -p that never raises. These dirs live on the encrypted output volume,
+    which — once a login password is set — is deferred and NOT mounted at process
+    start (see the lazy output mount). At import time /app/output is then the bare,
+    root-owned bind mount and unwritable by appuser, so an eager mkdir would raise
+    PermissionError and break the whole import (config is imported by both gunicorn
+    and the entrypoint's deferral guard). The dirs are (re)created at point of use
+    once the volume is mounted post-login, so a failure here is safe to swallow."""
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+
 IMAGES_DIR = Path(os.environ.get('COMFY_OUTPUT_DIR', '/tmp/comfy-images'))
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+_best_effort_mkdir(IMAGES_DIR)
 # Temporary mask storage — kept separate from IMAGES_DIR so mask files never
 # appear in review grids, slideshows, or bulk-delete/archive operations.
 MASKS_DIR = IMAGES_DIR / '.masks'
-MASKS_DIR.mkdir(parents=True, exist_ok=True)
+_best_effort_mkdir(MASKS_DIR)
 # Temporary inpaint source images — when the user draws on the image in the mask
 # editor, the original + drawing are composited into a temporary source image used
 # only for that one inpaint job. Kept out of IMAGES_DIR so it never appears in
 # galleries; consumed and deleted once the job uploads it to ComfyUI.
 INPAINT_INPUTS_DIR = IMAGES_DIR / '.inpaint-inputs'
-INPAINT_INPUTS_DIR.mkdir(parents=True, exist_ok=True)
+_best_effort_mkdir(INPAINT_INPUTS_DIR)
 
 # Archive config — the /archive-* commands copy images into an encrypted volume
 # and then delete the originals (move semantics). The container is unprivileged
