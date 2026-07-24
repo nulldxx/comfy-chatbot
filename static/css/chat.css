@@ -699,6 +699,11 @@ header a:hover { color: #a78bfa; }
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
+/* Maximized grid inside the full-browser overlay: bigger tiles, scrollable */
+.fs-tiles-max {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  max-width: 92vw; max-height: 80vh; overflow-y: auto; padding: 2px;
+}
 .fs-tile {
   position: relative; cursor: pointer;
   border: 1px solid #334155; border-radius: 8px; overflow: hidden;

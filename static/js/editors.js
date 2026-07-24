@@ -1326,14 +1326,12 @@ function loadImageEl(url) {
   });
 }
 
-// Locate the face crop by diffing the original against the first variation, then
-// draw each variation's crop into its tile canvas. Falls back to the whole image
-// when the diff finds nothing usable or anything throws (e.g. size mismatch).
-async function renderFaceTiles(originalUrl, tiles) {
-  const TILE = 256; // square canvas backing size
-  let rect = null;
+// Locate the face crop by diffing the original against the first variation.
+// Returns the changed-region rect, or null when the diff finds nothing usable or
+// anything throws (e.g. size mismatch) — callers then fall back to the whole image.
+async function computeFaceRect(originalUrl, firstUrl) {
   try {
-    const [orig, first] = await Promise.all([loadImageEl(originalUrl), loadImageEl(tiles[0].url)]);
+    const [orig, first] = await Promise.all([loadImageEl(originalUrl), loadImageEl(firstUrl)]);
     const w = orig.naturalWidth, h = orig.naturalHeight;
     if (w > 0 && w === first.naturalWidth && h === first.naturalHeight) {
       const off = document.createElement('canvas');
@@ -1343,23 +1341,26 @@ async function renderFaceTiles(originalUrl, tiles) {
       const a = octx.getImageData(0, 0, w, h).data;
       octx.drawImage(first, 0, 0);
       const b = octx.getImageData(0, 0, w, h).data;
-      rect = computeDiffBox(a, b, w, h);
+      return computeDiffBox(a, b, w, h);
     }
-  } catch (_) {
-    rect = null;
-  }
+  } catch (_) { /* fall through */ }
+  return null;
+}
 
+// Draw each variation's face crop (from `rect`, or the whole image when null) into
+// its tile canvas at a `tileSize`×`tileSize` square backing resolution.
+async function drawFaceTiles(rect, tiles, tileSize) {
   await Promise.all(tiles.map(async ({ canvas, url }) => {
     let im;
     try { im = await loadImageEl(url); } catch (_) { return; }
     const src = rect || { x: 0, y: 0, w: im.naturalWidth, h: im.naturalHeight };
-    const scale = Math.min(TILE / src.w, TILE / src.h);
+    const scale = Math.min(tileSize / src.w, tileSize / src.h);
     const dw = Math.round(src.w * scale), dh = Math.round(src.h * scale);
-    canvas.width = TILE; canvas.height = TILE;
+    canvas.width = tileSize; canvas.height = tileSize;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#0b0f19';
-    ctx.fillRect(0, 0, TILE, TILE);
-    ctx.drawImage(im, src.x, src.y, src.w, src.h, (TILE - dw) / 2, (TILE - dh) / 2, dw, dh);
+    ctx.fillRect(0, 0, tileSize, tileSize);
+    ctx.drawImage(im, src.x, src.y, src.w, src.h, (tileSize - dw) / 2, (tileSize - dh) / 2, dw, dh);
   }));
 }
 
@@ -1415,10 +1416,77 @@ export function buildFaceSuperTiles(originalUrl, resultUrls, { onPick, onKeepOri
   orig.addEventListener('click', () => commit(c => onKeepOriginal(c)));
   picks.appendChild(orig);
 
+  // Compute the face crop once; reuse it for the inline tiles and the maximized grid.
+  const rectPromise = computeFaceRect(originalUrl, resultUrls[0]);
+  rectPromise.then(rect => drawFaceTiles(rect, tiles, 256)).catch(() => {});
+
+  const maximizeBtn = document.createElement('button');
+  maximizeBtn.className = 'ba-maximize-btn';
+  maximizeBtn.title = 'Maximise grid';
+  maximizeBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>`;
+  maximizeBtn.addEventListener('click', () => {
+    const overlay = document.createElement('div');
+    overlay.className = 'ba-overlay';
+
+    const header = document.createElement('div');
+    header.className = 'ba-overlay-header';
+
+    const grid = document.createElement('div');
+    grid.className = 'fs-tiles fs-tiles-max';
+
+    const dismiss = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = e => { if (e.key === 'Escape') dismiss(); };
+
+    const overlayTiles = [];
+    resultUrls.forEach((url, i) => {
+      const tile = document.createElement('div');
+      tile.className = 'fs-tile';
+      tile.title = `Keep variation ${i + 1}`;
+      const canvas = document.createElement('canvas');
+      tile.appendChild(canvas);
+      const badge = document.createElement('div');
+      badge.className = 'fs-tile-badge';
+      badge.textContent = String(i + 1);
+      tile.appendChild(badge);
+      tile.addEventListener('click', () => { dismiss(); commit(c => onPick(url, c)); });
+      grid.appendChild(tile);
+      overlayTiles.push({ canvas, url });
+
+      const pick = document.createElement('button');
+      pick.className = 'fs-pick';
+      pick.textContent = String(i + 1);
+      pick.title = `Keep variation ${i + 1}`;
+      pick.disabled = settled;
+      pick.addEventListener('click', () => { dismiss(); commit(c => onPick(url, c)); });
+      header.appendChild(pick);
+    });
+
+    const mOrig = document.createElement('button');
+    mOrig.className = 'fs-pick fs-pick-orig';
+    mOrig.textContent = 'orig';
+    mOrig.title = 'Discard all variations, keep the original';
+    mOrig.disabled = settled;
+    mOrig.addEventListener('click', () => { dismiss(); commit(c => onKeepOriginal(c)); });
+    header.appendChild(mOrig);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'ba-overlay-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Close';
+    closeBtn.addEventListener('click', dismiss);
+    header.appendChild(closeBtn);
+
+    overlay.append(header, grid);
+    document.body.appendChild(overlay);
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+
+    rectPromise.then(rect => drawFaceTiles(rect, overlayTiles, 512)).catch(() => {});
+  });
+  picks.appendChild(maximizeBtn);
+
   container.appendChild(picks);
   container.appendChild(tilesWrap);
-
-  renderFaceTiles(originalUrl, tiles).catch(() => {});
 
   return container;
 }
