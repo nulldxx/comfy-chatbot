@@ -1166,6 +1166,7 @@ function doRecordSave() {
         image2videoOverridePrompt: state.image2videoOverridePrompt,
         refImageUrl: state.refImageUrl,
         faceDetailReplacements: state.faceDetailReplacements.slice(),
+        faceSuperN: state.faceSuperN,
         autoFaceDetail: state.autoFaceDetail,
         lastFaceDetailPrompt: state.lastFaceDetailPrompt,
         lastInpaintingPrompt: state.lastInpaintingPrompt,
@@ -1224,6 +1225,7 @@ function restoreSession(data) {
   if (s.image2videoOverridePrompt !== undefined) state.image2videoOverridePrompt = s.image2videoOverridePrompt;
   if (s.refImageUrl             !== undefined) state.refImageUrl              = s.refImageUrl;
   if (s.faceDetailReplacements  !== undefined) state.faceDetailReplacements  = s.faceDetailReplacements;
+  state.faceSuperN = (s.faceSuperN !== undefined) ? s.faceSuperN : 1;
   if (s.autoFaceDetail          !== undefined) state.autoFaceDetail          = s.autoFaceDetail;
   if (s.lastFaceDetailPrompt    !== undefined) state.lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastInpaintingPrompt    !== undefined) state.lastInpaintingPrompt    = s.lastInpaintingPrompt;

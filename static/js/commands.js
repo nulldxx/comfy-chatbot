@@ -597,6 +597,7 @@ export function makeCommandHandler(deps) {
     state.image2videoOverridePrompt = null;
     state.refImageUrl = null;
     state.faceDetailReplacements = [];
+    state.faceSuperN = 1;
     state.autoFaceDetail = false;
     // Recording is always on: start the new chat recording into a fresh
     // temporary name rather than continuing to append to the previous one.
@@ -2421,6 +2422,7 @@ export function makeCommandHandler(deps) {
         image2videoReplacements:   state.image2videoReplacements.slice(),
         image2videoOverridePrompt: state.image2videoOverridePrompt,
         faceDetailReplacements:    state.faceDetailReplacements.slice(),
+        faceSuperN:                state.faceSuperN,
         autoFaceDetail:            state.autoFaceDetail,
         lastFaceDetailPrompt:      state.lastFaceDetailPrompt,
         lastInpaintingPrompt:      state.lastInpaintingPrompt,
@@ -2456,6 +2458,7 @@ export function makeCommandHandler(deps) {
       state.image2videoReplacements     = s.image2videoReplacements;
       state.image2videoOverridePrompt   = s.image2videoOverridePrompt;
       state.faceDetailReplacements      = s.faceDetailReplacements;
+      if (s.faceSuperN !== undefined) state.faceSuperN = s.faceSuperN;
       state.autoFaceDetail              = s.autoFaceDetail;
       state.lastFaceDetailPrompt        = s.lastFaceDetailPrompt;
       state.lastInpaintingPrompt        = s.lastInpaintingPrompt;

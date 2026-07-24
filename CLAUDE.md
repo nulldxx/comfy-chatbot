@@ -202,6 +202,9 @@ Or use `sed -i "s/'/'/g; s/'/'/g" static/js/chat.js` to replace all curly single
 - Minimal Docker image for fast deployment
 - Health checks ensure container reliability
 
+### Session State
+- When adding a new user-facing setting to `state` (`static/js/state.js`), consider whether it should persist with the chat session: if so, wire it into the session save/restore (`saveSession`/`restoreSession` in `chat.js`), the `/settings-save`/`/settings-restore` snapshot stack (`commands.js`), and the `newChat` reset — otherwise it will silently revert on reload.
+
 ### Testing Strategy
 - Unit tests cover core application functions
 - Import tests verify all dependencies work correctly in container environment
