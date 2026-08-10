@@ -35,12 +35,13 @@ from config import (
     COMFY_REMOVAL_DIR, COMFY_REMOVAL_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
-    FSCK_TIMEOUT,
+    FSCK_TIMEOUT, IDLE_TIMEOUT_SECONDS,
     IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT, OUTPUT_MARKER,
     OUTPUT_PASSWORD, OUTPUT_SIZE, OUTPUT_VOLUME, SECRET_KEY, USERNAME,
     VIDEO_EXTS,
 )
 from generation_service import (
+    TERMINAL_STATUSES,
     cancel_auto_purge, get_last_sent_workflow, jobs, jobs_lock,
     rename_and_retarget_session, run_generation, start_background_job,
     start_face_detail_super_job, start_generation_job, start_sequence_run_job,
@@ -58,6 +59,7 @@ from persistence import (
     save_session, sessions_dir, slugify,
 )
 import auth_store
+import idle_lock
 from auth_store import save_password_hash, verify_password
 from crypto_key import derive_passphrase, effective_passphrase as _effective_passphrase
 app = Flask(__name__)
@@ -70,6 +72,28 @@ archive_lock = threading.Lock()
 # Serialises the lazy output-volume check+mount so two simultaneous first-logins
 # (or a login racing an in-flight mount) don't both drive the agent at once.
 output_mount_lock = threading.Lock()
+
+# Bumped whenever every outstanding session must be invalidated at once (currently
+# only the idle lockdown). Session cookies are signed with the stable SECRET_KEY and
+# carry no expiry, so there is nothing else to revoke them: login stamps the current
+# epoch into the session and login_required rejects any session carrying an older
+# one. Deliberately in-memory — a restart drops the in-memory password too, which
+# login_required already treats as "log in again" whenever a password is set.
+_auth_epoch = 0
+_auth_epoch_lock = threading.Lock()
+
+
+def current_auth_epoch():
+    with _auth_epoch_lock:
+        return _auth_epoch
+
+
+def bump_auth_epoch():
+    """Invalidate every outstanding session cookie."""
+    global _auth_epoch
+    with _auth_epoch_lock:
+        _auth_epoch += 1
+        return _auth_epoch
 
 
 def effective_passphrase():
@@ -110,6 +134,18 @@ def login_required(f):
         if auth_store.password_is_set() and auth_store.current_password() is None:
             session.pop("authenticated", None)
             return redirect(url_for("login"))
+        # An idle lockdown bumps the auth epoch to revoke every outstanding cookie.
+        # The check above already covers the password-is-set case, but in bootstrap
+        # mode (no UI password yet) nothing else would expire the session. Cookies
+        # issued before this feature shipped carry no epoch; default them to 0 (the
+        # starting value) so they stay valid until the first lockdown.
+        if session.get("auth_epoch", 0) != current_auth_epoch():
+            session.pop("authenticated", None)
+            return redirect(url_for("login"))
+        # Reset the idle clock. Done here rather than in a before_request hook so the
+        # unauthenticated Docker healthcheck polling /health can never keep the
+        # session alive forever.
+        idle_lock.mark_activity()
         return f(*args, **kwargs)
     return decorated
 
@@ -120,10 +156,14 @@ def login():
         password = request.form.get("password")
         if request.form.get("username") == USERNAME and verify_password(password):
             session["authenticated"] = True
+            session["auth_epoch"] = current_auth_epoch()
             # Hold the plaintext in memory (never persisted) so the encrypted volumes
             # can be unlocked with the password-derived passphrase, and unlock the
             # output volume now if it was deferred at startup (see _lazy_output_mount).
             auth_store.set_session_password(password)
+            # Restart the idle clock (and start the watchdog, which must be created
+            # post-fork — gunicorn preloads the app).
+            idle_lock.mark_activity()
             _start_lazy_output_mount()
             return redirect(request.args.get("next") or url_for("index"))
         return render_template("login.html", error="Invalid username or password")
@@ -1919,6 +1959,79 @@ def _start_lazy_output_mount() -> None:
     threading.Thread(target=_lazy_output_check_and_mount, daemon=True).start()
 
 
+def _idle_busy() -> bool:
+    """True while any job is still running, which suspends the idle clock.
+
+    Necessary because a server-driven sequence run drives its loop in a daemon
+    thread and can go for hours (COMFY_POLL_TIMEOUT_SECONDS is 4h) without a single
+    incoming request — a request-timestamp-only clock would log the user off and
+    unmount the output volume from under it. Also covers /api/fscheck jobs, which
+    hold archive_lock for up to FSCK_TIMEOUT."""
+    with jobs_lock:
+        return any(rec.get("status") not in TERMINAL_STATUSES
+                   for rec in jobs.values())
+
+
+def _idle_lock_down() -> bool:
+    """Re-lock the appliance after an idle timeout: close the encrypted volumes,
+    forget the in-memory login password and invalidate every session cookie.
+
+    Returns True when the lockdown completed, False when it could not run right now
+    (a lock was held by an in-flight archive/fsck/mount) so idle_lock retries on the
+    next tick rather than leaving a half-locked state.
+
+    Volume work happens before the credentials are dropped so that "logged off" and
+    "volumes closed" land together. The agent's `unmount` action takes no passphrase,
+    so the ordering is a matter of atomicity, not capability."""
+    if not archive_lock.acquire(blocking=False):
+        app.logger.debug("idle lockdown deferred: archive busy")
+        return False
+    try:
+        if ARCHIVE_VOLUME:
+            # The host bind (samba, via `m`) is the only long-lived archive exposure;
+            # everything else unmounts in api_archive's finally. Dropping it also
+            # closes the volume.
+            try:
+                if _host_mount_active():
+                    resp = _agent_request({
+                        "action": "host-unmount", "target": "host",
+                        "volume": ARCHIVE_VOLUME,
+                    })
+                    if not resp.get("ok"):
+                        app.logger.warning("idle host-unmount failed: %s",
+                                           resp.get("error"))
+            except RuntimeError as exc:
+                app.logger.warning("idle host-unmount failed: %s", exc)
+            # Belt and braces: close the archive if anything left it open.
+            try:
+                _agent_request({"action": "unmount", "volume": ARCHIVE_VOLUME})
+            except RuntimeError as exc:
+                app.logger.debug("idle archive unmount: %s", exc)
+
+        if OUTPUT_VOLUME:
+            if not output_mount_lock.acquire(blocking=False):
+                app.logger.debug("idle lockdown deferred: output mount busy")
+                return False
+            try:
+                resp = _agent_request({"action": "unmount", "target": "output",
+                                       "volume": OUTPUT_VOLUME})
+                if not resp.get("ok"):
+                    app.logger.warning("idle output unmount failed: %s",
+                                       resp.get("error"))
+            except RuntimeError as exc:
+                app.logger.warning("idle output unmount failed: %s", exc)
+            finally:
+                output_mount_lock.release()
+    finally:
+        archive_lock.release()
+
+    auth_store.clear_session_password()
+    bump_auth_epoch()
+    app.logger.info("idle for %ss — logged off and closed the encrypted volumes",
+                    IDLE_TIMEOUT_SECONDS)
+    return True
+
+
 def _host_mount_active() -> bool:
     """True if the archive volume is currently exposed to the host (via `m`).
     While it is, archive/fsck ops must not run — they share the one physical
@@ -1933,6 +2046,12 @@ def _host_mount_active() -> bool:
     except RuntimeError:
         return False
     return bool(resp.get("host_mounted"))
+
+
+# Wire the idle lock now that both callbacks (and everything they call) exist. The
+# watchdog thread itself is not started here — gunicorn preloads the app, so it must
+# be created post-fork; idle_lock.mark_activity() does that on the first login.
+idle_lock.configure(IDLE_TIMEOUT_SECONDS, _idle_lock_down, _idle_busy)
 
 
 # Message shown when an op is refused because the host has the archive mounted.

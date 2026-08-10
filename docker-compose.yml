@@ -16,6 +16,10 @@ services:
       - APP_USERNAME=user
       - APP_PASSWORD=password
       - SECRET_KEY=your-super-secret-key-change-this-in-production
+      # Log everyone off, forget the in-memory login password and close the
+      # encrypted volumes after this many seconds with no activity and no running
+      # job. Logging back in re-opens the output volume. 0 disables.
+      - IDLE_TIMEOUT_SECONDS=7200
 
       # ComfyUI server — set host:port of your running ComfyUI instance
       - COMFY_SERVER=192.168.1.135:8000

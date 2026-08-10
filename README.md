@@ -54,6 +54,7 @@ All settings are environment variables in `docker-compose.yml`:
 | `OUTPUT_VOLUME` | *(empty)* | Host path to the **live-output** volume (blank = plain). Auto-created on first deploy |
 | `OUTPUT_PASSWORD` | *(empty)* | Passphrase for the output volume (falls back to `SECRET_KEY`, so you can declare one secret) |
 | `OUTPUT_SIZE` | `20G` | Size of the output volume created on first deploy (zuluCrypt-cli units) |
+| `IDLE_TIMEOUT_SECONDS` | `7200` | Log everyone off and close the volumes after this long with no activity and no running job. `0` disables |
 
 ### loras.json
 

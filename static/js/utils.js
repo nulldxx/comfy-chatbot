@@ -57,6 +57,14 @@ export function fuzzyScore(query, text) {
 // Parse a fetch Response as JSON, degrading gracefully when the body isn't
 // JSON (e.g. a gunicorn/proxy timeout page or an empty body).
 export async function parseJsonResponse(r) {
+  // login_required answers with a 302 to /login (for /api/* too), and fetch follows
+  // redirects transparently — so an expired session arrives here as the login page's
+  // HTML with status 200. Detect it and send the browser to the login page rather
+  // than surfacing a baffling "non-JSON response: <!DOCTYPE html..." error.
+  if (r.redirected && new URL(r.url).pathname === '/login') {
+    if (typeof window !== 'undefined') window.location.href = '/login';
+    throw new Error('Session expired — please log in again');
+  }
   const text = await r.text();
   try {
     return JSON.parse(text);

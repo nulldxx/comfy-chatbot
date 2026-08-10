@@ -176,3 +176,9 @@ VIDEO_EXTS = {".mp4", ".webm"}
 # Any output file we'll serve/list/delete — image or video.
 MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
+
+# Idle session lock: after this many seconds with no authenticated request and no
+# running job, log everyone off, forget the in-memory login password and close the
+# encrypted volumes (see idle_lock.py and app._idle_lock_down). Logging back in
+# re-opens the output volume via the existing lazy-mount path. 0 disables.
+IDLE_TIMEOUT_SECONDS = int(os.environ.get('IDLE_TIMEOUT_SECONDS', '7200'))

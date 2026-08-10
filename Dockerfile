@@ -38,6 +38,7 @@ COPY crypto_key.py .
 COPY generation_service.py .
 COPY grok.py .
 COPY gunicorn.conf.py .
+COPY idle_lock.py .
 COPY image_store.py .
 COPY persistence.py .
 COPY workflow.py .

@@ -171,6 +171,43 @@ archive and output volumes now depends on the login password, so a leaked compos
 - **`~/dot-files/scripts/m`** (separate repo) prompts for the password when the compose
   `APP_PASSWORD` is superseded, priming the app's in-memory password for host-mount.
 
+### Idle session lock (`idle_lock.py`)
+
+The in-memory password and the mounted output volume used to persist for the whole
+life of the process, so a box left alone overnight sat decrypted. After
+`IDLE_TIMEOUT_SECONDS` (default `7200`; `0` disables) with no activity, the app logs
+everyone off, forgets the password and closes both volumes. **A restart or an idle
+lockdown means the next request lands on `/login`.**
+
+- **`idle_lock.py`** holds one activity timestamp plus a watchdog daemon thread that
+  ticks every `TICK_SECONDS`. `configure(timeout, on_idle, is_busy)` wires it from
+  `app.py`; it never imports `app`, so it is testable standalone. A watchdog rather
+  than a re-armed `threading.Timer` (the auto-purge pattern) because activity fires
+  on *every* request and re-arming would spawn a thread each time.
+- **Started lazily, never at import** — gunicorn sets `preload_app = True`, so the
+  module is imported pre-fork and threads don't survive `fork()`.
+  `mark_activity()` calls `ensure_started()`, creating it in the worker.
+- **Activity is marked inside `login_required`**, not a `before_request` hook — the
+  Docker healthcheck polls `/health` unauthenticated and would otherwise reset the
+  clock forever.
+- **`app._idle_busy()`** suspends the clock while any job is non-terminal. Essential:
+  a `sequence-run` drives its loop in a daemon thread for up to
+  `COMFY_POLL_TIMEOUT_SECONDS` (4h) with zero incoming requests, so a
+  request-timestamp-only clock would unmount the output volume from under it.
+- **`app._idle_lock_down()`** takes `archive_lock` then `output_mount_lock`, both
+  **non-blocking** — it returns `False` and is retried next tick rather than leaving
+  a half-locked state. It force-unmounts the host bind (`m`/samba) if active, closes
+  the archive, unmounts output, then clears the password and bumps the auth epoch.
+- **Auth epoch** (`app.current_auth_epoch`/`bump_auth_epoch`) — session cookies are
+  signed with the stable `SECRET_KEY` and carry no expiry, so a bump is the only way
+  to revoke them all. Needed because `login_required`'s existing "password set but
+  none in memory" check doesn't fire in bootstrap mode. Cookies with no epoch key
+  default to `0` so pre-upgrade sessions stay valid until the first lockdown.
+- **Recovery is free**: `login()` already calls `_start_lazy_output_mount()`, which
+  is idempotent and re-opens the output volume.
+- **Caveat**: the idle clock tracks *app* activity, which samba traffic does not
+  touch — a long unattended copy over the `m` host mount can be cut off. Re-run `m`.
+
 ## Known Pitfalls
 
 ### Curly/smart quote corruption in JS files
