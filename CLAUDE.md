@@ -326,6 +326,43 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 - **Video resolution**: `/video-settings` also sets `<VIDEO_WIDTH>`/`<VIDEO_HEIGHT>` (stored on `currentVideoSettings.width`/`.height`, default `1280×720`), sent to `/api/image2video` as `video_width`/`video_height`. This is deliberately **separate** from the still-image resolution in `/image-settings` (which flows through `apply_resolution`/`currentResolution`) because video models have very different size constraints. Dimensions are clamped to 64–2048 and snapped to a multiple of 16 (`clampVideo` in `utils.js`). In templates they replace the width/height primitives directly: the Wan templates' `WanImageToVideo` width/height (node `129:98`), and the LTX template's separate `Width`/`Height` `PrimitiveInt` nodes (`320:312`/`320:299`). The Wan and image-resolution paths don't collide because image2video never sends the still `width`/`height`, so `apply_resolution` isn't called for it.
 - **Audio toggle**: `/video-settings` has an Audio checkbox stored on `currentVideoSettings.audio` (default `true`). It is purely client-side — when off, `buildVideoPrompt()` (`utils.js`) drops the `Audio: <audio>` segment that `/video-sequence` folds into a video prompt, so audio-less workflows (e.g. the Wan template) aren't fed audio cues they ignore. It does not alter the workflow graph; audio-capable workflows still generate their own audio track regardless.
 
+### Text-to-video (`/t2v`)
+
+`/t2v` is a **mode toggle**: while it is on, a plain chat prompt is generated as a video
+by the text2video workflow instead of an image by the t2i one. Typing `/t2v` again turns
+it off. The header shows the active t2v workflow plus a `🎬 t2v` badge so the mode is
+never invisible.
+
+- **Its own workflow family**, mirroring the other seven: `COMFY_TEXT2VIDEO_DIR`
+  (`text2video/` under `COMFY_WORKFLOW_DIR`) + `COMFY_TEXT2VIDEO_WORKFLOW`
+  (`config.py`), `list_text2video_workflows()` (`catalogue.py`),
+  `/api/text2video-workflows`, and the `/t2v-workflow` / `/t2v-workflow-reset` picker.
+  It deliberately does **not** reuse the `/i2v-workflow` selection — an i2v graph and a
+  t2v graph are different graphs, and keeping them in separate dirs means no node
+  stripping or rewiring is needed at generation time.
+- **Placeholder set**: `<PROMPT>`, `<DURATION>`, `<FRAMES>`, `<FPS>`, `<VIDEO_WIDTH>`,
+  `<VIDEO_HEIGHT>`, and optionally `<REFERENCE_IMAGE>`. A t2v template must have **no**
+  `<INPUT_IMAGE>` — with no source image the mapping key is never set, and the unfilled-
+  placeholder check in `_run_generation_core` would fail the job with
+  `Unfilled workflow placeholders: <INPUT_IMAGE>`.
+- **`<REFERENCE_IMAGE>`** still works (pin one with `/i2v-set-ref-image`) for identity-
+  preserving models such as the LTX 2.3 `ref_t2v` graph. There is no first frame to fall
+  back on here, so `_run_generation_core` now raises a clear "needs a `<REFERENCE_IMAGE>`"
+  error instead of substituting an empty `LoadImage` name.
+- **`/api/text2video`** (`app.py`) is `/api/image2video` minus the image plumbing: no
+  `image`, no `last_frame`, prompt required, `workflow_dir=COMFY_TEXT2VIDEO_DIR`. LoRA
+  tags are parsed and discarded, as for i2v. `start_generation_job` classifies the job as
+  `kind: "video"` off the video kwargs, so `/jobs` labels it correctly with no extra work.
+- **Scope**: the mode intercepts the plain-prompt path in `sendMessage` and plain `#macro`
+  steps (`chat.js`). It does **not** affect `/sequence-run` (its loop is server-side, in
+  `/api/sequence-run`) or `/multi-prompt`. `state.t2vMode` persists with the chat session
+  and the `/settings-save` stack, and resets in `newChat`.
+- **Deriving a t2v template from an i2v one** (e.g. MiniMax H3): delete the `LoadImage`
+  node holding `<INPUT_IMAGE>` and any resize node feeding off it, then delete the video
+  node's now-dangling first-frame input key (`first_frame` on `MiniMaxH3ImageToVideo`).
+  Test-render in the ComfyUI editor first — if that input turns out to be **required**,
+  use the node pack's dedicated text-to-video class instead.
+
 ### Validation
 
 `fill_placeholders_for_validation()` substitutes dummy values (`1.0` for float slots including `<LAST_FRAME_STRENGTH>`, `1` for the integer video slots, `"placeholder"` for string slots) so a template file can be parsed as valid JSON during startup validation.

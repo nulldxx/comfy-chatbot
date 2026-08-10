@@ -93,6 +93,15 @@ COMFY_IMAGE2VIDEO_DIR = COMFY_WORKFLOW_DIR / 'image2video'
 # Default image2video workflow, normalised to match list_image2video_workflows().
 COMFY_IMAGE2VIDEO_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_IMAGE2VIDEO_WORKFLOW'))
 
+# Text2video workflows live in a subdir of the main workflow folder. Unlike the
+# image2video ones they take NO <INPUT_IMAGE> — the video comes from <PROMPT>
+# alone, plus the usual <DURATION>/<FRAMES>/<FPS>/<VIDEO_WIDTH>/<VIDEO_HEIGHT>
+# slots. Used by /t2v, which routes plain chat prompts here instead of to the
+# text-to-image generation/ workflow.
+COMFY_TEXT2VIDEO_DIR = COMFY_WORKFLOW_DIR / 'text2video'
+# Default text2video workflow, normalised to match list_text2video_workflows().
+COMFY_TEXT2VIDEO_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_TEXT2VIDEO_WORKFLOW'))
+
 def _best_effort_mkdir(p):
     """mkdir -p that never raises. These dirs live on the encrypted output volume,
     which — once a login password is set — is deferred and NOT mounted at process

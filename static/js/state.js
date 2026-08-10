@@ -17,12 +17,17 @@ export const state = {
   currentUpscaleWorkflow:      null,
   currentImage2ImageWorkflow:  null,
   currentImage2VideoWorkflow:  null,
+  currentText2VideoWorkflow:   null,
   currentInpaintingWorkflow:   null,
   currentRemovalWorkflow:      null,
 
   // Face-detail "super" mode: when >1, the face icon runs N detailer
   // variations and shows a tile picker instead of a single before/after slider.
   faceSuperN:                  1,
+
+  // Text-to-video mode (/t2v): while on, a plain chat prompt is generated as a
+  // video by the text2video workflow instead of an image by the t2i one.
+  t2vMode:                     false,
 
   // Prompt overrides
   lastFaceDetailPrompt:        null,

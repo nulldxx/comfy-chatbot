@@ -84,6 +84,21 @@ function showChatSummary() {
     : `<span style="color:#475569">not set</span>`;
   rows.push({ label: 'Image2video workflow', value: i2vWfLabel });
 
+  const t2vWfActive = state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW;
+  const t2vWfLabel  = t2vWfActive
+    ? (state.currentText2VideoWorkflow
+        ? `<span style="color:#a78bfa">${escapeHtml(t2vWfActive)}</span>`
+        : `<span style="color:#a78bfa">${escapeHtml(t2vWfActive)}</span> <span style="color:#475569">(default)</span>`)
+    : `<span style="color:#475569">not set</span>`;
+  rows.push({ label: 'Text2video workflow', value: t2vWfLabel });
+
+  rows.push({
+    label: 'Text-to-video mode',
+    value: state.t2vMode
+      ? `<span style="color:#a78bfa">ON</span> <span style="color:#475569">— prompts generate video</span>`
+      : `<span style="color:#475569">off</span>`,
+  });
+
   const inpaintWfActive = state.currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW;
   const inpaintWfLabel  = inpaintWfActive
     ? (state.currentInpaintingWorkflow
@@ -579,6 +594,8 @@ export function makeCommandHandler(deps) {
     state.currentUpscaleWorkflow = null;
     state.currentImage2ImageWorkflow = null;
     state.currentImage2VideoWorkflow = null;
+    state.currentText2VideoWorkflow = null;
+    state.t2vMode = false;
     state.currentInpaintingWorkflow = null;
     state.lastFaceDetailPrompt = null;
     state.lastInpaintingPrompt = null;
@@ -677,6 +694,9 @@ export function makeCommandHandler(deps) {
     { label: 'Image → video', url: '/api/image2video-workflows',
       get: () => state.currentImage2VideoWorkflow, def: () => DEFAULT_IMAGE2VIDEO_WORKFLOW,
       set: wf => { state.currentImage2VideoWorkflow = wf; } },
+    { label: 'Text → video',  url: '/api/text2video-workflows',
+      get: () => state.currentText2VideoWorkflow,  def: () => DEFAULT_TEXT2VIDEO_WORKFLOW,
+      set: wf => { state.currentText2VideoWorkflow = wf; deps.updateHeaderStatus(); } },
     { label: 'Face-detail',   url: '/api/facedetailer-workflows',
       get: () => state.currentFaceWorkflow,        def: () => DEFAULT_FACE_WORKFLOW,
       set: wf => { state.currentFaceWorkflow = wf; } },
@@ -801,6 +821,7 @@ export function makeCommandHandler(deps) {
       { label: 'Denoise defaults',                    cmd: '/denoise',               mode: 'run'    },
       { label: 'Iterations per prompt',               cmd: '/iterations',            mode: 'insert' },
       { label: 'Add-prompt (append to every gen)',    cmd: '/generation-add-prompt', mode: 'insert' },
+      { label: 'Text-to-video mode (toggle)',         cmd: '/t2v',                   mode: 'run'    },
     ]},
     { group: 'Workflows & server', items: [
       { label: 'Workflows (all types)',               cmd: '/workflows',             mode: 'run'    },
@@ -1307,6 +1328,50 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/t2v') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.t2vMode = !state.t2vMode;
+      deps.updateHeaderStatus();
+      if (state.t2vMode) {
+        const t2vWf = state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW;
+        const vs = state.currentVideoSettings;
+        addMessage('bot', `Text-to-video mode <strong style="color:#a78bfa">ON</strong> — prompts now generate video with <strong style="color:#a78bfa">${escapeHtml(t2vWf || 'the first text2video workflow')}</strong> (${vs.frames} frames @ ${vs.fps} fps, ${vs.width}×${vs.height}). Change it with <code>/t2v-workflow</code> or <code>/video-settings</code>; type <code>/t2v</code> again to turn it off.`);
+      } else {
+        addMessage('bot', 'Text-to-video mode <strong>OFF</strong> — prompts generate images again.');
+      }
+      return;
+    }
+
+    if (cmd === '/t2v-workflow') {
+      const wfArg = raw.slice('/t2v-workflow'.length).trim();
+      if (wfArg) {
+        addMessage('user', escapeHtml(raw), raw);
+        state.currentText2VideoWorkflow = wfArg;
+        deps.updateHeaderStatus();
+        addMessage('bot', `Text2video workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        return;
+      }
+      renderWorkflowPicker({
+        url: '/api/text2video-workflows',
+        title: 'Select a text2video workflow:',
+        loadingText: 'Loading text2video workflows…',
+        failLabel: 'text2video workflows',
+        emptyMsg: 'No text2video workflows available — add one to the <code>text2video/</code> folder.',
+        current: state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW,
+        setMsg: 'Text2video workflow set to',
+        onSelect: wf => { state.currentText2VideoWorkflow = wf; deps.updateHeaderStatus(); },
+      });
+      return;
+    }
+
+    if (cmd === '/t2v-workflow-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.currentText2VideoWorkflow = null;
+      deps.updateHeaderStatus();
+      addMessage('bot', 'Text2video workflow reset to default.');
+      return;
+    }
+
     if (cmd === '/i2v') {
       addMessage('user', escapeHtml(raw), raw);
       if (!state.sessionImages.length) {
@@ -1763,6 +1828,9 @@ export function makeCommandHandler(deps) {
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
         { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
         { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
+        { sig: '/t2v', desc: 'toggle text-to-video mode — while on, a plain prompt generates a video with the text2video workflow instead of an image; type it again to turn it off', notes: 'uses <code>/video-settings</code> for duration/fps/resolution &nbsp;·&nbsp; also applies to <code>#macro</code> steps, but <em>not</em> to <code>/sequence-run</code> or <code>/multi-prompt</code>' },
+        { sig: '/t2v-workflow [name]', desc: 'choose which text2video workflow <code>/t2v</code> uses (no arg = picker)' },
+        { sig: '/t2v-workflow-reset', desc: 'reset the text2video workflow to its default' },
         { sig: '/workflows', desc: 'table of every workflow type and its current selection; click a row to switch it inline' },
       ];
 
@@ -2408,6 +2476,8 @@ export function makeCommandHandler(deps) {
         upscaleWorkflow:           state.currentUpscaleWorkflow,
         image2imageWorkflow:       state.currentImage2ImageWorkflow,
         image2videoWorkflow:       state.currentImage2VideoWorkflow,
+        text2videoWorkflow:        state.currentText2VideoWorkflow,
+        t2vMode:                   state.t2vMode,
         inpaintingWorkflow:        state.currentInpaintingWorkflow,
         removalWorkflow:           state.currentRemovalWorkflow,
         resolution:                state.currentResolution ? { ...state.currentResolution } : null,
@@ -2444,6 +2514,10 @@ export function makeCommandHandler(deps) {
       state.currentUpscaleWorkflow      = s.upscaleWorkflow;
       state.currentImage2ImageWorkflow  = s.image2imageWorkflow;
       state.currentImage2VideoWorkflow  = s.image2videoWorkflow;
+      state.currentText2VideoWorkflow   = s.text2videoWorkflow;
+      // Guarded: a snapshot pushed before /t2v existed has no key, and treating
+      // that as `undefined` would silently disable the mode on restore.
+      if (s.t2vMode !== undefined) state.t2vMode = s.t2vMode;
       state.currentInpaintingWorkflow   = s.inpaintingWorkflow;
       state.currentRemovalWorkflow      = s.removalWorkflow;
       state.currentResolution           = s.resolution;

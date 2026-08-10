@@ -4,6 +4,7 @@ import threading
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -73,6 +74,32 @@ class TestRunGenerationTraversalGuard(unittest.TestCase):
             (Path(d) / "secret.json").write_text("{}")
             status = self._run("../secret", base)
         self.assertEqual(status, "error")
+
+
+    def test_text2video_escape_name_is_rejected(self):
+        # /t2v's dir is confined the same way as the other families.
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d) / "text2video"
+            base.mkdir()
+            (Path(d) / "secret.json").write_text("{}")
+            status = self._run("../secret", base)
+        self.assertEqual(status, "error")
+
+
+class TestText2VideoWiring(unittest.TestCase):
+    def test_dir_sits_under_workflow_dir(self):
+        self.assertEqual(app.COMFY_TEXT2VIDEO_DIR, app.COMFY_WORKFLOW_DIR / "text2video")
+
+    def test_listing_reads_that_dir(self):
+        import catalogue
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "minimax-h3-t2v.json").write_text("{}")
+            (base / "ltx").mkdir()
+            (base / "ltx" / "ref-t2v.json").write_text("{}")
+            with patch.object(catalogue, "COMFY_TEXT2VIDEO_DIR", base):
+                self.assertEqual(app.list_text2video_workflows(),
+                                 ["ltx/ref-t2v", "minimax-h3-t2v"])
 
 
 class TestImage2ImageWiring(unittest.TestCase):

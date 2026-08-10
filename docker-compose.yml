@@ -45,6 +45,10 @@ services:
       # COMFY_WORKFLOW_DIR, used by /image2video and the 🎬 button. Takes
       # <INPUT_IMAGE> and optional <PROMPT>. Leave blank to fall back to first found.
       - COMFY_IMAGE2VIDEO_WORKFLOW=
+      # Default text2video workflow inside the text2video/ subdir of
+      # COMFY_WORKFLOW_DIR, used by /t2v. Takes <PROMPT> and the /video-settings
+      # slots but NO <INPUT_IMAGE>. Leave blank to fall back to first found.
+      - COMFY_TEXT2VIDEO_WORKFLOW=
 
       # Path inside the container where workflow templates live
       - COMFY_WORKFLOW_DIR=/app/workflows

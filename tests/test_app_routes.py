@@ -691,6 +691,96 @@ class TestImage2VideoSettings(_AppFixture):
         self.assertEqual(resp.status_code, 404)
 
 
+class TestText2Video(_AppFixture):
+    """/api/text2video generates from a prompt alone — no source image at all."""
+
+    def setUp(self):
+        super().setUp()
+        self._gen_patcher = patch("app.start_generation_job", return_value="j")
+        self._gen = self._gen_patcher.start()
+        self._vol_patcher = patch.object(app_module, "OUTPUT_VOLUME", "")
+        self._vol_patcher.start()
+        self._vol_patcher2 = patch.object(image_store_module, "OUTPUT_VOLUME", "")
+        self._vol_patcher2.start()
+        import catalogue
+        self._wf_patcher = patch.object(catalogue, "COMFY_TEXT2VIDEO_DIR",
+                                        Path(self.tmp) / "text2video")
+        Path(self.tmp, "text2video").mkdir()
+        (Path(self.tmp, "text2video") / "t2v.json").write_text("{}")
+        self._wf_patcher.start()
+
+    def tearDown(self):
+        self._gen_patcher.stop()
+        self._vol_patcher.stop()
+        self._vol_patcher2.stop()
+        self._wf_patcher.stop()
+        super().tearDown()
+
+    def test_prompt_only_succeeds_and_forwards_video_settings(self):
+        resp = self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat in neon rain", "workflow": "t2v",
+                  "duration": 5, "frames": 125, "fps": 25,
+                  "video_width": 1280, "video_height": 720},
+        )
+        self.assertEqual(resp.status_code, 200)
+        args, kwargs = self._gen.call_args
+        self.assertEqual(args[0], "a cat in neon rain")
+        self.assertEqual(kwargs["workflow_dir"], app_module.COMFY_TEXT2VIDEO_DIR)
+        self.assertEqual(kwargs["duration"], 5.0)
+        self.assertEqual(kwargs["frames"], 125)
+        self.assertEqual(kwargs["fps"], 25)
+        self.assertEqual(kwargs["video_width"], 1280)
+        self.assertEqual(kwargs["video_height"], 720)
+        # No source image is uploaded for a text2video run.
+        self.assertNotIn("input_image", kwargs)
+        self.assertIsNone(kwargs["input_reference"])
+
+    def test_empty_prompt_returns_400(self):
+        resp = self.client.post("/api/text2video", json={"workflow": "t2v"})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unknown_workflow_returns_400(self):
+        resp = self.client.post(
+            "/api/text2video", json={"prompt": "a cat", "workflow": "nope"},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_lora_tags_stripped_from_prompt(self):
+        resp = self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat <lora:foo:0.8>", "workflow": "t2v"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        args, _ = self._gen.call_args
+        self.assertEqual(args[0], "a cat")
+        self.assertEqual(args[1], [])  # LoRAs are parsed then discarded, as for i2v
+
+    def test_ref_image_resolved_and_forwarded(self):
+        self._make_image("face.png")
+        resp = self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat", "workflow": "t2v", "ref_image": "/images/face.png"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertEqual(Path(kwargs["input_reference"]).name, "face.png")
+
+    def test_missing_ref_image_returns_404(self):
+        resp = self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat", "workflow": "t2v", "ref_image": "/images/nope.png"},
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_negative_duration_returns_400(self):
+        resp = self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat", "workflow": "t2v", "duration": -1},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+
 class TestSequenceRunRoute(_AppFixture):
     """/api/sequence-run drives the whole run server-side; the route validates
     input and starts the job (mocked here — the loop is in test_generation_service)."""

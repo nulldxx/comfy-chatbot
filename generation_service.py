@@ -333,7 +333,16 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                 send("progress", message="Uploading reference image to ComfyUI...")
                 mapping["REFERENCE_IMAGE"] = server.upload_image(input_reference)
             else:
-                mapping["REFERENCE_IMAGE"] = mapping.get("INPUT_IMAGE", "")
+                # No fallback exists for a text2video run (no source image at all),
+                # and an empty LoadImage name fails deep inside ComfyUI with an
+                # opaque error — so say what's actually missing.
+                fallback = mapping.get("INPUT_IMAGE")
+                if not fallback:
+                    raise ValueError(
+                        "This workflow needs a <REFERENCE_IMAGE> — pin one with "
+                        "/i2v-set-ref-image"
+                    )
+                mapping["REFERENCE_IMAGE"] = fallback
 
         # First-frame/last-frame conditioning (image2video). The template carries an
         # LTXVAddGuide node (frame_idx=-1) that conditions the model on an end frame.

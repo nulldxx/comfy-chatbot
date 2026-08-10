@@ -60,8 +60,13 @@ fetch('/api/default-macro')
 
 function updateHeaderStatus() {
   const srv = state.currentServer  ? state.currentServer.name  : DEFAULT_SERVER;
-  const wf  = state.currentWorkflow ? state.currentWorkflow     : DEFAULT_WORKFLOW;
-  document.getElementById('header-status').textContent = `${srv}  ·  ${wf}`;
+  // In /t2v mode prompts go to the text2video workflow, so show that one — the
+  // t2i workflow name would be actively misleading about what a prompt will do.
+  const wf  = state.t2vMode
+    ? (state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW || 'text2video')
+    : (state.currentWorkflow || DEFAULT_WORKFLOW);
+  const mode = state.t2vMode ? '  ·  🎬 t2v' : '';
+  document.getElementById('header-status').textContent = `${srv}  ·  ${wf}${mode}`;
 }
 updateHeaderStatus();
 
@@ -717,6 +722,19 @@ function runImage2Video(prompt, image) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+// Text-to-video (/t2v mode): a plain prompt with no source image at all. Unlike
+// runImage2Video this doesn't touch sendBtn — its callers (the sendMessage loop,
+// the macro loop) already own the button for the whole run.
+function runText2Video(prompt, label) {
+  state.iterationsFromSequence = false;
+  return runGeneration(prompt, label || '', null, {
+    text2video: {
+      refImage: state.refImageUrl || null,
+      workflow: state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW,
+    },
+  });
+}
+
 function runInpaint(image, mask, imgWrap, prompt, denoise, maskB64, drawToken) {
   state.iterationsFromSequence = false;
   sendBtn.disabled = true;
@@ -1155,6 +1173,8 @@ function doRecordSave() {
         upscaleWorkflow: state.currentUpscaleWorkflow,
         image2imageWorkflow: state.currentImage2ImageWorkflow,
         image2videoWorkflow: state.currentImage2VideoWorkflow,
+        text2videoWorkflow: state.currentText2VideoWorkflow,
+        t2vMode: state.t2vMode,
         inpaintingWorkflow: state.currentInpaintingWorkflow,
         resolution: state.currentResolution,
         generationSteps: state.currentGenerationSteps,
@@ -1214,6 +1234,10 @@ function restoreSession(data) {
   if (s.upscaleWorkflow     !== undefined) state.currentUpscaleWorkflow    = s.upscaleWorkflow;
   if (s.image2imageWorkflow !== undefined) state.currentImage2ImageWorkflow = s.image2imageWorkflow;
   if (s.image2videoWorkflow !== undefined) state.currentImage2VideoWorkflow = s.image2videoWorkflow;
+  if (s.text2videoWorkflow  !== undefined) state.currentText2VideoWorkflow  = s.text2videoWorkflow;
+  // Default OFF (rather than the guarded style) so loading a pre-/t2v session
+  // can't leave the mode on from whatever the previous chat had.
+  state.t2vMode = (s.t2vMode !== undefined) ? !!s.t2vMode : false;
   if (s.inpaintingWorkflow  !== undefined) state.currentInpaintingWorkflow  = s.inpaintingWorkflow;
   if (s.resolution          !== undefined) state.currentResolution         = s.resolution;
   if (s.generationSteps     !== undefined) state.currentGenerationSteps    = s.generationSteps;
@@ -1326,7 +1350,8 @@ function sendMessage() {
         } else {
           const prompt = expandAliases(step, state.ALIASES);
           addMessage('user', escapeHtml(prompt), prompt);
-          const ok = await runGeneration(prompt, '');
+          const ok = state.t2vMode ? await runText2Video(prompt, '')
+                                   : await runGeneration(prompt, '');
           if (!ok) break;
         }
       }
@@ -1364,7 +1389,8 @@ function sendMessage() {
   (async () => {
     for (let i = 0; i < state.iterations; i++) {
       const label = state.iterations > 1 ? ` (${i + 1}/${state.iterations})` : '';
-      const ok = await runGeneration(raw, label);
+      const ok = state.t2vMode ? await runText2Video(raw, label)
+                               : await runGeneration(raw, label);
       if (!ok) break;
     }
     sendBtn.disabled = false;
@@ -1737,6 +1763,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const upscale = opts.upscale || null;
   const image2image = opts.image2image || null;
   const image2video = opts.image2video || null;
+  const text2video = opts.text2video || null;
   const inpaint = opts.inpaint || null;
   const removal = opts.removal || null;
   const videoMeta = opts.videoMeta || null;
@@ -1746,11 +1773,15 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
   const stepsOverride = opts.stepsOverride != null ? opts.stepsOverride : null;
   const inPlaceWrap = sliderReplace || superTileReplace || replaceWrap;
-  const job = face || upscale || image2image || image2video || inpaint || removal;
+  // text2video counts as a "job" despite having no source image: that keeps the
+  // still-image params (width/height/steps/extraPrompt) and the auto-face-detail
+  // pass off a video run, exactly as for image2video.
+  const job = face || upscale || image2image || image2video || text2video || inpaint || removal;
   const endpoint = face ? '/api/face-detail'
                  : upscale ? '/api/upscale'
                  : image2image ? '/api/image2image'
                  : image2video ? '/api/image2video'
+                 : text2video ? '/api/text2video'
                  : inpaint ? '/api/inpaint'
                  : removal ? '/api/remove'
                  : '/api/generate';
@@ -1800,9 +1831,10 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(face && face.count ? { count: face.count } : {}),
       ...(upscale     ? { denoise: upscale.denoiseOverride != null ? upscale.denoiseOverride : state.currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
-      ...(image2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
+      ...(image2video || text2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
       ...(image2video && image2video.refImage ? { ref_image: image2video.refImage } : {}),
+      ...(text2video && text2video.refImage ? { ref_image: text2video.refImage } : {}),
       ...(inpaint ? { denoise: inpaint.denoise != null ? inpaint.denoise : state.currentDenoise.inpaint } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
     }),
@@ -1834,8 +1866,13 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         cancelBtn.remove();
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         statusLine.textContent = `Done — ${msg.images.length} result(s) in ${elapsed}s${label}`;
-        const originPrompt = job ? (state.imagePrompts[job.image] || '') : (raw || '');
-        const originVideoMeta = videoMeta || (job ? state.imageVideoMeta[job.image] : null);
+        // A text2video job has no source image to inherit a prompt from — the
+        // typed prompt IS the origin, and without this the video would be stored
+        // with an empty one (breaking /do-over, /i2v and the metadata editor).
+        const originPrompt = text2video ? (raw || '')
+                           : job ? (state.imagePrompts[job.image] || '')
+                           : (raw || '');
+        const originVideoMeta = videoMeta || (job && !text2video ? state.imageVideoMeta[job.image] : null);
 
         if (superTileReplace && superTileReplace.parentNode && msg.images.length >= 1) {
           const oldUrl = superTileReplace.querySelector('img').getAttribute('src');

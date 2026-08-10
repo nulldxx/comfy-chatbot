@@ -21,7 +21,8 @@ from agent_client import send as agent_send
 from catalogue import (
     list_facedetailer_workflows, list_image2image_workflows,
     list_image2video_workflows, list_inpainting_workflows,
-    list_removal_workflows, list_upscaler_workflows, list_workflow_names,
+    list_removal_workflows, list_text2video_workflows,
+    list_upscaler_workflows, list_workflow_names,
     load_loras_result, load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
 )
 from ComfyServer import ComfyServer
@@ -33,7 +34,8 @@ from config import (
     COMFY_IMAGE2VIDEO_DIR, COMFY_IMAGE2VIDEO_WORKFLOW,
     COMFY_INPAINTING_DIR, COMFY_INPAINTING_WORKFLOW,
     COMFY_REMOVAL_DIR, COMFY_REMOVAL_WORKFLOW,
-    COMFY_SERVER, COMFY_SERVER_OS, COMFY_UPSCALER_DIR,
+    COMFY_SERVER, COMFY_SERVER_OS,
+    COMFY_TEXT2VIDEO_DIR, COMFY_TEXT2VIDEO_WORKFLOW, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     FSCK_TIMEOUT, IDLE_TIMEOUT_SECONDS,
     IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT, OUTPUT_MARKER,
@@ -337,6 +339,7 @@ def index():
         default_image2image_workflow=COMFY_IMAGE2IMAGE_WORKFLOW,
         default_inpainting_workflow=COMFY_INPAINTING_WORKFLOW,
         default_image2video_workflow=COMFY_IMAGE2VIDEO_WORKFLOW,
+        default_text2video_workflow=COMFY_TEXT2VIDEO_WORKFLOW,
         default_removal_workflow=COMFY_REMOVAL_WORKFLOW,
         build_version=BUILD_VERSION,
     )
@@ -433,6 +436,12 @@ def api_inpainting_workflows():
 @login_required
 def api_image2video_workflows():
     return jsonify(list_image2video_workflows())
+
+
+@app.route("/api/text2video-workflows")
+@login_required
+def api_text2video_workflows():
+    return jsonify(list_text2video_workflows())
 
 
 @app.route("/api/removal-workflows")
@@ -1121,6 +1130,59 @@ def api_image2video():
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
         input_last_frame=last_frame_path, input_reference=ref_image_path,
+        duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
+        video_width=vs["video_width"], video_height=vs["video_height"],
+    )
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/text2video", methods=["POST"])
+@login_required
+def api_text2video():
+    """Run a text2video workflow from a prompt alone — no source image.
+
+    This is /api/image2video minus the image plumbing. Templates live in the
+    text2video/ subdir and carry no <INPUT_IMAGE>, so nothing needs uploading or
+    stripping — the video comes from <PROMPT> plus the /video-settings slots.
+    An optional <REFERENCE_IMAGE> is still supported (pinned via /i2v-set-ref-image)
+    for identity-preserving models; there's no first-frame to fall back on here, so
+    a template using it needs a pinned reference.
+    """
+    data = request.get_json(force=True)
+    raw_prompt = (data.get("prompt") or "").strip()
+    if not raw_prompt:
+        return jsonify({"error": "Prompt is required"}), 400
+    prompt, _ = parse_loras_from_prompt(raw_prompt)
+
+    ref_image_url = (data.get("ref_image") or "").strip()
+    ref_image_path = None
+    if ref_image_url:
+        _, ref_image_path, err = resolve_input_image(ref_image_url)
+        if err:
+            return err
+
+    available = list_text2video_workflows()
+    workflow_name, err = resolve_workflow(
+        data.get("workflow") or COMFY_TEXT2VIDEO_WORKFLOW, available, "text2video"
+    )
+    if err:
+        return err
+
+    server_address = data.get("server") or COMFY_SERVER
+    server_os      = data.get("server_os") or COMFY_SERVER_OS
+
+    vs, err = _parse_video_settings(data)
+    if err:
+        return err
+    assert vs is not None  # err is None here, so vs is populated
+
+    err = output_storage_error()
+    if err:
+        return err
+
+    job_id = start_generation_job(
+        prompt, [], server_address, server_os, workflow_name,
+        workflow_dir=COMFY_TEXT2VIDEO_DIR, input_reference=ref_image_path,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
     )

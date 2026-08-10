@@ -491,6 +491,34 @@ class ReferenceImageMappingTests(unittest.TestCase):
             # ...and the source image is uploaded exactly once (no second upload).
             self.assertEqual(server.upload_image.call_count, 1)
 
+    def test_reference_without_any_input_image_fails_clearly(self):
+        """A text2video run has no first frame to fall back on. Rather than
+        substituting an empty LoadImage name (which fails opaquely inside
+        ComfyUI), the job must fail up front naming the missing reference."""
+        from ComfyServer import JobCancelled
+
+        template = json.dumps({
+            "2": {"inputs": {"image": "<REFERENCE_IMAGE>"}, "class_type": "LoadImage"},
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "wf.json").write_text(template)
+            server = MagicMock()
+            server.submit_workflow.side_effect = JobCancelled
+
+            job_id = self._make_job()
+            job = gs.jobs[job_id]
+            with patch.object(gs, "ComfyServer", return_value=server):
+                with self.assertRaises(ValueError) as ctx:
+                    gs._run_generation_core(
+                        job_id, job["channel"], job["cancel"], "p", [],
+                        "http://s", "linux", "wf", workflow_dir=Path(tmp),
+                        input_image=None, input_reference=None,
+                        duration=2, frames=48, fps=24,
+                        video_width=1280, video_height=720,
+                    )
+            self.assertIn("REFERENCE_IMAGE", str(ctx.exception))
+            server.submit_workflow.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
