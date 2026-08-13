@@ -152,6 +152,39 @@ def login_required(f):
     return decorated
 
 
+def requires_output_storage(f):
+    """Refuse a request that reads or writes persisted state while the encrypted
+    output volume isn't mounted here.
+
+    Everything the app persists — macros, aliases, the default macro, saved chats,
+    images — lives in IMAGES_DIR, which *is* the output volume's mountpoint. Once a
+    UI password is set that volume mounts lazily on a background thread after login
+    (see _lazy_output_check_and_mount), so for the first seconds of a session the
+    directory is an empty stand-in: a read would truthfully report "no macros" and a
+    write would land on the container's writable layer only to vanish under the
+    mount. Answering 503 instead lets the client poll /api/storage-status and retry
+    once the volume is really there."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        err = output_storage_error()
+        if err:
+            return err
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route("/api/storage-status")
+@login_required
+def api_storage_status():
+    """Whether the encrypted output volume holding macros/aliases/chats/images is
+    mounted and readable. Polled by the UI at page load because the mount happens
+    lazily after login, and every persistence endpoint 503s until it lands."""
+    return jsonify({
+        "encrypted": bool(OUTPUT_VOLUME),
+        "ready": output_storage_error() is None,
+    })
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -1611,6 +1644,7 @@ def serve_image(filename):
 
 @app.route("/api/settings-backup", methods=["GET"])
 @login_required
+@requires_output_storage
 def api_settings_backup():
     """Stream a ZIP of every server-side settings file for backup.
 
@@ -1867,6 +1901,7 @@ def _handle_restore_json(raw, fname, apply):
 
 @app.route("/api/images/<filename>", methods=["DELETE"])
 @login_required
+@requires_output_storage
 def api_delete_image(filename):
     safe = secure_filename(filename)
     if not safe or safe != filename:
@@ -1882,6 +1917,7 @@ def api_delete_image(filename):
 
 @app.route("/api/images", methods=["DELETE"])
 @login_required
+@requires_output_storage
 def api_delete_all_images():
     if not IMAGES_DIR.is_dir():
         return jsonify({"deleted": 0})
@@ -1902,6 +1938,7 @@ def api_delete_all_images():
 
 @app.route("/api/images")
 @login_required
+@requires_output_storage
 def api_images():
     scope = "today" if request.args.get("filter") == "today" else "all"
     files = select_images(scope)
@@ -2344,12 +2381,14 @@ def api_host_status():
 
 @app.route("/api/chats")
 @login_required
+@requires_output_storage
 def api_chats_list():
     return jsonify(list_sessions())
 
 
 @app.route("/api/chats", methods=["POST"])
 @login_required
+@requires_output_storage
 def api_chat_save():
     body = request.get_json(force=True) or {}
     raw_name = (body.get("name") or "").strip()
@@ -2365,6 +2404,7 @@ def api_chat_save():
 
 @app.route("/api/chats/rename", methods=["POST"])
 @login_required
+@requires_output_storage
 def api_chat_rename():
     """Rename a chat file (used by the sidebar to name/rename a chat).
 
@@ -2395,6 +2435,7 @@ def api_chat_rename():
 
 @app.route("/api/chats/<name>", methods=["GET"])
 @login_required
+@requires_output_storage
 def api_chat_load(name):
     safe = secure_filename(name)
     if not safe or safe != name:
@@ -2410,6 +2451,7 @@ def api_chat_load(name):
 
 @app.route("/api/chats/<name>", methods=["DELETE"])
 @login_required
+@requires_output_storage
 def api_chat_delete(name):
     safe = secure_filename(name)
     if not safe or safe != name:
@@ -2427,12 +2469,14 @@ def api_chat_delete(name):
 
 @app.route("/api/aliases")
 @login_required
+@requires_output_storage
 def api_aliases():
     return jsonify(load_aliases())
 
 
 @app.route("/api/aliases", methods=["POST"])
 @login_required
+@requires_output_storage
 def api_alias_create():
     data = request.get_json(force=True) or {}
     alias_from = (data.get("from") or "").strip()
@@ -2455,6 +2499,7 @@ def api_alias_create():
 
 @app.route("/api/aliases/<alias_from>", methods=["DELETE"])
 @login_required
+@requires_output_storage
 def api_alias_delete(alias_from):
     aliases = load_aliases()
     if alias_from not in aliases:
@@ -2473,12 +2518,14 @@ def api_alias_delete(alias_from):
 
 @app.route("/api/macros")
 @login_required
+@requires_output_storage
 def api_macros():
     return jsonify(load_macros())
 
 
 @app.route("/api/macros", methods=["POST"])
 @login_required
+@requires_output_storage
 def api_macro_create():
     data = request.json or {}
     name = (data.get("name") or "").strip()
@@ -2499,6 +2546,7 @@ def api_macro_create():
 
 @app.route("/api/macros/<macro_name>", methods=["DELETE"])
 @login_required
+@requires_output_storage
 def api_macro_delete(macro_name):
     macros = load_macros()
     if macro_name not in macros:
@@ -2516,12 +2564,14 @@ def api_macro_delete(macro_name):
 
 @app.route("/api/default-macro")
 @login_required
+@requires_output_storage
 def api_default_macro():
     return jsonify({"name": load_default_macro()})
 
 
 @app.route("/api/default-macro", methods=["POST"])
 @login_required
+@requires_output_storage
 def api_default_macro_set():
     data = request.json or {}
     name = data.get("name")

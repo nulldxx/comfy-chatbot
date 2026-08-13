@@ -164,6 +164,16 @@ archive and output volumes now depends on the login password, so a leaked compos
   `login_required` forces a fresh login when a password is set but the process holds none
   (stale cookie after restart). Consequence: **no images/sessions until login** after a
   restart.
+- **Storage readiness (`/api/storage-status`)**: the lazy mount runs on a background
+  thread, so for the first seconds after login `IMAGES_DIR` is an empty stand-in
+  directory. Every endpoint backed by it — macros, aliases, default-macro, chats,
+  images, settings-backup — is wrapped in `@requires_output_storage` (`app.py`) and
+  answers **503** until the mount lands, rather than reading an empty dir (which the UI
+  cached as "no macros" for the life of the page — you had to sign out and in again) or
+  writing under the mountpoint (which then vanishes beneath the mount). The client polls
+  `/api/storage-status` (`{encrypted, ready}`) at page load and only then fetches the
+  catalogues and resumes a running sequence run (`chat.js`), showing a "🔒 Unlocking
+  encrypted storage…" bubble while it waits.
 - **Recovery keyslot**: a one-time random recovery passphrase is generated on the first
   password set, added to a spare keyslot on each volume, and shown **once** in the
   change-password UI (`commands.js`) — never stored server-side. Forgotten password +

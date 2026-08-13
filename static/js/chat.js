@@ -39,20 +39,72 @@ fetch('/api/loras')
   })
   .catch(() => {});
 
-fetch('/api/aliases')
-  .then(r => r.json())
-  .then(data => { if (data && typeof data === 'object') state.ALIASES = data; })
-  .catch(() => {});
+// Aliases, macros and the default macro live on the encrypted output volume,
+// which mounts lazily on a background thread *after* login (an e2fsck runs
+// first, so it can take a while). Fetching them the moment the page loads was a
+// race: the server answers 503 until the mount lands, and the page would come up
+// with no macros until you signed out and back in. So wait for storage to report
+// ready, then load. `storageReady` resolves true once the volume is there (or
+// immediately when output encryption is disabled).
+const STORAGE_POLL_MS  = 1000;
+const STORAGE_MAX_POLLS = 600; // ~10 min: a big volume's e2fsck is not quick
 
-fetch('/api/macros')
-  .then(r => r.json())
-  .then(data => { if (data && typeof data === 'object') state.MACROS = data; })
-  .catch(() => {});
+function pollStorageReady(attempt, notify) {
+  return fetch('/api/storage-status')
+    .then(r => {
+      // Followed a redirect to /login: the session went away (idle lockdown, or a
+      // restart). Nothing here can recover it — reload onto the login form.
+      if (r.redirected) { window.location.reload(); return false; }
+      return r.json().then(s => (s && s.ready) ? true : retryStorage(attempt, notify));
+    })
+    .catch(() => retryStorage(attempt, notify));
+}
 
-fetch('/api/default-macro')
-  .then(r => r.json())
-  .then(data => { if (data && typeof data.name === 'string') state.defaultMacro = data.name; })
-  .catch(() => {});
+function retryStorage(attempt, notify) {
+  if (attempt === 0) notify();
+  if (attempt >= STORAGE_MAX_POLLS) return false;
+  return new Promise(res => setTimeout(res, STORAGE_POLL_MS))
+    .then(() => pollStorageReady(attempt + 1, notify));
+}
+
+const storageReady = (() => {
+  let waitEl = null;
+  const notify = () => {
+    if (waitEl) return;
+    const bubble = addMessage('bot', '<span class="storage-wait">🔒 Unlocking encrypted '
+                                   + 'storage — macros, aliases and saved chats will '
+                                   + 'load shortly…</span>');
+    waitEl = bubble.querySelector('.storage-wait');
+  };
+  return pollStorageReady(0, notify).then(ready => {
+    if (waitEl) {
+      waitEl.textContent = ready
+        ? '🔓 Encrypted storage unlocked.'
+        : '⚠ Encrypted storage did not come up — macros, aliases and saved chats are '
+          + 'unavailable. Reload the page once it is mounted.';
+    }
+    return ready;
+  });
+})();
+
+storageReady.then(ready => {
+  if (!ready) return;
+
+  fetch('/api/aliases')
+    .then(r => r.json())
+    .then(data => { if (data && typeof data === 'object') state.ALIASES = data; })
+    .catch(() => {});
+
+  fetch('/api/macros')
+    .then(r => r.json())
+    .then(data => { if (data && typeof data === 'object') state.MACROS = data; })
+    .catch(() => {});
+
+  fetch('/api/default-macro')
+    .then(r => r.json())
+    .then(data => { if (data && typeof data.name === 'string') state.defaultMacro = data.name; })
+    .catch(() => {});
+});
 
 // ---------------------------------------------------------------------------
 // Header status
@@ -111,7 +163,9 @@ function resumeRunningSequenceRunOnStartup() {
     })
     .catch(() => {});
 }
-resumeRunningSequenceRunOnStartup();
+// Gated on storage: the session it needs to load lives on the encrypted volume,
+// so running this before the lazy mount lands would just 503.
+storageReady.then(ready => { if (ready) resumeRunningSequenceRunOnStartup(); });
 
 // ---------------------------------------------------------------------------
 // Input: auto-resize + alias expansion + slash autocomplete
