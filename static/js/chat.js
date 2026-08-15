@@ -9,7 +9,7 @@ import {
   scrollBottom, addMessage, createMediaElement,
   deleteImageFile, removeImageFromChat,
 } from './dom.js';
-import { openLightbox, closeLightbox, navigateLightbox, isLightboxOpen } from './lightbox.js';
+import { openLightbox, closeLightbox, navigateLightbox, isLightboxOpen, deleteCurrentLightboxImage } from './lightbox.js';
 import {
   updateSlashAc, hideSlashAc, selectSlashAcItem, tryExpandAlias,
   renderSlashAc, getAcState, setAcFocused, tabCompleteSlashAc,
@@ -183,11 +183,13 @@ inputEl.addEventListener('input', () => {
 // ---------------------------------------------------------------------------
 
 document.addEventListener('keydown', e => {
-  // While fullscreen, arrows browse the lightbox's collection and Escape closes
-  // it; swallow these so the slideshow controller doesn't also react.
+  // While fullscreen, arrows browse the lightbox's collection, Delete removes
+  // the image on screen and Escape closes it; swallow these so the slideshow
+  // controller doesn't also react.
   if (isLightboxOpen()) {
     if (e.key === 'ArrowLeft')  { e.preventDefault(); navigateLightbox(-1); return; }
     if (e.key === 'ArrowRight') { e.preventDefault(); navigateLightbox(1);  return; }
+    if (e.key === 'Delete')     { e.preventDefault(); deleteCurrentLightboxImage(); return; }
     if (e.key === 'Escape')     { e.preventDefault(); closeLightbox();      return; }
     return;
   }

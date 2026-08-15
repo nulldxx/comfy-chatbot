@@ -1197,6 +1197,14 @@ header a:hover { color: #a78bfa; }
   position: absolute; top: 16px; right: 20px;
   color: #fff; font-size: 2rem; cursor: pointer; line-height: 1;
 }
+#lightbox-status {
+  display: none; position: absolute; bottom: 20px; left: 50%;
+  transform: translateX(-50%);
+  max-width: 80vw; padding: 8px 14px; border-radius: 6px;
+  background: rgba(0,0,0,0.75); color: #fff; font-size: 0.9rem;
+  pointer-events: none;
+}
+#lightbox-status.open { display: block; }
 
 #drop-overlay {
   display: none; position: fixed; inset: 0; z-index: 400;

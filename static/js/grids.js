@@ -133,24 +133,30 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
     del.className = 'img-del review-del';
     del.title = 'Delete image';
     del.innerHTML = '&#128465;&#xFE0E;';
+    // Drop this thumb from the grid, once the file behind it is gone. Exposed
+    // on the cell so another view that deletes the same image (the lightbox)
+    // can keep the grid's order/cell bookkeeping in step.
+    function forget() {
+      if (onReorder) {
+        order = order.filter(u => u !== url);
+        onReorder(order);
+      }
+      cells.delete(url);
+      cell.remove();
+      if (!grid.children.length) {
+        bubble.innerHTML = 'All session images deleted.';
+      } else {
+        updateCount();
+      }
+    }
+    cell._forgetImage = forget;
+
     del.addEventListener('click', e => {
       e.stopPropagation();
       if (del.disabled) return;
       del.disabled = true;
       deleteImageFile(url)
-        .then(() => {
-          removeImageFromChat(url);
-          if (onReorder) {
-            order = order.filter(u => u !== url);
-            onReorder(order);
-          }
-          cell.remove();
-          if (!grid.children.length) {
-            bubble.innerHTML = 'All session images deleted.';
-          } else {
-            updateCount();
-          }
-        })
+        .then(() => { removeImageFromChat(url); forget(); })
         .catch(err => {
           del.disabled = false;
           del.innerHTML = '&#9888;&#xFE0E;';

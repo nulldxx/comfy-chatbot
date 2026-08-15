@@ -1,8 +1,10 @@
 import { state } from './state.js';
 import { isVideoUrl } from './utils.js';
+import { deleteImageFile, removeImageFromChat } from './dom.js';
 
 const lightbox = document.getElementById('lightbox');
 const lbImg    = document.getElementById('lightbox-img');
+const lbStatus = document.getElementById('lightbox-status');
 
 // Lightbox pinch-to-zoom state
 let lbScale = 1, lbTx = 0, lbTy = 0, lbDragY = 0, lbDragX = 0;
@@ -38,10 +40,18 @@ function lbReset() {
   lightbox.style.background = '';
 }
 
+function lbShow(i) {
+  lbIndex = i;
+  lbReset();
+  lbImg.src = lbCollection[i];
+  lbRecomputeOrigin();
+}
+
 export function openLightbox(src, collection = state.sessionImages) {
   lbCollection = Array.isArray(collection) && collection.length ? collection : [src];
   lbIndex = lbCollection.findIndex(u => srcKey(u) === srcKey(src));
   if (lbIndex < 0) lbIndex = 0;
+  lbSetStatus('');
   lbReset();
   lbImg.src = src;
   lightbox.classList.add('open');
@@ -58,19 +68,64 @@ export function navigateLightbox(dir) {
   for (let step = 0; step < n; step++) {
     i = (i + dir + n) % n;
     if (i === lbIndex) break;
-    if (!isVideoUrl(lbCollection[i])) {
-      lbIndex = i;
-      lbReset();
-      lbImg.src = lbCollection[i];
-      lbRecomputeOrigin();
-      return;
-    }
+    if (!isVideoUrl(lbCollection[i])) { lbShow(i); return; }
   }
+}
+
+let lbStatusTimer = null;
+function lbSetStatus(text) {
+  if (!lbStatus) return;
+  clearTimeout(lbStatusTimer);
+  lbStatus.textContent = text;
+  lbStatus.classList.toggle('open', !!text);
+  if (text) lbStatusTimer = setTimeout(() => lbSetStatus(''), 4000);
+}
+
+// Delete the image currently on screen from the output folder, then move to
+// the next one in the collection (closing the lightbox when none is left).
+// The lightbox may be sitting on top of the view that opened it, so the other
+// views holding this image are told to forget it too — otherwise a review grid
+// or slideshow keeps a thumb/slide pointing at a file that no longer exists.
+let lbDeleting = false;
+export function deleteCurrentLightboxImage() {
+  if (lbDeleting || !isLightboxOpen()) return;
+  const url = lbCollection[lbIndex];
+  if (!url || isVideoUrl(url)) return;
+
+  lbDeleting = true;
+  lbSetStatus('Deleting…');
+  deleteImageFile(url).then(() => {
+    lbSetStatus('');
+    // Collection entries are relative (/images/x.png) and match the chat's src
+    // attributes as-is; only the single-image fallback (an absolute <img>.src)
+    // needs reducing to a pathname first.
+    removeImageFromChat(/^https?:/i.test(url) ? srcKey(url) : url);
+    document.querySelectorAll('.review-thumb').forEach(cell => {
+      if (cell._forgetImage && srcKey(cell.dataset.url) === srcKey(url)) cell._forgetImage();
+    });
+    if (state.activeSlideshowCtrl && state.activeSlideshowCtrl.forget) {
+      state.activeSlideshowCtrl.forget(url);
+    }
+
+    // removeImageFromChat already splices state.sessionImages, so only drop the
+    // entry when this collection is a separate copy (e.g. a review grid's).
+    const at = lbIndex;
+    const i  = lbCollection.indexOf(url);
+    if (i !== -1) lbCollection.splice(i, 1);
+    // Land on whatever moved into this slot, wrapping past the end.
+    for (let k = 0; k < lbCollection.length; k++) {
+      const j = (at + k) % lbCollection.length;
+      if (!isVideoUrl(lbCollection[j])) { lbShow(j); return; }
+    }
+    closeLightbox();
+  }).catch(err => {
+    lbSetStatus('Delete failed: ' + err.message);
+  }).finally(() => { lbDeleting = false; });
 }
 
 export function isLightboxOpen() { return lightbox.classList.contains('open'); }
 
-export function closeLightbox() { lightbox.classList.remove('open'); lbReset(); }
+export function closeLightbox() { lightbox.classList.remove('open'); lbSetStatus(''); lbReset(); }
 
 lbImg.addEventListener('touchstart', e => {
   if (e.touches.length === 2) {

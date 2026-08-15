@@ -118,24 +118,36 @@ export function createSlideshow(bubble, images) {
 
   function navigate(dir) { show(idx + dir); }
 
+  // Drop an image from the reel once the file behind it is gone. Exposed on
+  // the controller so another view that deletes the same image (the lightbox)
+  // can resync this slideshow instead of leaving a dead slide in it.
+  function forget(url) {
+    const i = images.indexOf(url);
+    if (i === -1) return;
+    images.splice(i, 1);
+    if (!images.length) {
+      clearTimeout(timer);
+      stopVideo();
+      if (isFsActive()) fsBtn.click();
+      bubble.innerHTML = 'All images deleted.';
+      if (state.activeSlideshowCtrl === ctrl) state.activeSlideshowCtrl = null;
+      return;
+    }
+    // Deleting an earlier slide shifts the current one down; deleting the
+    // current one leaves the next slide sitting in this slot.
+    show(i < idx ? idx - 1 : idx);
+  }
+
   let deleting = false;
   function deleteCurrent() {
     if (deleting || !images.length) return;
     deleting = true;
-    const filename = images[idx].split('/').pop();
+    const url = images[idx];
+    const filename = url.split('/').pop();
     fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
       .then(r => r.json().then(data => {
         if (!r.ok) throw new Error(data.error || 'Delete failed');
-        images.splice(idx, 1);
-        if (!images.length) {
-          clearTimeout(timer);
-          stopVideo();
-          if (isFsActive()) fsBtn.click();
-          bubble.innerHTML = 'All images deleted.';
-          if (state.activeSlideshowCtrl === ctrl) state.activeSlideshowCtrl = null;
-          return;
-        }
-        show(idx);
+        forget(url);
       }))
       .catch(err => {
         counter.textContent = '⚠ ' + err.message;
@@ -238,6 +250,6 @@ export function createSlideshow(bubble, images) {
   });
 
   show(0);
-  const ctrl = { navigate, deleteCurrent };
+  const ctrl = { navigate, deleteCurrent, forget };
   return ctrl;
 }
