@@ -85,6 +85,6 @@ The existing loopback keyslot tests still exercise the wired `handle_*` ops unde
 
 ## Deployment
 
-Redeploy the `archive-agent` on the host (`moria`); the container image is unchanged. The
+Redeploy the `archive-agent` on the host (`$PROD_SERVER`); the container image is unchanged. The
 new `mtime-baselines` dir is created on demand, so `/etc/archive-agent.conf` needs no
 change.

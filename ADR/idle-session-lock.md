@@ -174,7 +174,7 @@ existing tests assert 302-to-`/login`.
   and a permanent bump would invalidate the forged sessions every other test module uses.
 - Full suite: 451 Python tests (434 before) and 102 JS tests pass.
 
-## Rollout (on moria)
+## Rollout (on $PROD_SERVER)
 
 No agent change and no `/etc/archive-agent.conf` change — `handle_unmount` already
 supports the `output` and `host` targets. The default (`7200`) applies with no compose

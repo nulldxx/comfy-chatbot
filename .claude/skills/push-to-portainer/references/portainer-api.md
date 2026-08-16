@@ -1,11 +1,11 @@
-# Portainer API reference (moria)
+# Portainer API reference ($PROD_SERVER)
 
 Only needed when the redeploy script fails, the API token is rejected, or the
 deployed image needs verifying. Normal deploys just run the bundled script.
 
 ## Connection & auth
 
-- Base URL: `https://moria:9443` (self-signed cert — use `curl -k` / the script's
+- Base URL: `https://$PROD_SERVER:9443` (self-signed cert — use `curl -k` / the script's
   `PORTAINER_INSECURE=1` default).
 - Preferred auth: header `X-API-Key: <PORTAINER_API_KEY>` (from `~/dot-files/.bash_shared`).
 - Fallback auth: `POST /api/auth` `{"username","password"}` → `{"jwt"}`, then
@@ -22,13 +22,13 @@ deployed image needs verifying. Normal deploys just run the bundled script.
 
 ```bash
 # List stacks (find id/endpoint by name)
-curl -sk https://moria:9443/api/stacks -H "X-API-Key: $PORTAINER_API_KEY"
+curl -sk https://$PROD_SERVER:9443/api/stacks -H "X-API-Key: $PORTAINER_API_KEY"
 
 # Get a stack's compose content
-curl -sk https://moria:9443/api/stacks/19/file -H "X-API-Key: $PORTAINER_API_KEY"
+curl -sk https://$PROD_SERVER:9443/api/stacks/19/file -H "X-API-Key: $PORTAINER_API_KEY"
 
 # Redeploy pulling latest images (what the script does)
-curl -sk -X PUT "https://moria:9443/api/stacks/19?endpointId=3" \
+curl -sk -X PUT "https://$PROD_SERVER:9443/api/stacks/19?endpointId=3" \
   -H "X-API-Key: $PORTAINER_API_KEY" -H 'Content-Type: application/json' \
   -d '{"stackFileContent":"<compose>","env":[],"prune":false,"pullImage":true}'
 ```
@@ -38,7 +38,7 @@ curl -sk -X PUT "https://moria:9443/api/stacks/19?endpointId=3" \
 Use the Docker proxy on endpoint 3 to check the running container's image digest:
 
 ```bash
-curl -sk "https://moria:9443/api/endpoints/3/docker/containers/comfy-chatbot/json" \
+curl -sk "https://$PROD_SERVER:9443/api/endpoints/3/docker/containers/comfy-chatbot/json" \
   -H "X-API-Key: $PORTAINER_API_KEY" \
  | python3 -c 'import sys,json;d=json.load(sys.stdin);print("Image:",d["Config"]["Image"]);print("ImageID:",d["Image"])'
 ```
@@ -51,10 +51,10 @@ on Docker Hub, to confirm the pull took effect.
 Admin user id is `1`. Create a non-expiring access token (needs the admin password):
 
 ```bash
-JWT=$(curl -sk https://moria:9443/api/auth -X POST -H 'Content-Type: application/json' \
+JWT=$(curl -sk https://$PROD_SERVER:9443/api/auth -X POST -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"<ADMIN_PASSWORD>"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["jwt"])')
 
-curl -sk https://moria:9443/api/users/1/tokens -X POST -H "Authorization: Bearer $JWT" \
+curl -sk https://$PROD_SERVER:9443/api/users/1/tokens -X POST -H "Authorization: Bearer $JWT" \
   -H 'Content-Type: application/json' \
   -d '{"password":"<ADMIN_PASSWORD>","description":"push-to-portainer skill"}'
 # -> {"rawAPIKey":"<token, shown once>","apiKey":{...}}

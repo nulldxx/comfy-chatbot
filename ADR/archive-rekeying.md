@@ -143,7 +143,7 @@ password set, the compose password still logs in and `m` never prompts.
   (add→remove→idempotence, refuse-last-key, refuse-same-key, wrong-old-password fails,
   restorable 0600 header backup). Guarded to **root + cryptsetup**, so it skips in CI.
 
-## Rollout (on moria)
+## Rollout (on $PROD_SERVER)
 Full backup → deploy the updated `archive-agent` (additive actions; `HEADER_BACKUP_DIR`
 has a safe default) and the app image → set a password (performs the first migration and
 shows the recovery key) → verify the old `SECRET_KEY` no longer opens either volume and

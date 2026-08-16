@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Pull the latest comfy-chatbot image and redeploy its Portainer stack.
 
-The stack (`comfy-chatbot`, id 19 on moria) is a plain compose stack running
+The stack (`comfy-chatbot`, id 19 on $PROD_SERVER) is a plain compose stack running
 `nerwander/comfy-chatbot:latest`. Portainer's stack-update endpoint with
 `pullImage: true` re-pulls the image tag and recreates the container — i.e. a
 "pull latest + restart" in one call.
 
 Config comes from the environment (nothing secret is baked into the file):
 
-    PORTAINER_URL        default https://moria:9443
+    PORTAINER_URL        default https://$PROD_SERVER:9443
     PORTAINER_STACK      default comfy-chatbot           (stack name to redeploy)
-    PORTAINER_INSECURE   default 1  (moria uses a self-signed cert; set 0 to verify)
+    PORTAINER_INSECURE   default 1  ($PROD_SERVER uses a self-signed cert; set 0 to verify)
 
     # authenticate with EITHER an API token (preferred) ...
     PORTAINER_API_KEY    a Portainer access token (My account -> Access tokens)
@@ -49,15 +49,26 @@ def _request(url, ctx, method="GET", token=None, api_key=False, body=None):
         sys.exit(f"Could not reach {url}: {e.reason}")
 
 
+def _default_url():
+    """Portainer base URL: PORTAINER_URL wins, else https://$PROD_SERVER:9443."""
+    url = os.environ.get("PORTAINER_URL")
+    if url:
+        return url
+    host = os.environ.get("PROD_SERVER")
+    if not host:
+        sys.exit("Set PORTAINER_URL, or PROD_SERVER (see ~/dot-files/.bash_shared), or pass --url.")
+    return f"https://{host}:9443"
+
+
 def main():
     ap = argparse.ArgumentParser(description="Redeploy a Portainer compose stack, pulling latest images.")
-    ap.add_argument("--url", default=os.environ.get("PORTAINER_URL", "https://moria:9443"))
+    ap.add_argument("--url", default=None, help="Portainer base URL (else PORTAINER_URL, else https://$PROD_SERVER:9443)")
     ap.add_argument("--stack", default=os.environ.get("PORTAINER_STACK", "comfy-chatbot"),
                     help="stack name to redeploy")
     ap.add_argument("--prune", action="store_true", help="remove services no longer in the compose file")
     args = ap.parse_args()
 
-    base = args.url.rstrip("/")
+    base = (args.url or _default_url()).rstrip("/")
     insecure = os.environ.get("PORTAINER_INSECURE", "1") != "0"
     ctx = ssl._create_unverified_context() if insecure else ssl.create_default_context()
 

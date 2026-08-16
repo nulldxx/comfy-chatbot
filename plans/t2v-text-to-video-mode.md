@@ -260,7 +260,7 @@ var DEFAULT_TEXT2VIDEO_WORKFLOW = {{ default_text2video_workflow | tojson }};
 
 ## Workflow template
 
-The `text2video/` dir lives on **moria** at `~/comfy-workflows/text2video/` (bind-mounted
+The `text2video/` dir lives on **$PROD_SERVER** at `~/comfy-workflows/text2video/` (bind-mounted
 to `/app/workflows` — see the "Live Configuration" section of `CLAUDE.md`); it is not
 present on this machine, so it must be created there.
 
@@ -315,7 +315,7 @@ math node `105:107` re-derives frame count from duration × 24 — worth replaci
    curly ones (see "Known Pitfalls" in `CLAUDE.md`).
 2. `./scripts/test-all` (python imports + unit tests + Docker container tests), then
    `npm run test:js` separately.
-3. Create `~/comfy-workflows/text2video/` on moria and drop the derived template in;
+3. Create `~/comfy-workflows/text2video/` on $PROD_SERVER and drop the derived template in;
    load the graph in the ComfyUI editor and hit Run once to prove it validates without a
    first frame **before** testing through the chatbot.
 4. End-to-end in the running app:

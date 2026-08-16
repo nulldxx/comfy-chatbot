@@ -1,6 +1,6 @@
 ---
 name: push-to-portainer
-description: End-to-end release-and-deploy pipeline for the comfy-chatbot project — commit and push to main, cut a new release with scripts/make-release, watch the GitHub Actions release build (diagnosing and fixing any failures, then re-releasing), and once the build is green redeploy the comfy-chatbot stack on the local Portainer server (moria) so it pulls the new image. Use when the user says "push to portainer", "release and deploy", "ship it / ship this", "deploy to portainer", "push and redeploy", "cut a release and deploy", or otherwise wants the full commit → release → build → deploy flow for comfy-chatbot. Run from the comfy-chatbot repo root.
+description: End-to-end release-and-deploy pipeline for the comfy-chatbot project — commit and push to main, cut a new release with scripts/make-release, watch the GitHub Actions release build (diagnosing and fixing any failures, then re-releasing), and once the build is green redeploy the comfy-chatbot stack on the local Portainer server ($PROD_SERVER) so it pulls the new image. Use when the user says "push to portainer", "release and deploy", "ship it / ship this", "deploy to portainer", "push and redeploy", "cut a release and deploy", or otherwise wants the full commit → release → build → deploy flow for comfy-chatbot. Run from the comfy-chatbot repo root.
 ---
 
 # Push to Portainer
@@ -55,7 +55,7 @@ Docker Hub). A separate **"Build Check"** runs on the `main` push.
 
 The bundled `scripts/redeploy-portainer.py` calls Portainer's stack-update endpoint
 with `pullImage: true`, which re-pulls `nerwander/comfy-chatbot:latest` and recreates
-the container (defaults target `https://moria:9443`, stack `comfy-chatbot`).
+the container (defaults target `https://$PROD_SERVER:9443`, stack `comfy-chatbot`).
 
 Run it with the secrets sourced (use this skill's bundled copy so it works from any repo):
 
