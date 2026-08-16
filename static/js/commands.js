@@ -1,5 +1,5 @@
 import {
-  escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
+  escapeHtml, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement,
   buildVideoPrompt, isVideoUrl, fmtDuration, clampVideo, recomputeVideo,
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
 } from './utils.js';
@@ -1101,8 +1101,10 @@ export function makeCommandHandler(deps) {
         addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/sequence-replacement woman elegant woman in a red dress</code></span>');
         return;
       }
-      state.sequenceReplacements.push([from, to]);
-      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to every prompt from <code>/sequence</code>.`);
+      const prevSeq = upsertReplacement(state.sequenceReplacements, from, to, true);
+      addMessage('bot', prevSeq === null
+        ? `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to every prompt from <code>/sequence</code>.`
+        : `Replacement updated: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code> (was <code>${escapeHtml(prevSeq)}</code>). Applied to every prompt from <code>/sequence</code>.`);
       return;
     }
 
@@ -1123,8 +1125,10 @@ export function makeCommandHandler(deps) {
         addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/i2i-replacement Dog Cat</code></span>');
         return;
       }
-      state.image2imageReplacements.push([from, to]);
-      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/i2i</code> runs with no prompt.`);
+      const prevI2i = upsertReplacement(state.image2imageReplacements, from, to);
+      addMessage('bot', prevI2i === null
+        ? `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/i2i</code> runs with no prompt.`
+        : `Replacement updated: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code> (was <code>${escapeHtml(prevI2i)}</code>). Applied to the original generation prompt when <code>/i2i</code> runs with no prompt.`);
       return;
     }
 
@@ -1152,8 +1156,10 @@ export function makeCommandHandler(deps) {
         addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/face-detail-replacement Dog Cat</code></span>');
         return;
       }
-      state.faceDetailReplacements.push([from, to]);
-      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to each face-detail prompt before it is run.`);
+      const prevFd = upsertReplacement(state.faceDetailReplacements, from, to);
+      addMessage('bot', prevFd === null
+        ? `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to each face-detail prompt before it is run.`
+        : `Replacement updated: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code> (was <code>${escapeHtml(prevFd)}</code>). Applied to each face-detail prompt before it is run.`);
       return;
     }
 
@@ -1246,8 +1252,10 @@ export function makeCommandHandler(deps) {
         addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/i2v-replacement Dog Cat</code></span>');
         return;
       }
-      state.image2videoReplacements.push([from, to]);
-      addMessage('bot', `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/i2v</code> runs with no prompt.`);
+      const prevI2v = upsertReplacement(state.image2videoReplacements, from, to);
+      addMessage('bot', prevI2v === null
+        ? `Replacement added: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code>. Applied to the original generation prompt when <code>/i2v</code> runs with no prompt.`
+        : `Replacement updated: <code>${escapeHtml(from)}</code> → <code>${escapeHtml(to)}</code> (was <code>${escapeHtml(prevI2v)}</code>). Applied to the original generation prompt when <code>/i2v</code> runs with no prompt.`);
       return;
     }
 

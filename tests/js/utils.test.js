@@ -1,4 +1,4 @@
-import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, deriveFaceDetailPrompt, isVideoUrl,
+import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement, deriveFaceDetailPrompt, isVideoUrl,
          fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList,
          formatFscheckResult, computeDiffBox } from '../../static/js/utils.js';
 
@@ -306,6 +306,49 @@ describe('applyReplacements', () => {
   test('passes a falsy prompt through unchanged even with replacements', () => {
     expect(applyReplacements(null, [['cat', 'dog']])).toBe(null);
     expect(applyReplacements('', [['cat', 'dog']])).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertReplacement
+// ---------------------------------------------------------------------------
+
+describe('upsertReplacement', () => {
+  test('appends a new pair and reports nothing displaced', () => {
+    const list = [];
+    expect(upsertReplacement(list, 'cat', 'dog')).toBeNull();
+    expect(list).toEqual([['cat', 'dog']]);
+  });
+
+  test('overwrites an existing pair instead of appending a duplicate', () => {
+    const list = [['cat', 'dog']];
+    expect(upsertReplacement(list, 'cat', 'fox')).toBe('dog');
+    expect(list).toEqual([['cat', 'fox']]);
+  });
+
+  test('keeps the original position when overwriting', () => {
+    const list = [['a', '1'], ['b', '2'], ['c', '3']];
+    upsertReplacement(list, 'b', 'two');
+    expect(list).toEqual([['a', '1'], ['b', 'two'], ['c', '3']]);
+  });
+
+  test('is case-sensitive by default', () => {
+    const list = [['Cat', 'dog']];
+    expect(upsertReplacement(list, 'cat', 'fox')).toBeNull();
+    expect(list).toEqual([['Cat', 'dog'], ['cat', 'fox']]);
+  });
+
+  test('matches case-insensitively when asked, adopting the new casing', () => {
+    const list = [['Cat', 'dog']];
+    expect(upsertReplacement(list, 'cAT', 'fox', true)).toBe('dog');
+    expect(list).toEqual([['cAT', 'fox']]);
+  });
+
+  test('a redefined pair actually takes effect', () => {
+    const list = [];
+    upsertReplacement(list, 'cat', 'dog');
+    upsertReplacement(list, 'cat', 'fox');
+    expect(applyReplacements('a cat on a mat', list)).toBe('a fox on a mat');
   });
 });
 

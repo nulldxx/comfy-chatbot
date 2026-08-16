@@ -94,6 +94,26 @@ export function applyReplacements(prompt, replacements) {
   return prompt;
 }
 
+// Add a find→replace pair to `list`, overwriting any existing entry with the
+// same "from" instead of appending a duplicate — otherwise the earlier pair
+// always wins (it is applied first, so the later one no longer matches) and
+// re-defining a replacement looks like it does nothing. `caseInsensitive`
+// mirrors how the pairs are applied: sequence replacements match
+// case-insensitively (case_preserving_replace, server side), the other
+// families are plain substring replacements. Mutates `list` in place and
+// returns the "to" it displaced, or null if the pair was new.
+export function upsertReplacement(list, from, to, caseInsensitive = false) {
+  const norm = s => (caseInsensitive ? s.toLowerCase() : s);
+  const i = list.findIndex(([f]) => norm(f) === norm(from));
+  if (i === -1) {
+    list.push([from, to]);
+    return null;
+  }
+  const prev = list[i][1];
+  list[i] = [from, to];
+  return prev;
+}
+
 // Move the item at index `from` to index `to`, returning a new array (the
 // input is left untouched). Out-of-range indices and from===to yield a shallow
 // copy unchanged. Powers drag-to-reorder in the /video-splice grid.
