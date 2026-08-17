@@ -1250,6 +1250,7 @@ function doRecordSave() {
         currentDenoise: { ...state.currentDenoise },
         videoSettings: { ...state.currentVideoSettings },
         videoLock: state.videoLock,
+        videoSteps: state.currentVideoSteps,
       },
       sessionImages: state.sessionImages.slice(),
       imagePrompts: Object.assign({}, state.imagePrompts),
@@ -1313,6 +1314,7 @@ function restoreSession(data) {
   if (s.currentDenoise          !== undefined) state.currentDenoise          = { ...DEFAULT_DENOISE, ...s.currentDenoise };
   if (s.videoSettings           !== undefined) state.currentVideoSettings    = { ...DEFAULT_VIDEO_SETTINGS, ...s.videoSettings };
   if (s.videoLock               !== undefined) state.videoLock               = s.videoLock;
+  if (s.videoSteps              !== undefined) state.currentVideoSteps        = s.videoSteps;
   state.iterationsFromSequence = false;
   updateHeaderStatus();
 
@@ -1888,6 +1890,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(upscale     ? { denoise: upscale.denoiseOverride != null ? upscale.denoiseOverride : state.currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video || text2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
+      ...((image2video || text2video) && state.currentVideoSteps !== null ? { steps: state.currentVideoSteps } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
       ...(image2video && image2video.refImage ? { ref_image: image2video.refImage } : {}),
       ...(text2video && text2video.refImage ? { ref_image: text2video.refImage } : {}),

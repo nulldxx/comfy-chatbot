@@ -143,7 +143,8 @@ function showChatSummary() {
            `<span style="color:#a78bfa">${vs.fps}</span> fps · ` +
            `<span style="color:#a78bfa">${vs.width}×${vs.height}</span> · ` +
            `audio <span style="color:#a78bfa">${vs.audio !== false ? 'on' : 'off'}</span> ` +
-           `<span style="color:#475569">(🔒 ${state.videoLock})</span>`,
+           `<span style="color:#475569">(🔒 ${state.videoLock})</span>` +
+           (state.currentVideoSteps !== null ? ` · steps <span style="color:#a78bfa">${state.currentVideoSteps}</span>` : ''),
   });
 
   if (state.autoFaceDetail) {
@@ -605,6 +606,7 @@ export function makeCommandHandler(deps) {
     state.currentDenoise = { ...DEFAULT_DENOISE };
     state.currentVideoSettings = { ...DEFAULT_VIDEO_SETTINGS };
     state.videoLock = 'fps';
+    state.currentVideoSteps = null;
     state.iterations = 1;
     state.iterationsFromSequence = false;
     state.sequenceReplacements = [];
@@ -1832,7 +1834,7 @@ export function makeCommandHandler(deps) {
         { sig: '/upscale-workflow [name]', desc: 'choose which upscaler workflow the <code>/upscale</code> command and ⬆ button use (no arg = picker)' },
         { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
         { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video' },
-        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
+        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
         { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
         { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
@@ -2494,6 +2496,7 @@ export function makeCommandHandler(deps) {
         currentDenoise:            { ...state.currentDenoise },
         videoSettings:             { ...state.currentVideoSettings },
         videoLock:                 state.videoLock,
+        videoSteps:                state.currentVideoSteps,
         sequenceReplacements:      state.sequenceReplacements.slice(),
         image2imageReplacements:   state.image2imageReplacements.slice(),
         image2imageOverridePrompt: state.image2imageOverridePrompt,
@@ -2534,6 +2537,7 @@ export function makeCommandHandler(deps) {
       state.currentDenoise              = { ...DEFAULT_DENOISE, ...s.currentDenoise };
       state.currentVideoSettings        = { ...DEFAULT_VIDEO_SETTINGS, ...s.videoSettings };
       state.videoLock                   = s.videoLock;
+      if (s.videoSteps !== undefined) state.currentVideoSteps = s.videoSteps;
       state.sequenceReplacements        = s.sequenceReplacements;
       state.image2imageReplacements     = s.image2imageReplacements;
       state.image2imageOverridePrompt   = s.image2imageOverridePrompt;
@@ -2851,6 +2855,12 @@ export function makeCommandHandler(deps) {
       ];
       const work    = { ...state.currentVideoSettings };
       let   lockSel = state.videoLock;
+      // Steps override is kept out of `work` (which is spread wholesale into
+      // state.currentVideoSettings on Apply) — it has its own state field.
+      const stepsWork = {
+        steps: state.currentVideoSteps !== null ? state.currentVideoSteps : 20,
+        useDefault: state.currentVideoSteps === null,
+      };
       const els = {};
 
       const wrap = document.createElement('div');
@@ -2985,6 +2995,46 @@ export function makeCommandHandler(deps) {
       audioRow.appendChild(audioBox); audioRow.appendChild(audioLbl);
       wrap.appendChild(audioRow);
 
+      const stepsRow = document.createElement('div');
+      stepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;margin-top:4px';
+      const stepsLbl = document.createElement('span');
+      stepsLbl.textContent = 'Steps:';
+      stepsLbl.style.cssText = 'min-width:92px;color:#94a3b8';
+      const stepsSlider = document.createElement('input');
+      stepsSlider.type = 'range';
+      stepsSlider.min = '1'; stepsSlider.max = '100'; stepsSlider.step = '1';
+      stepsSlider.value = String(stepsWork.steps);
+      stepsSlider.style.cssText = 'width:130px;accent-color:#f472b6;cursor:pointer';
+      const stepsInp = document.createElement('input');
+      stepsInp.type = 'text';
+      stepsInp.value = String(stepsWork.steps);
+      stepsInp.style.cssText = 'width:52px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+      const onStepsEdit = v => {
+        const n = parseInt(v, 10);
+        if (isNaN(n)) { stepsInp.value = String(stepsWork.steps); return; }
+        stepsWork.steps = Math.min(200, Math.max(1, n));
+        stepsInp.value = String(stepsWork.steps);
+        stepsSlider.value = String(Math.min(100, stepsWork.steps));
+        stepsWork.useDefault = false;
+        defaultStepsBox.checked = false;
+      };
+      stepsSlider.addEventListener('input', () => onStepsEdit(stepsSlider.value));
+      stepsInp.addEventListener('change', () => onStepsEdit(stepsInp.value));
+      stepsRow.appendChild(stepsLbl); stepsRow.appendChild(stepsSlider); stepsRow.appendChild(stepsInp);
+      wrap.appendChild(stepsRow);
+
+      const defaultStepsRow = document.createElement('label');
+      defaultStepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:#cbd5e1;cursor:pointer;padding-left:100px';
+      const defaultStepsBox = document.createElement('input');
+      defaultStepsBox.type = 'checkbox';
+      defaultStepsBox.checked = stepsWork.useDefault;
+      defaultStepsBox.style.cssText = 'width:14px;height:14px;accent-color:#f472b6;cursor:pointer';
+      defaultStepsBox.addEventListener('change', () => { stepsWork.useDefault = defaultStepsBox.checked; });
+      const defaultStepsLbl = document.createElement('span');
+      defaultStepsLbl.innerHTML = 'Use workflow default <span style="color:#475569">— ignore the steps above</span>';
+      defaultStepsRow.appendChild(defaultStepsBox); defaultStepsRow.appendChild(defaultStepsLbl);
+      wrap.appendChild(defaultStepsRow);
+
       const hint = document.createElement('div');
       hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:2px';
       hint.innerHTML = 'Lock one value (🔒), then drag or type the others — the third follows so that <code>frames = duration × fps</code>.';
@@ -3003,13 +3053,21 @@ export function makeCommandHandler(deps) {
       applyBtn.addEventListener('click', () => {
         state.currentVideoSettings = { ...work };
         state.videoLock = lockSel;
-        addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> · Resolution <strong style="color:#a78bfa">${work.width}×${work.height}</strong> · Audio <strong style="color:#a78bfa">${work.audio !== false ? 'on' : 'off'}</strong> <span style="color:#475569">(🔒 ${lockSel})</span>`);
+        state.currentVideoSteps = stepsWork.useDefault ? null : stepsWork.steps;
+        const stepsTxt = state.currentVideoSteps !== null
+          ? `<strong style="color:#a78bfa">${state.currentVideoSteps}</strong>`
+          : '<span style="color:#475569">workflow default</span>';
+        addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> · Resolution <strong style="color:#a78bfa">${work.width}×${work.height}</strong> · Audio <strong style="color:#a78bfa">${work.audio !== false ? 'on' : 'off'}</strong> · Steps ${stepsTxt} <span style="color:#475569">(🔒 ${lockSel})</span>`);
         scrollBottom();
       });
       resetBtn.addEventListener('click', () => {
         Object.assign(work, DEFAULT_VIDEO_SETTINGS);
         lockSel = 'fps';
         audioBox.checked = work.audio !== false;
+        stepsWork.steps = 20; stepsWork.useDefault = true;
+        defaultStepsBox.checked = true;
+        stepsSlider.value = String(stepsWork.steps);
+        stepsInp.value = String(stepsWork.steps);
         refreshRes();
         refresh();
       });

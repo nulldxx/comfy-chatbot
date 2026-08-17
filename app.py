@@ -855,14 +855,9 @@ def api_generate():
         except (ValueError, TypeError):
             return jsonify({"error": "height must be an integer"}), 400
 
-    steps = data.get("steps")
-    if steps is not None:
-        try:
-            steps = int(steps)
-            if steps < 1:
-                raise ValueError
-        except (ValueError, TypeError):
-            return jsonify({"error": "steps must be a positive integer"}), 400
+    steps, err = _parse_steps(data)
+    if err:
+        return err
 
     err = output_storage_error()
     if err:
@@ -893,6 +888,24 @@ def _parse_denoise(data):
     except (TypeError, ValueError):
         return None, (jsonify({"error": "denoise must be a number"}), 400)
     return denoise, None
+
+
+def _parse_steps(data):
+    """Extract and validate an optional sampler-steps override from a request dict.
+
+    Returns (steps_int_or_None, None) on success, or (None, error_response) on
+    failure. None means "leave the workflow's own steps untouched".
+    """
+    steps = data.get("steps")
+    if steps is None:
+        return None, None
+    try:
+        steps = int(steps)
+        if steps < 1:
+            raise ValueError
+    except (ValueError, TypeError):
+        return None, (jsonify({"error": "steps must be a positive integer"}), 400)
+    return steps, None
 
 
 def _parse_video_settings(data):
@@ -1152,6 +1165,12 @@ def api_image2video():
         return err
     assert vs is not None  # err is None here, so vs is populated
 
+    # Optional steps override (from /video-settings). None = leave the workflow's
+    # own sampler steps untouched; applied via apply_steps to every sampler node.
+    steps, err = _parse_steps(data)
+    if err:
+        return err
+
     err = output_storage_error()
     if err:
         return err
@@ -1163,6 +1182,7 @@ def api_image2video():
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
         input_last_frame=last_frame_path, input_reference=ref_image_path,
+        steps=steps,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
     )
@@ -1209,6 +1229,11 @@ def api_text2video():
         return err
     assert vs is not None  # err is None here, so vs is populated
 
+    # Optional steps override (from /video-settings); see api_image2video.
+    steps, err = _parse_steps(data)
+    if err:
+        return err
+
     err = output_storage_error()
     if err:
         return err
@@ -1216,6 +1241,7 @@ def api_text2video():
     job_id = start_generation_job(
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_TEXT2VIDEO_DIR, input_reference=ref_image_path,
+        steps=steps,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
     )

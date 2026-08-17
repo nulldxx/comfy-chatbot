@@ -51,6 +51,10 @@ export const state = {
   currentDenoise:              { ...DEFAULT_DENOISE },
   currentVideoSettings:        { ...DEFAULT_VIDEO_SETTINGS },
   videoLock:                   'fps',
+  // Sampler-steps override for video (image2video / text2video). null = leave the
+  // video workflow's own steps untouched. Kept separate from currentGenerationSteps
+  // (still images) since video graphs have their own step budgets.
+  currentVideoSteps:           null,
   iterations:                  1,
   iterationsFromSequence:      false,
 
