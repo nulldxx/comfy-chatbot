@@ -9,6 +9,17 @@ export const RESOLUTION_PRESETS = {
   square:  { width: 1024, height: 1024, label: 'Square (1024×1024)'              },
 };
 
+// Landscape presets for the /video-settings dialog. Kept separate from the
+// still-image presets above because video models have different size limits
+// (see VIDEO_LIMITS / clampVideo). '360p' is a low-cost "quick" preview size.
+export const VIDEO_RESOLUTION_PRESETS = {
+  '360p':  { width:  640, height:  360, label: '360p (640×360)'    },
+  '540p':  { width:  960, height:  540, label: '540p (960×540)'    },
+  '720p':  { width: 1280, height:  720, label: '720p (1280×720)'   },
+  '1080p': { width: 1920, height: 1080, label: '1080p (1920×1080)' },
+  square:  { width: 1024, height: 1024, label: 'Square (1024×1024)' },
+};
+
 export const state = {
   // Server & workflow selections (null = use backend default)
   currentServer:               null,

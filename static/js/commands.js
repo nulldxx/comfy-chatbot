@@ -3,7 +3,7 @@ import {
   buildVideoPrompt, isVideoUrl, fmtDuration, clampVideo, recomputeVideo,
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
 } from './utils.js';
-import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS } from './state.js';
+import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
@@ -1832,7 +1832,7 @@ export function makeCommandHandler(deps) {
         { sig: '/upscale-workflow [name]', desc: 'choose which upscaler workflow the <code>/upscale</code> command and ⬆ button use (no arg = picker)' },
         { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
         { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video' },
-        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
+        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
         { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
         { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
@@ -2945,6 +2945,33 @@ export function makeCommandHandler(deps) {
       resRow.appendChild(heightInp); resRow.appendChild(flipBtn);
       wrap.appendChild(resRow);
       refreshRes();
+
+      const presetRow = document.createElement('div');
+      presetRow.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.8rem;flex-wrap:wrap;padding-left:100px';
+      const setRes = (w, h) => {
+        work.width  = clampVideo('width',  w);
+        work.height = clampVideo('height', h);
+        refreshRes();
+      };
+      const mkPreset = (label, onClick) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.className = 'sel-btn';
+        b.style.cssText = 'flex:none;padding:2px 8px;font-size:0.78rem;color:#94a3b8';
+        b.addEventListener('click', onClick);
+        return b;
+      };
+      Object.entries(VIDEO_RESOLUTION_PRESETS).forEach(([key, p]) => {
+        presetRow.appendChild(mkPreset(key, () => setRes(p.width, p.height)));
+      });
+      presetRow.appendChild(mkPreset('phone', () => {
+        const dpr  = window.devicePixelRatio || 1;
+        const snap = v => Math.round(v / 16) * 16;
+        const physW = snap(window.screen.width  * dpr);
+        const physH = snap(window.screen.height * dpr);
+        setRes(Math.min(physW, physH), Math.max(physW, physH));
+      }));
+      wrap.appendChild(presetRow);
 
       const audioRow = document.createElement('label');
       audioRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;cursor:pointer';
