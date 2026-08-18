@@ -18,7 +18,8 @@ from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequ
 from workflow import (
     LORA_PLACEHOLDER_RE,
     apply_placeholders, find_placeholders, fill_lora_sentinels,
-    strip_lora_nodes, strip_last_frame_guide, randomize_seeds, lora_path_for_os,
+    strip_lora_nodes, strip_last_frame_guide, randomize_seeds, apply_seed,
+    collect_seeds, lora_path_for_os,
     apply_resolution, apply_steps,
 )
 
@@ -53,6 +54,25 @@ def get_last_sent_workflow() -> dict | None:
     """Return a copy of the last submitted workflow record, or None."""
     with _last_sent_lock:
         return dict(_last_sent) if _last_sent is not None else None
+
+# The seed used by the most recent primary generation (t2i / i2v / t2v). /getseed
+# reads it via get_last_seed() so the next of those runs can reproduce it. None
+# until the first such generation completes its seed step; not persisted.
+_last_seed: int | None = None
+_last_seed_lock = threading.Lock()
+
+
+def get_last_seed() -> int | None:
+    """Return the seed of the most recent tracked generation, or None."""
+    with _last_seed_lock:
+        return _last_seed
+
+
+def set_last_seed(seed: int) -> None:
+    """Record the seed of a tracked generation for later reuse via /getseed."""
+    global _last_seed
+    with _last_seed_lock:
+        _last_seed = seed
 
 # Cap how long a single ComfyUI poll loop will wait for completion. Long video
 # renders can easily exceed 10 minutes, so we use 4 hours instead of the old
@@ -229,7 +249,8 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                          input_reference=None,
                          preserve_mtime_from=None,
                          cleanup_input_image=False, duration=None, frames=None, fps=None,
-                         video_width=None, video_height=None, retry_event=None):
+                         video_width=None, video_height=None, retry_event=None,
+                         seed=None, track_seed=False):
     """Core generation pipeline shared by run_generation and run_sequence_run.
 
     Runs everything from placeholder substitution through downloading the output,
@@ -400,8 +421,20 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
             apply_steps(workflow, steps)
             send("progress", message=f"Steps set to {steps}")
 
-        if randomize_seeds(workflow):
+        # Seed handling: reuse a pinned seed (from /getseed) if one was passed,
+        # otherwise randomize as usual. Either way capture the effective seed so a
+        # later /getseed can reproduce this run — but only for primary generations
+        # (t2i / i2v / t2v), which pass track_seed=True.
+        if seed is not None:
+            if apply_seed(workflow, seed):
+                send("progress", message=f"Reusing seed {seed}")
+        elif randomize_seeds(workflow):
             send("progress", message="Randomized seed values")
+
+        if track_seed:
+            used = collect_seeds(workflow)
+            if used:
+                set_last_seed(used[0])
 
         if cancel_event.is_set():
             raise JobCancelled()

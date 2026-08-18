@@ -55,6 +55,10 @@ export const state = {
   // video workflow's own steps untouched. Kept separate from currentGenerationSteps
   // (still images) since video graphs have their own step budgets.
   currentVideoSteps:           null,
+  // One-shot seed reuse (/getseed): when set, the next primary generation
+  // (t2i / i2v / t2v) is submitted with this seed instead of a random one, then
+  // this is cleared. null = randomize as usual.
+  reuseSeed:                   null,
   iterations:                  1,
   iterationsFromSequence:      false,
 

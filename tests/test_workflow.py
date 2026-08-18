@@ -8,7 +8,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from workflow import (
     apply_placeholders,
     apply_resolution,
+    apply_seed,
     apply_steps,
+    collect_seeds,
     fill_lora_sentinels,
     fill_placeholders_for_validation,
     find_placeholders,
@@ -227,6 +229,55 @@ class TestRandomizeSeeds(unittest.TestCase):
         }
         count = randomize_seeds(wf)
         self.assertEqual(count, 2)
+
+
+class TestApplySeed(unittest.TestCase):
+    def test_applies_fixed_seed_to_all(self):
+        wf = {
+            "1": {"inputs": {"seed": 1}},
+            "2": {"inputs": {"noise_seed": 2}},
+            "3": {"inputs": {"other": "data"}},
+        }
+        count = apply_seed(wf, 12345)
+        self.assertEqual(count, 2)
+        self.assertEqual(wf["1"]["inputs"]["seed"], 12345)
+        self.assertEqual(wf["2"]["inputs"]["noise_seed"], 12345)
+        self.assertEqual(wf["3"]["inputs"]["other"], "data")
+
+    def test_ignores_non_numeric_seed(self):
+        wf = {"1": {"inputs": {"seed": "fixed"}}}
+        count = apply_seed(wf, 7)
+        self.assertEqual(count, 0)
+        self.assertEqual(wf["1"]["inputs"]["seed"], "fixed")
+
+    def test_reuse_reproduces_randomized_seed(self):
+        wf = {"1": {"inputs": {"seed": 0}}}
+        randomize_seeds(wf)
+        remembered = collect_seeds(wf)[0]
+        wf2 = {"1": {"inputs": {"seed": 999}}}
+        apply_seed(wf2, remembered)
+        self.assertEqual(wf2["1"]["inputs"]["seed"], remembered)
+
+
+class TestCollectSeeds(unittest.TestCase):
+    def test_collects_int_seeds(self):
+        wf = {
+            "1": {"inputs": {"seed": 11}},
+            "2": {"inputs": {"noise_seed": 22}},
+            "3": {"inputs": {"other": "data"}},
+        }
+        self.assertEqual(sorted(collect_seeds(wf)), [11, 22])
+
+    def test_ignores_bool_and_non_numeric(self):
+        wf = {
+            "1": {"inputs": {"seed": True}},
+            "2": {"inputs": {"seed": "fixed"}},
+            "3": {"inputs": {"seed": 5}},
+        }
+        self.assertEqual(collect_seeds(wf), [5])
+
+    def test_empty_when_no_seeds(self):
+        self.assertEqual(collect_seeds({"1": {"inputs": {"cfg": 7}}}), [])
 
 
 class TestLoraPathForOs(unittest.TestCase):

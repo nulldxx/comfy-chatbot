@@ -127,6 +127,47 @@ class TestCatalogueEndpoints(_AppFixture):
         self.assertIsInstance(resp.get_json(), list)
 
 
+class TestLastSeed(_AppFixture):
+    def test_null_before_any_generation(self):
+        import generation_service as gs
+        gs._last_seed = None
+        resp = self.client.get("/api/last-seed")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"seed": None})
+
+    def test_returns_seed_as_string(self):
+        import generation_service as gs
+        # A full 64-bit seed would lose precision as a JSON number in the browser,
+        # so it must come back as a string.
+        big = 2**64 - 1
+        gs.set_last_seed(big)
+        resp = self.client.get("/api/last-seed")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"seed": str(big)})
+
+
+class TestParseSeed(unittest.TestCase):
+    def test_none_when_absent(self):
+        self.assertEqual(app_module._parse_seed({}), (None, None))
+
+    def test_accepts_string_seed(self):
+        seed, err = app_module._parse_seed({"seed": "18446744073709551615"})
+        self.assertIsNone(err)
+        self.assertEqual(seed, 2**64 - 1)
+
+    def test_rejects_out_of_range(self):
+        with app.app_context():  # error path builds a jsonify response
+            seed, err = app_module._parse_seed({"seed": 2**64})
+        self.assertIsNone(seed)
+        self.assertIsNotNone(err)
+
+    def test_rejects_non_integer(self):
+        with app.app_context():
+            seed, err = app_module._parse_seed({"seed": "abc"})
+        self.assertIsNone(seed)
+        self.assertIsNotNone(err)
+
+
 class TestAddServer(_AppFixture):
     def setUp(self):
         super().setUp()

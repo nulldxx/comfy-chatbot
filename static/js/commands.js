@@ -1310,6 +1310,29 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/getseed') {
+      addMessage('user', escapeHtml(raw), raw);
+      fetch('/api/last-seed')
+        .then(r => r.json())
+        .then(data => {
+          if (data.seed == null) {
+            addMessage('bot', 'No seed remembered yet — generate an image or video (t2i, i2v or t2v) first, then run <code>/getseed</code>.');
+            return;
+          }
+          state.reuseSeed = data.seed;
+          addMessage('bot', `🎲 The next generation (t2i, i2v or t2v) will reuse seed <code>${data.seed}</code>. It reverts to random seeds afterwards.`);
+        })
+        .catch(() => addMessage('bot', '<span style="color:#f87171">⚠ Could not fetch the last seed.</span>'));
+      return;
+    }
+
+    if (cmd === '/getseed-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.reuseSeed = null;
+      addMessage('bot', 'Seed reuse cleared — the next generation uses a fresh random seed.');
+      return;
+    }
+
     if (cmd === '/i2v-workflow') {
       const wfArg = raw.slice('/i2v-workflow'.length).trim();
       if (wfArg) {
@@ -1799,6 +1822,7 @@ export function makeCommandHandler(deps) {
         { sig: '/inpaint-workflow [name]', desc: 'choose which inpainting workflow the 🩹 button uses (no arg = picker)' },
         { sig: '/inpaint-workflow-reset', desc: 'reset the inpainting workflow to its default' },
         { sig: '/inpainting-prompt <prompt>', desc: 'set the prompt used by the 🩹 inpaint button; no args clears it' },
+        { sig: '/getseed', desc: 'reuse the seed from the last t2i/i2v/t2v generation on the next such run, to reproduce or tweak it', notes: 'one-shot: reverts to random seeds after the next generation &nbsp;·&nbsp; <code>/getseed-reset</code> cancels a pending reuse' },
         { sig: '/iterations <n>', desc: 'generate n images per prompt (default 1)' },
         { sig: '/jobs', desc: 'grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)' },
         { sig: '/last-sent', desc: 'show the last workflow submitted to ComfyUI with all replacements applied — downloadable as JSON' },

@@ -28,6 +28,8 @@ export const SLASH_COMMANDS = [
   { cmd: '/face-detail-workflow-reset',   desc: 'reset the face-detailer workflow to its default',                                     args: ''  },
   { cmd: '/fscheck',                      desc: 'check & auto-repair the encrypted volumes',                                          args: ''  },
   { cmd: '/generation-add-prompt',        desc: 'append extra text/LoRAs to every image generation (no arg = clear)',                 args: ' ' },
+  { cmd: '/getseed',                      desc: 'reuse the last generation\'s seed on the next t2i/i2v/t2v run',                       args: ''  },
+  { cmd: '/getseed-reset',                desc: 'cancel a pending /getseed seed reuse',                                               args: ''  },
   { cmd: '/help',                         desc: 'show available commands; add a word to filter (e.g. /help prompt)',                args: '[filter]'  },
   { cmd: '/i2i',                          desc: 'image2image the last N images (default 1)',                                          args: ' ' },
   { cmd: '/i2i-replacement',              desc: 'add a find→replace for prompt-less /i2i',                                            args: ' ' },

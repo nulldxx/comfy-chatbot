@@ -119,6 +119,34 @@ def randomize_seeds(workflow):
     return randomized
 
 
+def apply_seed(workflow, seed):
+    """Set every seed/noise_seed input in an API-format workflow to a fixed value.
+
+    Used to reproduce a previous generation (see /getseed): a single scalar seed is
+    applied to all sampler nodes, so a single-sampler workflow reproduces exactly and
+    a multi-sampler one shares the one seed. Returns the count of inputs set."""
+    applied = 0
+    for node in workflow.values():
+        inputs = node.get("inputs", {})
+        for key in ("seed", "noise_seed"):
+            if isinstance(inputs.get(key), (int, float)):
+                inputs[key] = seed
+                applied += 1
+    return applied
+
+
+def collect_seeds(workflow):
+    """Return the list of integer seed/noise_seed values currently in the workflow."""
+    seeds = []
+    for node in workflow.values():
+        inputs = node.get("inputs", {})
+        for key in ("seed", "noise_seed"):
+            value = inputs.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                seeds.append(value)
+    return seeds
+
+
 def lora_path_for_os(path, os_type):
     if os_type == "windows":
         return path.replace("/", "\\")

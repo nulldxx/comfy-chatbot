@@ -1280,6 +1280,7 @@ function restoreSession(data) {
   for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
   state.lastSequence = null;
   state.refImageUrl = null;
+  state.reuseSeed = null;
   state.fauxFullscreenEls.clear();
   document.body.style.overflow = '';
   messagesEl.innerHTML = '';
@@ -1872,6 +1873,11 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const finalPrompt = (!job && state.extraPrompt)
     ? `${raw} ${state.extraPrompt}`.trim()
     : raw;
+  // Seed reuse (/getseed) applies only to the three primary generation modes —
+  // a plain t2i run (!job), image2video, or text2video — matching what set the
+  // remembered seed. It is one-shot: cleared once this request is accepted.
+  const primaryGen = !job || image2video || text2video;
+  const seedToUse = (primaryGen && state.reuseSeed != null) ? state.reuseSeed : null;
   fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1896,11 +1902,14 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(text2video && text2video.refImage ? { ref_image: text2video.refImage } : {}),
       ...(inpaint ? { denoise: inpaint.denoise != null ? inpaint.denoise : state.currentDenoise.inpaint } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
+      ...(seedToUse != null ? { seed: seedToUse } : {}),
     }),
   })
   .then(r => r.json())
   .then(data => {
     if (data.error) throw new Error(data.error);
+    // One-shot: the pinned seed has now been consumed by an accepted request.
+    if (seedToUse != null && state.reuseSeed === seedToUse) state.reuseSeed = null;
 
     cancelBtn.disabled = false;
     cancelBtn.addEventListener('click', () => {

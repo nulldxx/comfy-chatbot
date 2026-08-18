@@ -44,7 +44,7 @@ from config import (
 )
 from generation_service import (
     TERMINAL_STATUSES,
-    cancel_auto_purge, get_last_sent_workflow, jobs, jobs_lock,
+    cancel_auto_purge, get_last_seed, get_last_sent_workflow, jobs, jobs_lock,
     rename_and_retarget_session, run_generation, start_background_job,
     start_face_detail_super_job, start_generation_job, start_sequence_run_job,
 )
@@ -859,6 +859,10 @@ def api_generate():
     if err:
         return err
 
+    seed, err = _parse_seed(data)
+    if err:
+        return err
+
     err = output_storage_error()
     if err:
         return err
@@ -871,8 +875,24 @@ def api_generate():
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_GENERATION_DIR,
         width=width, height=height, steps=steps, preserve_mtime_from=preserve_mtime_from,
+        seed=seed, track_seed=True,
     )
     return jsonify({"job_id": job_id})
+
+
+@app.route("/api/last-seed", methods=["GET"])
+@login_required
+def api_last_seed():
+    """Return the seed of the most recent t2i/i2v/t2v generation (or null).
+
+    Backs the /getseed command: the client reads this, then sends it back as
+    ``seed`` on the next generation so the run is reproduced. The seed is sent as
+    a *string* because seeds range up to 2**64-1 and a JSON number would lose
+    precision in the browser (JS Number is exact only below 2**53), which would
+    silently change the seed on the round trip. _parse_seed accepts the string.
+    """
+    seed = get_last_seed()
+    return jsonify({"seed": str(seed) if seed is not None else None})
 
 
 def _parse_denoise(data):
@@ -906,6 +926,25 @@ def _parse_steps(data):
     except (ValueError, TypeError):
         return None, (jsonify({"error": "steps must be a positive integer"}), 400)
     return steps, None
+
+
+def _parse_seed(data):
+    """Extract and validate an optional reuse-seed from a request dict.
+
+    Returns (seed_int_or_None, None) on success, or (None, error_response) on
+    failure. None means "no pinned seed — randomize as usual". Set by the client's
+    /getseed command to reproduce the previous generation's seed.
+    """
+    seed = data.get("seed")
+    if seed is None:
+        return None, None
+    try:
+        seed = int(seed)
+        if not (0 <= seed < 2**64):
+            raise ValueError
+    except (ValueError, TypeError):
+        return None, (jsonify({"error": "seed must be an integer in [0, 2**64)"}), 400)
+    return seed, None
 
 
 def _parse_video_settings(data):
@@ -1171,6 +1210,10 @@ def api_image2video():
     if err:
         return err
 
+    seed, err = _parse_seed(data)
+    if err:
+        return err
+
     err = output_storage_error()
     if err:
         return err
@@ -1182,7 +1225,7 @@ def api_image2video():
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
         input_last_frame=last_frame_path, input_reference=ref_image_path,
-        steps=steps,
+        steps=steps, seed=seed, track_seed=True,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
     )
@@ -1234,6 +1277,10 @@ def api_text2video():
     if err:
         return err
 
+    seed, err = _parse_seed(data)
+    if err:
+        return err
+
     err = output_storage_error()
     if err:
         return err
@@ -1241,7 +1288,7 @@ def api_text2video():
     job_id = start_generation_job(
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_TEXT2VIDEO_DIR, input_reference=ref_image_path,
-        steps=steps,
+        steps=steps, seed=seed, track_seed=True,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
     )
