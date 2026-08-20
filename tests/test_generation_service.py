@@ -454,6 +454,8 @@ class ReferenceImageMappingTests(unittest.TestCase):
         captured = {}
         server = MagicMock()
         server.upload_image.side_effect = lambda p: f"up_{Path(p).name}"
+        # References upload via upload_media (images/video/audio-agnostic).
+        server.upload_media.side_effect = lambda p: f"up_{Path(p).name}"
 
         def _submit(workflow):
             captured["workflow"] = workflow
@@ -479,8 +481,9 @@ class ReferenceImageMappingTests(unittest.TestCase):
             wf, server = self._run_and_capture(tmp, Path("/src/face.png"))
             self.assertEqual(wf["1"]["inputs"]["image"], "up_first.png")
             self.assertEqual(wf["2"]["inputs"]["image"], "up_face.png")
-            uploaded = {c.args[0].name for c in server.upload_image.call_args_list}
-            self.assertEqual(uploaded, {"first.png", "face.png"})
+            # The source image uploads via upload_image; the reference via upload_media.
+            self.assertEqual({c.args[0].name for c in server.upload_image.call_args_list}, {"first.png"})
+            self.assertEqual({c.args[0].name for c in server.upload_media.call_args_list}, {"face.png"})
 
     def test_reference_falls_back_to_input_image_without_reupload(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -488,8 +491,10 @@ class ReferenceImageMappingTests(unittest.TestCase):
             # Reference reuses the first frame's uploaded filename...
             self.assertEqual(wf["1"]["inputs"]["image"], "up_first.png")
             self.assertEqual(wf["2"]["inputs"]["image"], "up_first.png")
-            # ...and the source image is uploaded exactly once (no second upload).
+            # ...and the source image is uploaded exactly once (no second upload, and
+            # the fallback path never touches upload_media).
             self.assertEqual(server.upload_image.call_count, 1)
+            server.upload_media.assert_not_called()
 
     def test_reference_without_any_input_image_fails_clearly(self):
         """A text2video run has no first frame to fall back on. Rather than
@@ -518,6 +523,95 @@ class ReferenceImageMappingTests(unittest.TestCase):
                     )
             self.assertIn("REFERENCE_IMAGE", str(ctx.exception))
             server.submit_workflow.assert_not_called()
+
+    def test_minimax_slots_fill_supplied_and_strip_missing(self):
+        """A MiniMax-style template: image 1 + image 2 supplied, image 3 / video /
+        audio absent. Supplied slots upload via upload_media; the absent slots'
+        loader nodes are stripped and their consumer inputs dropped."""
+        from ComfyServer import JobCancelled
+
+        template = json.dumps({
+            "img1": {"inputs": {"image": "<REFERENCE_IMAGE_1>"}, "class_type": "LoadImage"},
+            "img2": {"inputs": {"image": "<REFERENCE_IMAGE_2>"}, "class_type": "LoadImage"},
+            "img3": {"inputs": {"image": "<REFERENCE_IMAGE_3>"}, "class_type": "LoadImage"},
+            "vid":  {"inputs": {"video": "<REFERENCE_VIDEO>"}, "class_type": "LoadVideo"},
+            "aud":  {"inputs": {"audio": "<REFERENCE_AUDIO>"}, "class_type": "LoadAudio"},
+            "mm":   {"inputs": {
+                "image_1": ["img1", 0], "image_2": ["img2", 0], "image_3": ["img3", 0],
+                "ref_video": ["vid", 0], "ref_audio": ["aud", 0], "prompt": "<PROMPT>",
+            }, "class_type": "MiniMaxH3"},
+        })
+        captured = {}
+        server = MagicMock()
+        server.upload_media.side_effect = lambda p: f"up_{Path(p).name}"
+
+        def _submit(workflow):
+            captured["workflow"] = workflow
+            raise JobCancelled()
+        server.submit_workflow.side_effect = _submit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "wf.json").write_text(template)
+            job_id = self._make_job()
+            job = gs.jobs[job_id]
+            with patch.object(gs, "ComfyServer", return_value=server):
+                with self.assertRaises(JobCancelled):
+                    gs._run_generation_core(
+                        job_id, job["channel"], job["cancel"], "p", [],
+                        "http://s", "linux", "wf", workflow_dir=Path(tmp),
+                        input_reference_images=[Path("/src/a.png"), Path("/src/b.png"), None],
+                        duration=2, frames=48, fps=24,
+                        video_width=1280, video_height=720,
+                    )
+        wf = captured["workflow"]
+        # Supplied images 1 & 2 uploaded and wired; missing loaders stripped.
+        self.assertEqual(wf["img1"]["inputs"]["image"], "up_a.png")
+        self.assertEqual(wf["img2"]["inputs"]["image"], "up_b.png")
+        for gone in ("img3", "vid", "aud"):
+            self.assertNotIn(gone, wf)
+        # The consumer keeps its filled inputs and drops the unconnected optionals.
+        mm_inputs = wf["mm"]["inputs"]
+        self.assertEqual(mm_inputs["image_1"], ["img1", 0])
+        self.assertEqual(mm_inputs["image_2"], ["img2", 0])
+        for gone_key in ("image_3", "ref_video", "ref_audio"):
+            self.assertNotIn(gone_key, mm_inputs)
+
+    def test_reference_image_1_optional_stripped_without_input_image(self):
+        """Unlike <REFERENCE_IMAGE>, <REFERENCE_IMAGE_1> has no INPUT_IMAGE fallback —
+        a MiniMax R2V run (no first frame) with no image-1 reference strips the slot
+        rather than failing, so the graph can run on any subset of references."""
+        from ComfyServer import JobCancelled
+
+        template = json.dumps({
+            "img1": {"inputs": {"image": "<REFERENCE_IMAGE_1>"}, "class_type": "LoadImage"},
+            "mm":   {"inputs": {"image_1": ["img1", 0], "prompt": "<PROMPT>"},
+                     "class_type": "MiniMaxH3"},
+        })
+        captured = {}
+        server = MagicMock()
+
+        def _submit(workflow):
+            captured["workflow"] = workflow
+            raise JobCancelled()
+        server.submit_workflow.side_effect = _submit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "wf.json").write_text(template)
+            job_id = self._make_job()
+            job = gs.jobs[job_id]
+            with patch.object(gs, "ComfyServer", return_value=server):
+                with self.assertRaises(JobCancelled):
+                    gs._run_generation_core(
+                        job_id, job["channel"], job["cancel"], "p", [],
+                        "http://s", "linux", "wf", workflow_dir=Path(tmp),
+                        input_image=None, input_reference_images=[None, None, None],
+                        duration=2, frames=48, fps=24,
+                        video_width=1280, video_height=720,
+                    )
+        wf = captured["workflow"]
+        self.assertNotIn("img1", wf)
+        self.assertNotIn("image_1", wf["mm"]["inputs"])
+        server.upload_media.assert_not_called()
 
 
 if __name__ == "__main__":

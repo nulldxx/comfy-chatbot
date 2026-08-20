@@ -2,8 +2,9 @@ import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement,
   buildVideoPrompt, isVideoUrl, fmtDuration, clampVideo, recomputeVideo,
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
+  COMFY_URL_DND_TYPE,
 } from './utils.js';
-import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS } from './state.js';
+import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
@@ -33,6 +34,191 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
     });
     scrollBottom();
   }).catch(() => { bubble.innerHTML = `<span style="color:#f87171">Failed to load ${failLabel}.</span>`; });
+}
+
+// ---------------------------------------------------------------------------
+// /references — reference-asset table (images/video/audio drop targets)
+// ---------------------------------------------------------------------------
+
+// Slots in display order. `key`/`index` locate the value in state.references;
+// `kind` gates which media type each row accepts (drop + upload).
+const REFERENCE_SLOTS = [
+  { key: 'images', index: 0, kind: 'image', label: 'Image 1',
+    note: 'LTX identity ref · MiniMax image 1' },
+  { key: 'images', index: 1, kind: 'image', label: 'Image 2', note: 'MiniMax image 2' },
+  { key: 'images', index: 2, kind: 'image', label: 'Image 3', note: 'MiniMax image 3' },
+  { key: 'video',      kind: 'video', label: 'Reference video',        note: 'MiniMax R2V' },
+  { key: 'videoAudio', kind: 'audio', label: 'Reference audio (video)', note: 'audio for the reference video' },
+  { key: 'audio',      kind: 'audio', label: 'Reference audio (extra)', note: 'further reference audio' },
+];
+
+function refSlotGet(slot) {
+  const r = state.references || (state.references = newReferences());
+  return slot.index !== undefined ? (r.images[slot.index] || null) : (r[slot.key] || null);
+}
+
+function refSlotSet(slot, url) {
+  const r = state.references || (state.references = newReferences());
+  if (slot.index !== undefined) r.images[slot.index] = url;
+  else r[slot.key] = url;
+}
+
+function renderReferencesTable() {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
+
+  REFERENCE_SLOTS.forEach(slot => wrap.appendChild(buildReferenceRow(slot)));
+
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:2px';
+  hint.innerHTML = 'Drag a chat image/video onto a row, or drop a file from your desktop (click a row to browse). ' +
+    'Images can also come from the chat; audio must be uploaded. Only <strong>Image 1</strong> is used by LTX face-ID.';
+  wrap.appendChild(hint);
+
+  const bubble = addMessage('bot', '<strong>References</strong> <span style="color:#475569">(image2video / text2video)</span>')
+    .parentElement.querySelector('.bubble');
+  bubble.appendChild(wrap);
+  scrollBottom();
+}
+
+function buildReferenceRow(slot) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:0.85rem;color:#cbd5e1';
+
+  const labelBox = document.createElement('div');
+  labelBox.style.cssText = 'min-width:150px;display:flex;flex-direction:column;line-height:1.2';
+  labelBox.innerHTML = `<span style="color:#94a3b8">${escapeHtml(slot.label)}</span>` +
+    `<span style="color:#475569;font-size:0.72rem">${escapeHtml(slot.note)}</span>`;
+
+  const zone = document.createElement('div');
+  zone.style.cssText = 'flex:1;min-height:52px;border:1px dashed #334155;border-radius:6px;' +
+    'display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;background:#0f172a;transition:border-color .15s';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = slot.kind + '/*';
+  fileInput.style.display = 'none';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'sel-btn';
+  clearBtn.textContent = '✕';
+  clearBtn.title = 'Clear this reference';
+  clearBtn.style.cssText = 'flex:none;width:28px;padding:2px 0;font-size:0.9rem;line-height:1;color:#94a3b8';
+
+  function flashError(msg) {
+    const prev = zone.style.borderColor;
+    zone.style.borderColor = '#f87171';
+    zone.dataset.msg = msg;
+    render();
+    setTimeout(() => { zone.style.borderColor = prev; delete zone.dataset.msg; render(); }, 2500);
+  }
+
+  function render() {
+    const url = refSlotGet(slot);
+    zone.innerHTML = '';
+    if (zone.dataset.msg) {
+      const err = document.createElement('span');
+      err.style.cssText = 'color:#f87171;font-size:0.78rem';
+      err.textContent = '⚠ ' + zone.dataset.msg;
+      zone.appendChild(err);
+      clearBtn.style.visibility = url ? 'visible' : 'hidden';
+      return;
+    }
+    if (!url) {
+      const ph = document.createElement('span');
+      ph.style.cssText = 'color:#475569;font-size:0.78rem';
+      ph.textContent = `Drop ${slot.kind} here…`;
+      zone.appendChild(ph);
+      clearBtn.style.visibility = 'hidden';
+      return;
+    }
+    zone.appendChild(referencePreview(slot.kind, url));
+    clearBtn.style.visibility = 'visible';
+  }
+
+  function acceptFile(file) {
+    if (!file) return;
+    const type = file.type || '';
+    if (!type.startsWith(slot.kind + '/')) { flashError(`Expected a ${slot.kind} file`); return; }
+    uploadReferenceFile(slot, file, render, flashError);
+  }
+
+  zone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => { acceptFile(e.target.files[0]); e.target.value = ''; });
+
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = '#f472b6'; });
+  zone.addEventListener('dragleave', () => { zone.style.borderColor = '#334155'; });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.style.borderColor = '#334155';
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length) { acceptFile(files[0]); return; }
+    const inAppUrl = e.dataTransfer.getData(COMFY_URL_DND_TYPE);
+    if (!inAppUrl) return;
+    const isVid = isVideoUrl(inAppUrl);
+    if (slot.kind === 'image' && !isVid) { refSlotSet(slot, inAppUrl); render(); }
+    else if (slot.kind === 'video' && isVid) { refSlotSet(slot, inAppUrl); render(); }
+    else flashError(slot.kind === 'audio' ? 'Audio must be uploaded from a file' : `That isn't a ${slot.kind}`);
+  });
+
+  clearBtn.addEventListener('click', e => { e.stopPropagation(); refSlotSet(slot, null); render(); });
+
+  row.appendChild(labelBox);
+  row.appendChild(zone);
+  row.appendChild(clearBtn);
+  row.appendChild(fileInput);
+  render();
+  return row;
+}
+
+function referencePreview(kind, url) {
+  if (kind === 'image') {
+    const img = document.createElement('img');
+    img.src = url;
+    img.style.cssText = 'max-width:56px;max-height:56px;border-radius:4px';
+    return img;
+  }
+  if (kind === 'video') {
+    const vid = document.createElement('video');
+    vid.src = url;
+    vid.muted = true;
+    vid.preload = 'metadata';
+    vid.style.cssText = 'max-width:80px;max-height:56px;border-radius:4px';
+    return vid;
+  }
+  // audio — a small chip with the filename and a player
+  const chip = document.createElement('div');
+  chip.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0';
+  const name = document.createElement('span');
+  name.style.cssText = 'color:#94a3b8;font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px';
+  name.textContent = '🎵 ' + decodeURIComponent(url.split('/').pop());
+  const audio = document.createElement('audio');
+  audio.src = url;
+  audio.controls = true;
+  audio.style.cssText = 'height:30px;max-width:180px';
+  chip.appendChild(name);
+  chip.appendChild(audio);
+  return chip;
+}
+
+function uploadReferenceFile(slot, file, onDone, onError) {
+  const fd = new FormData();
+  fd.append('file', file);
+  let endpoint;
+  if (slot.kind === 'image') {
+    endpoint = '/api/import-image';        // images become reusable gallery media
+  } else {
+    fd.append('kind', slot.kind);
+    endpoint = '/api/upload-reference';    // video/audio → persistent reference store
+  }
+  fetch(endpoint, { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      refSlotSet(slot, data.url);
+      onDone();
+    })
+    .catch(err => onError(err.message || 'Upload failed'));
 }
 
 function showChatSummary() {
@@ -614,7 +800,7 @@ export function makeCommandHandler(deps) {
     state.image2imageOverridePrompt = null;
     state.image2videoReplacements = [];
     state.image2videoOverridePrompt = null;
-    state.refImageUrl = null;
+    state.references = newReferences();
     state.faceDetailReplacements = [];
     state.faceSuperN = 1;
     state.autoFaceDetail = false;
@@ -824,6 +1010,7 @@ export function makeCommandHandler(deps) {
       { label: 'Iterations per prompt',               cmd: '/iterations',            mode: 'insert' },
       { label: 'Add-prompt (append to every gen)',    cmd: '/generation-add-prompt', mode: 'insert' },
       { label: 'Text-to-video mode (toggle)',         cmd: '/t2v',                   mode: 'run'    },
+      { label: 'References (images/video/audio)',     cmd: '/references',            mode: 'run'    },
     ]},
     { group: 'Workflows & server', items: [
       { label: 'Workflows (all types)',               cmd: '/workflows',             mode: 'run'    },
@@ -1291,22 +1478,9 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/i2v-set-ref-image') {
+    if (cmd === '/references') {
       addMessage('user', escapeHtml(raw), raw);
-      if (!state.sessionImages.length) {
-        addMessage('bot', 'No image in this chat yet to use as a reference. Generate or load one first, then run <code>/i2v-set-ref-image</code>.');
-        return;
-      }
-      const url = state.sessionImages[state.sessionImages.length - 1];
-      state.refImageUrl = url;
-      addMessage('bot', `Reference image set to the last image. It will be used as the identity reference for face-preserving image2video (the LTX face-ID workflows) until cleared with <code>/i2v-set-ref-image-reset</code>.`);
-      return;
-    }
-
-    if (cmd === '/i2v-set-ref-image-reset') {
-      addMessage('user', escapeHtml(raw), raw);
-      state.refImageUrl = null;
-      addMessage('bot', 'Reference image cleared. Face-ID image2video will use the image you run it on (its first frame, for the first/last-frame workflow).');
+      renderReferencesTable();
       return;
     }
 
@@ -1814,8 +1988,7 @@ export function makeCommandHandler(deps) {
         { sig: '/i2v-replacement-reset', desc: 'clear all image2video replacements' },
         { sig: '/i2v-set-prompt <prompt>', desc: 'override prompt used by <code>/i2v</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
         { sig: '/i2v-set-prompt-reset', desc: 'clear the override prompt' },
-        { sig: '/i2v-set-ref-image', desc: 'pin the last image as the identity reference for face-preserving image2video (the LTX face-ID workflows); no arg needed' },
-        { sig: '/i2v-set-ref-image-reset', desc: 'clear the pinned reference; face-ID image2video then uses the image you run it on' },
+        { sig: '/references', desc: 'open the reference-asset table — drag chat images/videos or drop desktop image/video/audio files into the slots', notes: 'up to 3 reference images + 1 reference video + 2 reference audio clips (MiniMax H3 R2V); LTX face-ID uses only Image&nbsp;1 &nbsp;·&nbsp; images can be chat media or uploads, audio must be uploaded &nbsp;·&nbsp; persists with the chat session and the <code>/settings-save</code> stack' },
         { sig: '/i2v-workflow [name]', desc: 'choose which image2video workflow <code>/i2v</code> uses (no arg = picker)' },
         { sig: '/i2v-workflow-reset', desc: 'reset the image2video workflow to its default' },
         { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },
@@ -2526,6 +2699,7 @@ export function makeCommandHandler(deps) {
         image2imageOverridePrompt: state.image2imageOverridePrompt,
         image2videoReplacements:   state.image2videoReplacements.slice(),
         image2videoOverridePrompt: state.image2videoOverridePrompt,
+        references:                cloneReferences(state.references),
         faceDetailReplacements:    state.faceDetailReplacements.slice(),
         faceSuperN:                state.faceSuperN,
         autoFaceDetail:            state.autoFaceDetail,
@@ -2567,6 +2741,9 @@ export function makeCommandHandler(deps) {
       state.image2imageOverridePrompt   = s.image2imageOverridePrompt;
       state.image2videoReplacements     = s.image2videoReplacements;
       state.image2videoOverridePrompt   = s.image2videoOverridePrompt;
+      // Guarded: snapshots pushed before /references existed have no key — leave the
+      // current references untouched rather than clobbering them to empty.
+      if (s.references !== undefined) state.references = cloneReferences(s.references);
       state.faceDetailReplacements      = s.faceDetailReplacements;
       if (s.faceSuperN !== undefined) state.faceSuperN = s.faceSuperN;
       state.autoFaceDetail              = s.autoFaceDetail;

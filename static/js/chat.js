@@ -1,9 +1,9 @@
 import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
-  buildVideoPrompt, i2vTooltip,
+  buildVideoPrompt, i2vTooltip, COMFY_URL_DND_TYPE,
 } from './utils.js';
-import { state, DEFAULT_DENOISE } from './state.js';
+import { state, DEFAULT_DENOISE, newReferences, cloneReferences } from './state.js';
 import {
   messagesEl, inputEl, sendBtn, slashAcEl,
   scrollBottom, addMessage, createMediaElement,
@@ -771,11 +771,31 @@ function runImage2Video(prompt, image) {
   state.iterationsFromSequence = false;
   sendBtn.disabled = true;
   const lastFrame = (state.lastFrameUrl && state.lastFrameUrl !== image) ? state.lastFrameUrl : null;
-  const refImage = (state.refImageUrl && state.refImageUrl !== image) ? state.refImageUrl : null;
   return runGeneration(prompt, '', null, {
-    image2video: { image, lastFrame, refImage, workflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW },
+    image2video: {
+      image, lastFrame,
+      references: referencesForRun(image),
+      workflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW,
+    },
   })
     .finally(() => { sendBtn.disabled = false; });
+}
+
+// Build the references payload for a video run. Slot 1 keeps the historic behaviour
+// of suppressing a reference that is the triggered image itself (the backend then
+// falls back to the source image); the other slots pass straight through. Returns
+// null when nothing is pinned, so the payload key is omitted entirely.
+function referencesForRun(triggerImage) {
+  const r = state.references || newReferences();
+  const images = (r.images || []).map(u => (u && u !== triggerImage) ? u : null);
+  const out = {
+    images,
+    video: r.video || null,
+    videoAudio: r.videoAudio || null,
+    audio: r.audio || null,
+  };
+  const any = images.some(Boolean) || out.video || out.videoAudio || out.audio;
+  return any ? out : null;
 }
 
 // Text-to-video (/t2v mode): a plain prompt with no source image at all. Unlike
@@ -785,7 +805,7 @@ function runText2Video(prompt, label) {
   state.iterationsFromSequence = false;
   return runGeneration(prompt, label || '', null, {
     text2video: {
-      refImage: state.refImageUrl || null,
+      references: referencesForRun(null),
       workflow: state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW,
     },
   });
@@ -860,6 +880,15 @@ function appendChatImage(container, url) {
   wrap.className = 'img-wrap';
 
   const media = createMediaElement(url, { autoplay: true });
+
+  // Make chat media draggable into the /references table. The custom MIME type is
+  // read by the table's drop targets; the global file-drop overlay only reacts to
+  // the 'Files' type, so an in-app drag never triggers it.
+  media.setAttribute('draggable', 'true');
+  media.addEventListener('dragstart', e => {
+    e.dataTransfer.setData(COMFY_URL_DND_TYPE, url);
+    e.dataTransfer.effectAllowed = 'copy';
+  });
 
   if (isVideoUrl(url)) {
     const del = document.createElement('button');
@@ -1240,7 +1269,7 @@ function doRecordSave() {
         image2imageOverridePrompt: state.image2imageOverridePrompt,
         image2videoReplacements: state.image2videoReplacements.slice(),
         image2videoOverridePrompt: state.image2videoOverridePrompt,
-        refImageUrl: state.refImageUrl,
+        references: cloneReferences(state.references),
         faceDetailReplacements: state.faceDetailReplacements.slice(),
         faceSuperN: state.faceSuperN,
         autoFaceDetail: state.autoFaceDetail,
@@ -1279,7 +1308,7 @@ function restoreSession(data) {
   for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
   for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
   state.lastSequence = null;
-  state.refImageUrl = null;
+  state.references = newReferences();
   state.reuseSeed = null;
   state.fauxFullscreenEls.clear();
   document.body.style.overflow = '';
@@ -1305,7 +1334,9 @@ function restoreSession(data) {
   if (s.image2imageOverridePrompt !== undefined) state.image2imageOverridePrompt = s.image2imageOverridePrompt;
   if (s.image2videoReplacements !== undefined) state.image2videoReplacements = s.image2videoReplacements;
   if (s.image2videoOverridePrompt !== undefined) state.image2videoOverridePrompt = s.image2videoOverridePrompt;
-  if (s.refImageUrl             !== undefined) state.refImageUrl              = s.refImageUrl;
+  // references replaced the old single refImageUrl; fall back to it for old sessions.
+  if (s.references !== undefined) state.references = cloneReferences(s.references);
+  else if (s.refImageUrl) state.references = { ...newReferences(), images: [s.refImageUrl, null, null] };
   if (s.faceDetailReplacements  !== undefined) state.faceDetailReplacements  = s.faceDetailReplacements;
   state.faceSuperN = (s.faceSuperN !== undefined) ? s.faceSuperN : 1;
   if (s.autoFaceDetail          !== undefined) state.autoFaceDetail          = s.autoFaceDetail;
@@ -1898,8 +1929,8 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(image2video || text2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
       ...((image2video || text2video) && state.currentVideoSteps !== null ? { steps: state.currentVideoSteps } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
-      ...(image2video && image2video.refImage ? { ref_image: image2video.refImage } : {}),
-      ...(text2video && text2video.refImage ? { ref_image: text2video.refImage } : {}),
+      ...(image2video && image2video.references ? { references: image2video.references } : {}),
+      ...(text2video && text2video.references ? { references: text2video.references } : {}),
       ...(inpaint ? { denoise: inpaint.denoise != null ? inpaint.denoise : state.currentDenoise.inpaint } : {}),
       ...(preserveMtimeFrom ? { preserve_mtime_from: preserveMtimeFrom } : {}),
       ...(seedToUse != null ? { seed: seedToUse } : {}),

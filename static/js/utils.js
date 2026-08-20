@@ -1,6 +1,11 @@
 // Pure utility functions shared between the browser app and Jest unit tests.
 // No DOM dependencies — every function here is a plain transformation.
 
+// Custom drag-and-drop MIME type carrying a chat media URL when a generated image or
+// video is dragged into the /references table. Distinct from the 'Files' type the
+// global desktop-file drop overlay listens for, so in-app drags never trigger it.
+export const COMFY_URL_DND_TYPE = 'application/x-comfy-url';
+
 export function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')

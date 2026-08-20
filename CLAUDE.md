@@ -290,7 +290,11 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 | `<INPUT_IMAGE>` | Base64-encoded source image for img2img, face-detailer, and inpainting workflows |
 | `<INPUT_MASK>` | Base64-encoded B&W mask PNG for inpainting (white = area to repaint), uploaded separately via `/api/upload-mask` |
 | `<INPUT_LAST_FRAME>` | Source image for the optional end frame in first-frame/last-frame image2video. When no end frame is designated it falls back to `<INPUT_IMAGE>` and the guide is bypassed (see below) |
-| `<REFERENCE_IMAGE>` | Identity reference face for the LTX 2.3 face-ID image2video workflows (`LTXIdentityOverlapConditioning`). Pinned via the `/i2v-set-ref-image` command (sent as `ref_image` to `/api/image2video`); when none is pinned it falls back to `<INPUT_IMAGE>` (see the face-ID section below) |
+| `<REFERENCE_IMAGE>` | Reference image slot 1 **with fallback**: identity reference for the LTX 2.3 face-ID workflows (`LTXIdentityOverlapConditioning`); when unset it falls back to `<INPUT_IMAGE>` (else errors). Set via the `/references` table (see the References section below) |
+| `<REFERENCE_IMAGE_1>` / `<REFERENCE_IMAGE_2>` / `<REFERENCE_IMAGE_3>` | Reference image slots 1/2/3 (MiniMax H3 R2V). Optional — when unset the loader node is stripped and the consumer's input dropped. `<REFERENCE_IMAGE_1>` draws from the same slot 1 as `<REFERENCE_IMAGE>` but **without** the fallback, so an R2V graph (no first frame) can run on any subset of references, or none |
+| `<REFERENCE_VIDEO>` | Reference video (MiniMax H3 R2V). Optional; stripped when unset. A gallery clip or an uploaded `/references-file/` URL |
+| `<REFERENCE_VIDEO_AUDIO>` | Audio paired with `<REFERENCE_VIDEO>` (MiniMax H3 R2V). Optional; stripped when unset. Uploaded `/references-file/` audio |
+| `<REFERENCE_AUDIO>` | Further/standalone reference audio (MiniMax H3 R2V). Optional; stripped when unset. Uploaded `/references-file/` audio |
 
 ### Numeric placeholders (replaced as bare JSON numbers, not quoted strings)
 
@@ -323,9 +327,41 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 - Two LTX 2.3 workflows in `image2video/` preserve a character's identity from a **reference face image** via an `LTXIdentityOverlapConditioning` node (`layout: "overlap"`) plus a FaceID LoRA and a caption-rewriting `TextGenerate` node that reads the reference face and merges its visible appearance into the caption. Both keep the `ref_t2v: ` caption prefix the identity model expects (`"ref_t2v: <PROMPT>"`).
   - **`ltx23-faceid_i2v.json`** — *reference text-to-video*: an **empty** latent (`EmptyLTXVLatentVideo`), so the video content comes entirely from the prompt + the identity reference. **No first frame.** Frames are computed internally (`SimpleCalculatorKJ` = `((duration*fps)//8)*8+1`), so it has **no** `<FRAMES>` slot; it uses `<PROMPT>`, `<REFERENCE_IMAGE>`, `<DURATION>`, `<FPS>`, `<VIDEO_WIDTH>`, `<VIDEO_HEIGHT>`.
   - **`ltx23-faceid-firstlast_i2v.json`** — the same identity graph with the proven first-frame (`LTXVImgToVideoInplace`) + optional last-frame (`LTXVAddGuide` @ `frame_idx = -1`) sub-chain spliced between the empty latent and `LTXVConcatAVLatent`, ahead of the identity node. Adds `<INPUT_IMAGE>`, `<INPUT_LAST_FRAME>`, `<LAST_FRAME_STRENGTH>` to the set above. The optional-end-frame handling is the **existing** `strip_last_frame_guide()` path (no end frame → strength `0.0`, guide chain removed, `LTXVConcatAVLatent` falls back to the first-frame `LTXVImgToVideoInplace` latent).
-- **The `<REFERENCE_IMAGE>` placeholder** is filled in `_run_generation_core` (`generation_service.py`), guarded on `"<REFERENCE_IMAGE>" in template`: a pinned reference (`input_reference`, uploaded) if supplied, else a fallback to the already-uploaded `<INPUT_IMAGE>` filename. So the reference is **override-with-fallback**: for the ref_t2v template the triggered image is the reference by default; for the first/last-frame template the **first frame** is the reference by default.
-- **UI:** `/i2v-set-ref-image` pins the last chat image into `state.refImageUrl` (reset in `newChat`; cleared by `/i2v-set-ref-image-reset`). `runImage2Video` sends it as `ref_image` (only when it differs from the triggered image). Pick either template with `/i2v-workflow`.
+- **The `<REFERENCE_IMAGE>` placeholder** is filled in `_run_generation_core` (`generation_service.py`), guarded on `"<REFERENCE_IMAGE>" in template`: reference image slot 1 (uploaded via `ComfyServer.upload_media`) if supplied, else a fallback to the already-uploaded `<INPUT_IMAGE>` filename. So the reference is **override-with-fallback**: for the ref_t2v template the triggered image is the reference by default; for the first/last-frame template the **first frame** is the reference by default. `<REFERENCE_IMAGE_1>` is an alias for the same slot. See the **References** section below for the full multi-slot scheme.
+- **UI:** `/references` opens a table whose rows are drop targets (image 1–3, video, video-audio, extra audio); `runImage2Video`/`runText2Video` send a `references` object to `/api/image2video`/`/api/text2video`. Only **image 1** is used by the LTX face-ID templates (and it's suppressed when it equals the triggered image, so the backend's `<INPUT_IMAGE>` fallback applies). Pick a template with `/i2v-workflow`.
 - **⚠ Experimental composition:** in `ltx23-faceid-firstlast_i2v.json` the last-frame `LTXVAddGuide` and the identity overlap both add/crop guide frames (the graph's `LTXVCropGuides` uses the identity node's conditioning, not the AddGuide's). This combination must be **test-rendered in the ComfyUI editor**; if the last-frame guide isn't cropped cleanly, move the `AddGuide` to operate on the identity node's output latent/conditioning instead of before it, then re-export.
+
+### References (`/references`) detail
+
+`/references` replaced the single-slot `/i2v-set-ref-image` with a table of reference
+assets for video workflows: **3 images + 1 video + 2 audio** (MiniMax H3 R2V), of which
+LTX face-ID uses only image 1.
+
+- **State**: `state.references = { images: [url,url,url], video, videoAudio, audio }`
+  (`state.js`, `newReferences()`/`cloneReferences()`). Persisted with the chat session
+  (`saveSession`/`restoreSession`), the `/settings-save` stack, and reset in `newChat`.
+  An old session's `refImageUrl` is migrated into `images[0]`.
+- **Sources**: image slots hold gallery `/images/` URLs (chat media, or desktop images
+  imported via `/api/import-image`). Video may be a gallery clip or an uploaded
+  `/references-file/` URL; audio is always uploaded. Desktop video/audio go to
+  `POST /api/upload-reference` (multipart `file` + `kind`), stored in the dot-prefixed,
+  **persistent** `REFERENCES_DIR` (`.references/` under `IMAGES_DIR`, kept out of
+  galleries) and served by `GET /references-file/<name>`. Not single-use tokens — a
+  reference is reused across generations.
+- **Drag & drop** (`commands.js` `/references` table, `chat.js`): rows accept desktop
+  files (branch on MIME) and in-app drags of chat media (a custom `application/x-comfy-url`
+  dataTransfer type set by `appendChatImage`, distinct from the global file-drop overlay's
+  `Files` type).
+- **Tags & filling** (`generation_service.py` `_fill_reference` loop): each `<REFERENCE_*>`
+  token is filled only if present in the template, uploaded via `ComfyServer.upload_media`
+  (content-type by extension; ComfyUI's `/upload/image` routes video/audio too). Image 1
+  keeps the `<INPUT_IMAGE>` fallback; the other optional slots, when unset, get a
+  `reference_sentinel()` filename and their loader nodes are removed by
+  `strip_reference_nodes()` (`workflow.py`) after JSON parse — the node is deleted and any
+  consumer input pointing at it is dropped (absent optional input).
+- **The workflow JSON is authored separately** (in `~/comfy-workflows/`); this feature
+  only defines the tags/plumbing. Reference file names are **string** slots (quote them in
+  the template).
 
 ### Video settings detail
 
@@ -355,9 +391,9 @@ never invisible.
   `<INPUT_IMAGE>` — with no source image the mapping key is never set, and the unfilled-
   placeholder check in `_run_generation_core` would fail the job with
   `Unfilled workflow placeholders: <INPUT_IMAGE>`.
-- **`<REFERENCE_IMAGE>`** still works (pin one with `/i2v-set-ref-image`) for identity-
+- **`<REFERENCE_IMAGE>`** still works (set one via `/references`) for identity-
   preserving models such as the LTX 2.3 `ref_t2v` graph. There is no first frame to fall
-  back on here, so `_run_generation_core` now raises a clear "needs a `<REFERENCE_IMAGE>`"
+  back on here, so `_run_generation_core` raises a clear "needs a `<REFERENCE_IMAGE>`"
   error instead of substituting an empty `LoadImage` name.
 - **`/api/text2video`** (`app.py`) is `/api/image2video` minus the image plumbing: no
   `image`, no `last_frame`, prompt required, `workflow_dir=COMFY_TEXT2VIDEO_DIR`. LoRA

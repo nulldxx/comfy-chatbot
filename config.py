@@ -128,6 +128,13 @@ _best_effort_mkdir(MASKS_DIR)
 # galleries; consumed and deleted once the job uploads it to ComfyUI.
 INPAINT_INPUTS_DIR = IMAGES_DIR / '.inpaint-inputs'
 _best_effort_mkdir(INPAINT_INPUTS_DIR)
+# Persistent reference assets (the /references table): desktop-uploaded reference
+# videos and audio clips that aren't gallery media. Kept dot-prefixed so they never
+# surface in review grids/slideshows/bulk-delete, but — unlike masks/inpaint inputs —
+# these are NOT single-use: a reference is reused across many generations and must
+# survive reload, so files here persist with stable /references-file/<name> URLs.
+REFERENCES_DIR = IMAGES_DIR / '.references'
+_best_effort_mkdir(REFERENCES_DIR)
 
 # Archive config — the /archive-* commands copy images into an encrypted volume
 # and then delete the originals (move semantics). The container is unprivileged
@@ -184,6 +191,9 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".webm"}
 # Any output file we'll serve/list/delete — image or video.
 MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
+# Reference audio clips accepted by the /references table (MiniMax H3 R2V). Not
+# gallery media — only ever uploaded to REFERENCES_DIR and fed into a workflow.
+AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac"}
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
 
 # Idle session lock: after this many seconds with no authenticated request and no

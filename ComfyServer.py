@@ -348,21 +348,50 @@ class ComfyServer:
         Raises:
             requests.exceptions.RequestException: On connection/HTTP error
         """
-        image_path = Path(image_path)
+        return self.upload_media(image_path, subfolder=subfolder,
+                                 overwrite=overwrite, content_type="image/png")
+
+    # Map a file extension to the multipart content-type ComfyUI expects. ComfyUI's
+    # /upload/image route accepts images, video and audio and routes by extension into
+    # its input folder, so the same call serves LoadImage / video / LoadAudio nodes.
+    _MEDIA_CONTENT_TYPES = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".webp": "image/webp", ".gif": "image/gif",
+        ".mp4": "video/mp4", ".webm": "video/webm",
+        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac",
+        ".m4a": "audio/mp4", ".ogg": "audio/ogg", ".aac": "audio/aac",
+    }
+
+    def upload_media(self, media_path, subfolder="", overwrite=True, content_type=None):
+        """Upload an image, video or audio file to ComfyUI's input folder.
+
+        Generalises upload_image beyond images so reference video/audio (MiniMax H3
+        R2V) can be fed to LoadAudio / video-loader nodes. The content-type is picked
+        from the file extension unless overridden; the form field stays ``image`` and
+        the route stays /upload/image — ComfyUI routes by extension regardless.
+
+        Returns the name to reference the file by in a loader node (prefixed with the
+        subfolder if the server stored it in one).
+        """
+        media_path = Path(media_path)
+        if content_type is None:
+            content_type = self._MEDIA_CONTENT_TYPES.get(
+                media_path.suffix.lower(), "application/octet-stream"
+            )
         url = f"http://{self.server}/upload/image"
         data = {"overwrite": "true" if overwrite else "false"}
         if subfolder:
             data["subfolder"] = subfolder
         try:
-            with open(image_path, "rb") as f:
-                files = {"image": (image_path.name, f, "image/png")}
-                response = requests.post(url, files=files, data=data, timeout=60)
+            with open(media_path, "rb") as f:
+                files = {"image": (media_path.name, f, content_type)}
+                response = requests.post(url, files=files, data=data, timeout=120)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            raise requests.exceptions.RequestException(f"Error uploading image: {e}")
+            raise requests.exceptions.RequestException(f"Error uploading media: {e}")
 
         result = response.json()
-        name = result.get("name", image_path.name)
+        name = result.get("name", media_path.name)
         sub = result.get("subfolder", "")
         return f"{sub}/{name}" if sub else name
 

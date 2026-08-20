@@ -38,9 +38,9 @@ from config import (
     COMFY_TEXT2VIDEO_DIR, COMFY_TEXT2VIDEO_WORKFLOW, COMFY_UPSCALER_DIR,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     FSCK_TIMEOUT, IDLE_TIMEOUT_SECONDS,
-    IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT, OUTPUT_MARKER,
-    OUTPUT_PASSWORD, OUTPUT_SIZE, OUTPUT_VOLUME, SECRET_KEY, USERNAME,
-    VIDEO_EXTS,
+    AUDIO_EXTS, IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT,
+    OUTPUT_MARKER, OUTPUT_PASSWORD, OUTPUT_SIZE, OUTPUT_VOLUME, REFERENCES_DIR,
+    SECRET_KEY, USERNAME, VIDEO_EXTS,
 )
 from generation_service import (
     TERMINAL_STATUSES,
@@ -51,7 +51,7 @@ from generation_service import (
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
     register_draw_token, register_mask_token,
-    resolve_draw_image, resolve_input_image, resolve_mask,
+    resolve_draw_image, resolve_input_image, resolve_mask, resolve_reference,
     select_images,
 )
 from persistence import (
@@ -610,6 +610,67 @@ def api_import_image():
     return jsonify({"url": f"/images/{filename}"})
 
 
+# Reference assets accepted by kind. Images are imported into the gallery via
+# /api/import-image instead (they're reusable gallery media); this endpoint is for
+# reference VIDEO and AUDIO, which aren't gallery media and live in REFERENCES_DIR.
+_REFERENCE_KIND_EXTS = {
+    "image": IMAGE_EXTS,
+    "video": VIDEO_EXTS,
+    "audio": AUDIO_EXTS,
+}
+
+
+@app.route("/api/upload-reference", methods=["POST"])
+@login_required
+@requires_output_storage
+def api_upload_reference():
+    """Store a desktop-dropped reference video/audio clip in REFERENCES_DIR.
+
+    Powers the /references table's video and audio rows (MiniMax H3 R2V). Unlike the
+    single-use mask/draw tokens, references are persistent and reusable: the file gets
+    a stable /references-file/<name> URL that survives reload and drives many
+    generations. Dot-prefixed REFERENCES_DIR keeps these out of galleries.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+    kind = (request.form.get("kind") or "").strip().lower()
+    allowed = _REFERENCE_KIND_EXTS.get(kind)
+    if allowed is None:
+        return jsonify({"error": "kind must be one of image, video, audio"}), 400
+    ext = Path(f.filename).suffix.lower()
+    if ext not in allowed:
+        return jsonify({"error": f"Unsupported {kind} type '{ext}'"}), 400
+
+    _MAX_REFERENCE_BYTES = 100 * 1024 * 1024  # 100 MB (reference clips can be large)
+    raw = f.read()
+    if not raw:
+        return jsonify({"error": "Empty file"}), 400
+    if len(raw) > _MAX_REFERENCE_BYTES:
+        return jsonify({"error": "Reference too large (100 MB limit)"}), 413
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_ref_{uuid.uuid4().hex[:8]}{ext}"
+    path = REFERENCES_DIR / filename
+    try:
+        path.write_bytes(raw)
+    except OSError as e:
+        return jsonify({"error": f"Could not save file: {e}"}), 500
+    return jsonify({"url": f"/references-file/{filename}"})
+
+
+@app.route("/references-file/<filename>")
+@login_required
+@requires_output_storage
+def serve_reference(filename):
+    """Serve a reference asset from REFERENCES_DIR (see /api/upload-reference)."""
+    response = send_from_directory(str(REFERENCES_DIR), filename)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.route("/api/extract-last-frame", methods=["POST"])
 @login_required
 def api_extract_last_frame():
@@ -1149,6 +1210,50 @@ def api_image2image():
     return jsonify({"job_id": job_id})
 
 
+def _resolve_references(data):
+    """Resolve the /references table payload into start_generation_job kwargs.
+
+    The client sends a ``references`` object: ``images`` (up to 3 gallery image URLs),
+    ``video`` (a gallery video URL or an uploaded /references-file URL), ``videoAudio``
+    and ``audio`` (uploaded /references-file audio URLs). Each is resolved to a local
+    Path with the extension class appropriate to its slot. Missing/empty slots stay
+    None; _run_generation_core fills or strips per the workflow's placeholders.
+
+    Returns (kwargs_dict, None) on success or ({}, error_response) on failure.
+    """
+    refs = data.get("references") or {}
+    kwargs = {
+        "input_reference_images": [None, None, None],
+        "input_reference_video": None,
+        "input_reference_video_audio": None,
+        "input_reference_audio": None,
+    }
+
+    for i, url in enumerate((refs.get("images") or [])[:3]):
+        if not url:
+            continue
+        path, err = resolve_reference(url, IMAGE_EXTS)
+        if err:
+            return {}, err
+        kwargs["input_reference_images"][i] = path
+
+    slot_specs = [
+        ("video", "input_reference_video", VIDEO_EXTS),
+        ("videoAudio", "input_reference_video_audio", AUDIO_EXTS),
+        ("audio", "input_reference_audio", AUDIO_EXTS),
+    ]
+    for key, kw, exts in slot_specs:
+        url = refs.get(key)
+        if not url:
+            continue
+        path, err = resolve_reference(url, exts)
+        if err:
+            return {}, err
+        kwargs[kw] = path
+
+    return kwargs, None
+
+
 @app.route("/api/image2video", methods=["POST"])
 @login_required
 def api_image2video():
@@ -1179,15 +1284,12 @@ def api_image2video():
         if err:
             return err
 
-    # Optional identity reference face for face-preservation workflows (the LTX 2.3
-    # face-ID templates' <REFERENCE_IMAGE>). Pinned via /image2video-set-ref-image;
-    # when absent the reference falls back to the source image (see run_generation).
-    ref_image_url = (data.get("ref_image") or "").strip()
-    ref_image_path = None
-    if ref_image_url:
-        _, ref_image_path, err = resolve_input_image(ref_image_url)
-        if err:
-            return err
+    # Reference assets from the /references table (image slots for the LTX face-ID
+    # <REFERENCE_IMAGE>, plus the MiniMax H3 R2V video/audio slots). See run_generation
+    # for how each is filled or stripped per the workflow's placeholders.
+    ref_kwargs, err = _resolve_references(data)
+    if err:
+        return err
 
     available = list_image2video_workflows()
     workflow_name, err = resolve_workflow(
@@ -1224,10 +1326,11 @@ def api_image2video():
     job_id = start_generation_job(
         prompt, [], server_address, server_os, workflow_name,
         workflow_dir=COMFY_IMAGE2VIDEO_DIR, input_image=image_path,
-        input_last_frame=last_frame_path, input_reference=ref_image_path,
+        input_last_frame=last_frame_path,
         steps=steps, seed=seed, track_seed=True,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
+        **ref_kwargs,
     )
     return jsonify({"job_id": job_id})
 
@@ -1240,9 +1343,9 @@ def api_text2video():
     This is /api/image2video minus the image plumbing. Templates live in the
     text2video/ subdir and carry no <INPUT_IMAGE>, so nothing needs uploading or
     stripping — the video comes from <PROMPT> plus the /video-settings slots.
-    An optional <REFERENCE_IMAGE> is still supported (pinned via /i2v-set-ref-image)
-    for identity-preserving models; there's no first-frame to fall back on here, so
-    a template using it needs a pinned reference.
+    An optional <REFERENCE_IMAGE> is still supported (set via /references) for
+    identity-preserving models; there's no first-frame to fall back on here, so a
+    template using it needs a reference image supplied.
     """
     data = request.get_json(force=True)
     raw_prompt = (data.get("prompt") or "").strip()
@@ -1250,12 +1353,11 @@ def api_text2video():
         return jsonify({"error": "Prompt is required"}), 400
     prompt, _ = parse_loras_from_prompt(raw_prompt)
 
-    ref_image_url = (data.get("ref_image") or "").strip()
-    ref_image_path = None
-    if ref_image_url:
-        _, ref_image_path, err = resolve_input_image(ref_image_url)
-        if err:
-            return err
+    # Reference assets (see api_image2video). A text2video template using
+    # <REFERENCE_IMAGE> has no source image to fall back on, so it needs one supplied.
+    ref_kwargs, err = _resolve_references(data)
+    if err:
+        return err
 
     available = list_text2video_workflows()
     workflow_name, err = resolve_workflow(
@@ -1287,10 +1389,11 @@ def api_text2video():
 
     job_id = start_generation_job(
         prompt, [], server_address, server_os, workflow_name,
-        workflow_dir=COMFY_TEXT2VIDEO_DIR, input_reference=ref_image_path,
+        workflow_dir=COMFY_TEXT2VIDEO_DIR,
         steps=steps, seed=seed, track_seed=True,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
+        **ref_kwargs,
     )
     return jsonify({"job_id": job_id})
 

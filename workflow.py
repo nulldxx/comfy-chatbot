@@ -8,6 +8,17 @@ LORA_NAME_SENTINEL = "__LORA_UNSET__"
 LORA_TAG_RE = re.compile(r'<lora:([^:>\s]+)(?::([0-9.]+))?>', re.IGNORECASE)
 
 
+def reference_sentinel(token):
+    """Sentinel filename substituted for an unfilled optional reference placeholder.
+
+    An unfilled non-LoRA placeholder is a hard error, so a reference slot that the
+    user didn't supply (e.g. <REFERENCE_VIDEO> with no reference video) is filled with
+    this sentinel string so the template parses, then its loader node is removed by
+    strip_reference_nodes. ``token`` is the placeholder name without angle brackets.
+    """
+    return f"__REF_UNSET_{token}__"
+
+
 def apply_placeholders(text, mapping):
     for key, value in mapping.items():
         escaped = json.dumps(str(value))[1:-1]
@@ -95,6 +106,40 @@ def strip_lora_nodes(workflow):
             passthrough[1] = inputs.get("clip")
         del workflow[node_id]
         _rewire_references(workflow, node_id, passthrough)
+    return workflow, removed
+
+
+def strip_reference_nodes(workflow, sentinels):
+    """Remove loader nodes for unfilled optional reference slots and drop consumers.
+
+    ``sentinels`` is the set of sentinel filename strings (see reference_sentinel)
+    substituted for reference placeholders the user didn't supply. Any node holding
+    one of these as an input value is a reference loader with no real file, so we:
+      1. delete that loader node, and
+      2. for every OTHER node whose input connects to the deleted loader, delete that
+         input key entirely — a reference feeds an *optional* input on the consumer
+         (e.g. the MiniMax node's image_2 / ref_video / ref_audio), and the correct
+         ComfyUI semantics for "no file supplied" is an absent optional input, not a
+         passthrough rewire (there is no upstream value to pass through).
+
+    Returns (workflow, removed_ids).
+    """
+    if not sentinels:
+        return workflow, []
+    sentinel_set = set(sentinels)
+    removed = [
+        nid for nid, node in workflow.items()
+        if any(v in sentinel_set for v in node.get("inputs", {}).values()
+               if isinstance(v, str))
+    ]
+    for nid in removed:
+        del workflow[nid]
+    # Drop any connection referencing a removed loader (an optional input goes absent).
+    for node in workflow.values():
+        inputs = node.get("inputs", {})
+        for key in [k for k, v in inputs.items()
+                    if isinstance(v, list) and len(v) == 2 and v[0] in removed]:
+            del inputs[key]
     return workflow, removed
 
 

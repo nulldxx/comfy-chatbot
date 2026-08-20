@@ -7,7 +7,7 @@ from werkzeug.utils import secure_filename
 from flask import jsonify
 
 from config import (
-    IMAGES_DIR, MASKS_DIR, INPAINT_INPUTS_DIR,
+    IMAGES_DIR, MASKS_DIR, INPAINT_INPUTS_DIR, REFERENCES_DIR,
     IMAGE_EXTS, MEDIA_EXTS, OUTPUT_VOLUME, OUTPUT_MARKER,
 )
 
@@ -98,6 +98,39 @@ def resolve_input_image(image_url):
     if not image_path.is_file():
         return None, None, (jsonify({"error": "Source image not found"}), 404)
     return safe, image_path, None
+
+
+def resolve_reference(url, allowed_exts):
+    """Resolve a /references table slot URL to a local Path.
+
+    Accepts either a gallery URL (``/images/<name>``, for chat images/videos pinned
+    as references) or a reference-store URL (``/references-file/<name>``, for
+    desktop-uploaded reference videos/audio). Validates the filename and that its
+    suffix is in ``allowed_exts`` (the caller passes IMAGE_EXTS / VIDEO_EXTS /
+    AUDIO_EXTS per slot type). Generalises resolve_input_image for the multi-media,
+    multi-directory reference case.
+
+    Returns (path, None) on success or (None, error_response) on failure.
+    """
+    url = (url or "").strip()
+    if not url:
+        return None, (jsonify({"error": "Empty reference URL"}), 400)
+    if url.startswith("/references-file/"):
+        base = REFERENCES_DIR
+    elif url.startswith("/images/"):
+        base = IMAGES_DIR
+    else:
+        return None, (jsonify({"error": f"Unrecognised reference URL: {url}"}), 400)
+    filename = url.rsplit("/", 1)[-1]
+    safe = secure_filename(filename)
+    if not safe or safe != filename:
+        return None, (jsonify({"error": "Invalid reference filename"}), 400)
+    if Path(safe).suffix.lower() not in allowed_exts:
+        return None, (jsonify({"error": f"Reference has an unsupported type: {safe}"}), 400)
+    path = base / safe
+    if not path.is_file():
+        return None, (jsonify({"error": "Reference file not found"}), 404)
+    return path, None
 
 
 def select_images(scope, filenames=None):

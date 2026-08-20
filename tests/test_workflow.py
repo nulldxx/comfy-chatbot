@@ -18,6 +18,8 @@ from workflow import (
     randomize_seeds,
     strip_last_frame_guide,
     strip_lora_nodes,
+    strip_reference_nodes,
+    reference_sentinel,
     LORA_NAME_SENTINEL,
 )
 
@@ -114,6 +116,61 @@ class TestStripLoraNodes(unittest.TestCase):
         result, removed = strip_lora_nodes(wf)
         self.assertIn("1", result)
         self.assertEqual(removed, [])
+
+
+class TestStripReferenceNodes(unittest.TestCase):
+    def _workflow_with_unset_refs(self):
+        # A MiniMax-style graph: a video node with three image inputs, a ref video and
+        # a ref audio. Images 2/3, video and audio are unfilled (sentinel loaders).
+        s2 = reference_sentinel("REFERENCE_IMAGE_2")
+        s3 = reference_sentinel("REFERENCE_IMAGE_3")
+        sv = reference_sentinel("REFERENCE_VIDEO")
+        sa = reference_sentinel("REFERENCE_AUDIO")
+        return {
+            "img1": {"class_type": "LoadImage", "inputs": {"image": "real_image.png"}},
+            "img2": {"class_type": "LoadImage", "inputs": {"image": s2}},
+            "img3": {"class_type": "LoadImage", "inputs": {"image": s3}},
+            "vid":  {"class_type": "LoadVideo", "inputs": {"video": sv}},
+            "aud":  {"class_type": "LoadAudio", "inputs": {"audio": sa}},
+            "mm":   {"class_type": "MiniMaxH3", "inputs": {
+                "image_1": ["img1", 0],
+                "image_2": ["img2", 0],
+                "image_3": ["img3", 0],
+                "ref_video": ["vid", 0],
+                "ref_audio": ["aud", 0],
+                "prompt": "hello",
+            }},
+        }, {s2, s3, sv, sa}
+
+    def test_removes_unset_loader_nodes(self):
+        wf, sentinels = self._workflow_with_unset_refs()
+        result, removed = strip_reference_nodes(wf, sentinels)
+        for nid in ("img2", "img3", "vid", "aud"):
+            self.assertNotIn(nid, result)
+        self.assertEqual(set(removed), {"img2", "img3", "vid", "aud"})
+
+    def test_keeps_filled_loader(self):
+        wf, sentinels = self._workflow_with_unset_refs()
+        result, _ = strip_reference_nodes(wf, sentinels)
+        self.assertIn("img1", result)
+
+    def test_drops_consumer_inputs_for_removed(self):
+        wf, sentinels = self._workflow_with_unset_refs()
+        result, _ = strip_reference_nodes(wf, sentinels)
+        mm_inputs = result["mm"]["inputs"]
+        # The optional inputs whose loaders were stripped are gone entirely...
+        for key in ("image_2", "image_3", "ref_video", "ref_audio"):
+            self.assertNotIn(key, mm_inputs)
+        # ...while the filled image and the plain prompt remain.
+        self.assertEqual(mm_inputs["image_1"], ["img1", 0])
+        self.assertEqual(mm_inputs["prompt"], "hello")
+
+    def test_empty_sentinels_no_change(self):
+        wf, _ = self._workflow_with_unset_refs()
+        before = json.loads(json.dumps(wf))
+        result, removed = strip_reference_nodes(wf, set())
+        self.assertEqual(removed, [])
+        self.assertEqual(result, before)
 
 
 class TestStripLastFrameGuide(unittest.TestCase):
