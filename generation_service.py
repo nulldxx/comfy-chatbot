@@ -348,15 +348,17 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
 
         # Reference assets (the /references table). Each token is filled only when the
         # template actually contains it, so unrelated workflows are unaffected.
-        #   <REFERENCE_IMAGE> / <REFERENCE_IMAGE_1>  — image slot 1: the LTX face-ID
-        #       identity reference. Uses the pinned image when supplied, else falls back
-        #       to the triggered source image (its first frame) so those workflows stay
-        #       usable without an explicit reference; a text2video run (no source image)
-        #       with neither raises a clear error.
-        #   <REFERENCE_IMAGE_2/3>, <REFERENCE_VIDEO>, <REFERENCE_VIDEO_AUDIO>,
-        #   <REFERENCE_AUDIO>  — optional MiniMax H3 (R2V) slots: uploaded when supplied,
-        #       else sentinel-filled and their loader nodes stripped after JSON parse
-        #       (an unfilled non-LoRA placeholder is otherwise a hard error).
+        #   <REFERENCE_IMAGE>  — image slot 1 with the LTX face-ID FALLBACK: uses the
+        #       pinned image when supplied, else falls back to the triggered source image
+        #       (its first frame) so those workflows stay usable without an explicit
+        #       reference; a text2video run (no source image) with neither raises a clear
+        #       error. Use this token when the workflow must always have a reference.
+        #   <REFERENCE_IMAGE_1/2/3>, <REFERENCE_VIDEO>, <REFERENCE_VIDEO_AUDIO>,
+        #   <REFERENCE_AUDIO>  — OPTIONAL slots (MiniMax H3 R2V): uploaded when supplied,
+        #       else sentinel-filled and their loader nodes stripped after JSON parse (an
+        #       unfilled non-LoRA placeholder is otherwise a hard error). <REFERENCE_IMAGE_1>
+        #       draws from the same image slot 1 as <REFERENCE_IMAGE> but WITHOUT the
+        #       fallback — so a MiniMax graph can run on any subset of references, or none.
         ref_images = list(input_reference_images or [])
         ref_images += [None] * (3 - len(ref_images))
         if input_reference is not None and ref_images[0] is None:
@@ -390,7 +392,7 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                 ref_sentinels.add(sentinel)
 
         _fill_reference("REFERENCE_IMAGE",   ref_images[0], "reference image", image1=True)
-        _fill_reference("REFERENCE_IMAGE_1", ref_images[0], "reference image", image1=True)
+        _fill_reference("REFERENCE_IMAGE_1", ref_images[0], "reference image 1")
         _fill_reference("REFERENCE_IMAGE_2", ref_images[1], "reference image 2")
         _fill_reference("REFERENCE_IMAGE_3", ref_images[2], "reference image 3")
         _fill_reference("REFERENCE_VIDEO",       input_reference_video,       "reference video")

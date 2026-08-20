@@ -21,8 +21,8 @@ template:
 
 | Placeholder | Meaning | Unfilled |
 |---|---|---|
-| `<REFERENCE_IMAGE>` / `<REFERENCE_IMAGE_1>` | Image slot 1 (LTX identity ref) | fall back to `<INPUT_IMAGE>`, else error |
-| `<REFERENCE_IMAGE_2>` / `<REFERENCE_IMAGE_3>` | MiniMax images 2 & 3 | sentinel + strip loader node |
+| `<REFERENCE_IMAGE>` | Image slot 1 **with fallback** (LTX identity ref) | fall back to `<INPUT_IMAGE>`, else error |
+| `<REFERENCE_IMAGE_1>` / `<REFERENCE_IMAGE_2>` / `<REFERENCE_IMAGE_3>` | MiniMax images 1/2/3 (slot 1 = same source as `<REFERENCE_IMAGE>`, no fallback) | sentinel + strip loader node |
 | `<REFERENCE_VIDEO>` | Reference video | sentinel + strip |
 | `<REFERENCE_VIDEO_AUDIO>` | Audio paired with the video | sentinel + strip |
 | `<REFERENCE_AUDIO>` | Further reference audio | sentinel + strip |

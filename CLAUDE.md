@@ -290,8 +290,8 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 | `<INPUT_IMAGE>` | Base64-encoded source image for img2img, face-detailer, and inpainting workflows |
 | `<INPUT_MASK>` | Base64-encoded B&W mask PNG for inpainting (white = area to repaint), uploaded separately via `/api/upload-mask` |
 | `<INPUT_LAST_FRAME>` | Source image for the optional end frame in first-frame/last-frame image2video. When no end frame is designated it falls back to `<INPUT_IMAGE>` and the guide is bypassed (see below) |
-| `<REFERENCE_IMAGE>` / `<REFERENCE_IMAGE_1>` | Reference image slot 1 (aliases). Identity reference face for the LTX 2.3 face-ID workflows (`LTXIdentityOverlapConditioning`); when unset it falls back to `<INPUT_IMAGE>`. Set via the `/references` table (see the References section below) |
-| `<REFERENCE_IMAGE_2>` / `<REFERENCE_IMAGE_3>` | Reference image slots 2 & 3 (MiniMax H3 R2V). Optional — when unset the loader node is stripped and the consumer's input dropped |
+| `<REFERENCE_IMAGE>` | Reference image slot 1 **with fallback**: identity reference for the LTX 2.3 face-ID workflows (`LTXIdentityOverlapConditioning`); when unset it falls back to `<INPUT_IMAGE>` (else errors). Set via the `/references` table (see the References section below) |
+| `<REFERENCE_IMAGE_1>` / `<REFERENCE_IMAGE_2>` / `<REFERENCE_IMAGE_3>` | Reference image slots 1/2/3 (MiniMax H3 R2V). Optional — when unset the loader node is stripped and the consumer's input dropped. `<REFERENCE_IMAGE_1>` draws from the same slot 1 as `<REFERENCE_IMAGE>` but **without** the fallback, so an R2V graph (no first frame) can run on any subset of references, or none |
 | `<REFERENCE_VIDEO>` | Reference video (MiniMax H3 R2V). Optional; stripped when unset. A gallery clip or an uploaded `/references-file/` URL |
 | `<REFERENCE_VIDEO_AUDIO>` | Audio paired with `<REFERENCE_VIDEO>` (MiniMax H3 R2V). Optional; stripped when unset. Uploaded `/references-file/` audio |
 | `<REFERENCE_AUDIO>` | Further/standalone reference audio (MiniMax H3 R2V). Optional; stripped when unset. Uploaded `/references-file/` audio |
