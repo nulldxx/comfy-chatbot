@@ -60,8 +60,16 @@ class _AppFixture(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.images_dir = Path(self.tmp) / "images"
         self.images_dir.mkdir()
+        self.references_dir = self.images_dir / ".references"
+        self.references_dir.mkdir()
         self._patcher_images = patch.object(app_module, "IMAGES_DIR", self.images_dir)
         self._patcher_images.start()
+        self._patcher_refs = patch.object(app_module, "REFERENCES_DIR", self.references_dir)
+        self._patcher_refs.start()
+        self._patcher_refs_store = patch.object(
+            image_store_module, "REFERENCES_DIR", self.references_dir
+        )
+        self._patcher_refs_store.start()
         self._patcher_images_store = patch.object(
             image_store_module, "IMAGES_DIR", self.images_dir
         )
@@ -73,6 +81,8 @@ class _AppFixture(unittest.TestCase):
 
     def tearDown(self):
         self._patcher_images.stop()
+        self._patcher_refs.stop()
+        self._patcher_refs_store.stop()
         self._patcher_images_store.stop()
         self._patcher_pers.stop()
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -374,6 +384,53 @@ class TestImportImage(_AppFixture):
             content_type="multipart/form-data",
         )
         self.assertEqual(resp.status_code, 400)
+
+
+class TestUploadReference(_AppFixture):
+    def test_valid_audio_upload(self):
+        resp = self.client.post(
+            "/api/upload-reference",
+            data={"file": (io.BytesIO(b"ID3\x00"), "clip.mp3"), "kind": "audio"},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("/references-file/", resp.get_json()["url"])
+
+    def test_valid_video_upload(self):
+        resp = self.client.post(
+            "/api/upload-reference",
+            data={"file": (io.BytesIO(b"\x00\x00\x00\x18ftyp"), "clip.mp4"), "kind": "video"},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("/references-file/", resp.get_json()["url"])
+
+    def test_wrong_kind_extension_returns_400(self):
+        resp = self.client.post(
+            "/api/upload-reference",
+            data={"file": (io.BytesIO(b"ID3"), "clip.mp3"), "kind": "video"},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unknown_kind_returns_400(self):
+        resp = self.client.post(
+            "/api/upload-reference",
+            data={"file": (io.BytesIO(b"x"), "clip.mp3"), "kind": "hologram"},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_uploaded_reference_is_served(self):
+        resp = self.client.post(
+            "/api/upload-reference",
+            data={"file": (io.BytesIO(b"ID3\x00data"), "clip.mp3"), "kind": "audio"},
+            content_type="multipart/form-data",
+        )
+        url = resp.get_json()["url"]
+        served = self.client.get(url)
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(served.data, b"ID3\x00data")
 
 
 class TestExtractLastFrame(_AppFixture):
@@ -773,9 +830,12 @@ class TestText2Video(_AppFixture):
         self.assertEqual(kwargs["fps"], 25)
         self.assertEqual(kwargs["video_width"], 1280)
         self.assertEqual(kwargs["video_height"], 720)
-        # No source image is uploaded for a text2video run.
+        # No source image is uploaded for a text2video run, and with no references
+        # the image slots are empty and the media slots None.
         self.assertNotIn("input_image", kwargs)
-        self.assertIsNone(kwargs["input_reference"])
+        self.assertEqual(kwargs["input_reference_images"], [None, None, None])
+        self.assertIsNone(kwargs["input_reference_video"])
+        self.assertIsNone(kwargs["input_reference_audio"])
 
     def test_empty_prompt_returns_400(self):
         resp = self.client.post("/api/text2video", json={"workflow": "t2v"})
@@ -797,20 +857,22 @@ class TestText2Video(_AppFixture):
         self.assertEqual(args[0], "a cat")
         self.assertEqual(args[1], [])  # LoRAs are parsed then discarded, as for i2v
 
-    def test_ref_image_resolved_and_forwarded(self):
+    def test_reference_image_resolved_and_forwarded(self):
         self._make_image("face.png")
         resp = self.client.post(
             "/api/text2video",
-            json={"prompt": "a cat", "workflow": "t2v", "ref_image": "/images/face.png"},
+            json={"prompt": "a cat", "workflow": "t2v",
+                  "references": {"images": ["/images/face.png"]}},
         )
         self.assertEqual(resp.status_code, 200)
         _, kwargs = self._gen.call_args
-        self.assertEqual(Path(kwargs["input_reference"]).name, "face.png")
+        self.assertEqual(Path(kwargs["input_reference_images"][0]).name, "face.png")
 
-    def test_missing_ref_image_returns_404(self):
+    def test_missing_reference_image_returns_404(self):
         resp = self.client.post(
             "/api/text2video",
-            json={"prompt": "a cat", "workflow": "t2v", "ref_image": "/images/nope.png"},
+            json={"prompt": "a cat", "workflow": "t2v",
+                  "references": {"images": ["/images/nope.png"]}},
         )
         self.assertEqual(resp.status_code, 404)
 

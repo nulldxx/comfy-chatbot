@@ -20,6 +20,26 @@ export const VIDEO_RESOLUTION_PRESETS = {
   square:  { width: 1024, height: 1024, label: 'Square (1024×1024)' },
 };
 
+// Fresh, empty reference-slot structure for the /references table. A factory (not a
+// shared const) so newChat / restore each get their own object rather than aliasing.
+export function newReferences() {
+  return { images: [null, null, null], video: null, videoAudio: null, audio: null };
+}
+
+// Deep copy of a references object, tolerant of a partial/legacy shape (missing keys
+// default to empty). Used by session save/restore and the /settings-save stack.
+export function cloneReferences(refs) {
+  const r = refs || {};
+  const images = Array.isArray(r.images) ? r.images.slice(0, 3) : [];
+  while (images.length < 3) images.push(null);
+  return {
+    images,
+    video: r.video || null,
+    videoAudio: r.videoAudio || null,
+    audio: r.audio || null,
+  };
+}
+
 export const state = {
   // Server & workflow selections (null = use backend default)
   currentServer:               null,
@@ -86,9 +106,12 @@ export const state = {
   // Image2video end-frame selection
   lastFrameUrl:                null,
 
-  // Image2video identity reference face (LTX face-ID workflows), pinned via
-  // /image2video-set-ref-image; when null the triggered image is used instead.
-  refImageUrl:                 null,
+  // Reference assets (the /references table). image slot 1 is the LTX face-ID
+  // identity reference (falls back to the triggered image when null); slots 2/3 and
+  // the video/audio slots drive MiniMax H3 (R2V) workflows. Images hold gallery
+  // /images/ URLs; video may be a gallery or /references-file/ URL; audio is always
+  // a /references-file/ URL. See newReferences() for the shape.
+  references:                  newReferences(),
 
   // Active slideshow controller (keyboard navigation target)
   activeSlideshowCtrl:         null,

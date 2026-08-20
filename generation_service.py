@@ -21,6 +21,7 @@ from workflow import (
     strip_lora_nodes, strip_last_frame_guide, randomize_seeds, apply_seed,
     collect_seeds, lora_path_for_os,
     apply_resolution, apply_steps,
+    reference_sentinel, strip_reference_nodes,
 )
 
 # In-memory job tracking. Each job record carries:
@@ -247,6 +248,8 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                          width=None, height=None, steps=None, denoise=None, workflow_dir=None,
                          input_image=None, input_mask=None, input_last_frame=None,
                          input_reference=None,
+                         input_reference_images=None, input_reference_video=None,
+                         input_reference_video_audio=None, input_reference_audio=None,
                          preserve_mtime_from=None,
                          cleanup_input_image=False, duration=None, frames=None, fps=None,
                          video_width=None, video_height=None, retry_event=None,
@@ -343,27 +346,56 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                 except OSError:
                     pass
 
-        # Identity reference image (face-preservation image2video, e.g. the LTX 2.3
-        # face-ID workflows). Uses a pinned reference when one is supplied, else falls
-        # back to the triggered source image (its first frame, for the first/last-frame
-        # variant) so the workflow is usable without /image2video-set-ref-image. Guarded
-        # on the template so other image2video workflows are unaffected; the fallback
-        # reuses the already-uploaded INPUT_IMAGE filename (no second upload).
-        if "<REFERENCE_IMAGE>" in template:
-            if input_reference is not None:
-                send("progress", message="Uploading reference image to ComfyUI...")
-                mapping["REFERENCE_IMAGE"] = server.upload_image(input_reference)
-            else:
-                # No fallback exists for a text2video run (no source image at all),
-                # and an empty LoadImage name fails deep inside ComfyUI with an
-                # opaque error — so say what's actually missing.
+        # Reference assets (the /references table). Each token is filled only when the
+        # template actually contains it, so unrelated workflows are unaffected.
+        #   <REFERENCE_IMAGE> / <REFERENCE_IMAGE_1>  — image slot 1: the LTX face-ID
+        #       identity reference. Uses the pinned image when supplied, else falls back
+        #       to the triggered source image (its first frame) so those workflows stay
+        #       usable without an explicit reference; a text2video run (no source image)
+        #       with neither raises a clear error.
+        #   <REFERENCE_IMAGE_2/3>, <REFERENCE_VIDEO>, <REFERENCE_VIDEO_AUDIO>,
+        #   <REFERENCE_AUDIO>  — optional MiniMax H3 (R2V) slots: uploaded when supplied,
+        #       else sentinel-filled and their loader nodes stripped after JSON parse
+        #       (an unfilled non-LoRA placeholder is otherwise a hard error).
+        ref_images = list(input_reference_images or [])
+        ref_images += [None] * (3 - len(ref_images))
+        if input_reference is not None and ref_images[0] is None:
+            ref_images[0] = input_reference
+
+        ref_sentinels = set()
+        ref_upload_cache = {}
+
+        def _upload_ref(path, label):
+            key = str(path)
+            if key not in ref_upload_cache:
+                send("progress", message=f"Uploading {label} to ComfyUI...")
+                ref_upload_cache[key] = server.upload_media(path)
+            return ref_upload_cache[key]
+
+        def _fill_reference(token, path, label, *, image1=False):
+            if f"<{token}>" not in template:
+                return
+            if path is not None:
+                mapping[token] = _upload_ref(path, label)
+            elif image1:
                 fallback = mapping.get("INPUT_IMAGE")
                 if not fallback:
                     raise ValueError(
-                        "This workflow needs a <REFERENCE_IMAGE> — pin one with "
-                        "/i2v-set-ref-image"
+                        f"This workflow needs a <{token}> — add one with /references"
                     )
-                mapping["REFERENCE_IMAGE"] = fallback
+                mapping[token] = fallback
+            else:
+                sentinel = reference_sentinel(token)
+                mapping[token] = sentinel
+                ref_sentinels.add(sentinel)
+
+        _fill_reference("REFERENCE_IMAGE",   ref_images[0], "reference image", image1=True)
+        _fill_reference("REFERENCE_IMAGE_1", ref_images[0], "reference image", image1=True)
+        _fill_reference("REFERENCE_IMAGE_2", ref_images[1], "reference image 2")
+        _fill_reference("REFERENCE_IMAGE_3", ref_images[2], "reference image 3")
+        _fill_reference("REFERENCE_VIDEO",       input_reference_video,       "reference video")
+        _fill_reference("REFERENCE_VIDEO_AUDIO", input_reference_video_audio, "reference audio")
+        _fill_reference("REFERENCE_AUDIO",       input_reference_audio,       "reference audio")
 
         # First-frame/last-frame conditioning (image2video). The template carries an
         # LTXVAddGuide node (frame_idx=-1) that conditions the model on an end frame.
@@ -408,6 +440,11 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
         if strip_guide:
             strip_last_frame_guide(workflow)
             send("progress", message="Last-frame guide stripped (no end frame)")
+
+        if ref_sentinels:
+            workflow, removed_refs = strip_reference_nodes(workflow, ref_sentinels)
+            if removed_refs:
+                send("progress", message=f"Skipping {len(removed_refs)} unused reference node(s)")
 
         if "nodes" in workflow:
             send("progress", message="Converting UI-format workflow to API format...")

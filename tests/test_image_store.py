@@ -21,14 +21,17 @@ class _PatchedImageStore:
         images_dir = self.tmp / "images"
         masks_dir = images_dir / ".masks"
         inpaint_inputs_dir = images_dir / ".inpaint-inputs"
+        references_dir = images_dir / ".references"
         images_dir.mkdir(parents=True)
         masks_dir.mkdir()
         inpaint_inputs_dir.mkdir()
+        references_dir.mkdir()
 
         for attr, val in [
             ("IMAGES_DIR", images_dir),
             ("MASKS_DIR", masks_dir),
             ("INPAINT_INPUTS_DIR", inpaint_inputs_dir),
+            ("REFERENCES_DIR", references_dir),
         ]:
             p = patch.object(image_store, attr, val)
             p.start()
@@ -294,6 +297,71 @@ class TestOutputStorageError(unittest.TestCase):
             with patch.object(image_store, "OUTPUT_VOLUME", "/host/output.luks"):
                 with app.app_context():
                     self.assertIsNone(image_store.output_storage_error())
+
+
+class TestResolveReference(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_gallery_image_url(self):
+        from config import IMAGE_EXTS
+        with _PatchedImageStore(self.tmp) as (images_dir, _, __):
+            (images_dir / "cat.png").write_bytes(b"\x89PNG")
+            path, err = image_store.resolve_reference("/images/cat.png", IMAGE_EXTS)
+            self.assertIsNone(err)
+            self.assertEqual(path.name, "cat.png")
+
+    def test_reference_audio_url(self):
+        from config import AUDIO_EXTS
+        with _PatchedImageStore(self.tmp):
+            references_dir = image_store.REFERENCES_DIR
+            (references_dir / "clip.mp3").write_bytes(b"ID3")
+            path, err = image_store.resolve_reference("/references-file/clip.mp3", AUDIO_EXTS)
+            self.assertIsNone(err)
+            self.assertEqual(path.name, "clip.mp3")
+
+    def test_wrong_extension_rejected(self):
+        from config import AUDIO_EXTS
+        with _PatchedImageStore(self.tmp) as (images_dir, _, __):
+            from app import app
+            (images_dir / "cat.png").write_bytes(b"\x89PNG")
+            with app.app_context():
+                _, err = image_store.resolve_reference("/images/cat.png", AUDIO_EXTS)
+            _, status = err
+            self.assertEqual(status, 400)
+
+    def test_unknown_url_prefix_rejected(self):
+        from config import IMAGE_EXTS
+        with _PatchedImageStore(self.tmp):
+            from app import app
+            with app.app_context():
+                _, err = image_store.resolve_reference("http://evil/x.png", IMAGE_EXTS)
+            _, status = err
+            self.assertEqual(status, 400)
+
+    def test_unsafe_filename_rejected(self):
+        # secure_filename mutates a name with an embedded separator/space, so the
+        # safe != filename guard rejects it (basename extraction already neutralises
+        # ../ traversal, which would 404 as a missing file rather than reach a parent).
+        from config import IMAGE_EXTS
+        with _PatchedImageStore(self.tmp):
+            from app import app
+            with app.app_context():
+                _, err = image_store.resolve_reference("/images/a b.png", IMAGE_EXTS)
+            _, status = err
+            self.assertEqual(status, 400)
+
+    def test_missing_file_returns_404(self):
+        from config import VIDEO_EXTS
+        with _PatchedImageStore(self.tmp):
+            from app import app
+            with app.app_context():
+                _, err = image_store.resolve_reference("/references-file/nope.mp4", VIDEO_EXTS)
+            _, status = err
+            self.assertEqual(status, 404)
 
 
 if __name__ == "__main__":
