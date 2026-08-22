@@ -831,11 +831,12 @@ class TestText2Video(_AppFixture):
         self.assertEqual(kwargs["video_width"], 1280)
         self.assertEqual(kwargs["video_height"], 720)
         # No source image is uploaded for a text2video run, and with no references
-        # the image slots are empty and the media slots None.
+        # every reference slot is empty (9 images, 3 videos, 3 video-audios, 3 audios).
         self.assertNotIn("input_image", kwargs)
-        self.assertEqual(kwargs["input_reference_images"], [None, None, None])
-        self.assertIsNone(kwargs["input_reference_video"])
-        self.assertIsNone(kwargs["input_reference_audio"])
+        self.assertEqual(kwargs["input_reference_images"], [None] * 9)
+        self.assertEqual(kwargs["input_reference_videos"], [None] * 3)
+        self.assertEqual(kwargs["input_reference_video_audios"], [None] * 3)
+        self.assertEqual(kwargs["input_reference_audios"], [None] * 3)
 
     def test_empty_prompt_returns_400(self):
         resp = self.client.post("/api/text2video", json={"workflow": "t2v"})
@@ -875,6 +876,41 @@ class TestText2Video(_AppFixture):
                   "references": {"images": ["/images/nope.png"]}},
         )
         self.assertEqual(resp.status_code, 404)
+
+    def test_indexed_reference_slots_forwarded(self):
+        for name in ("a.png", "b.png"):
+            self._make_image(name)
+        resp = self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat", "workflow": "t2v",
+                  "references": {"images": [None, "/images/a.png"],  # slot 2 only
+                                 "videos": [], "videoAudios": [], "audios": []}},
+        )
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertIsNone(kwargs["input_reference_images"][0])
+        self.assertEqual(Path(kwargs["input_reference_images"][1]).name, "a.png")
+        self.assertEqual(len(kwargs["input_reference_images"]), 9)
+
+    def test_over_twelve_reference_files_returns_400(self):
+        # 12 valid images is the limit; a 13th file (of any type) over-fills.
+        names = [f"i{n}.png" for n in range(9)]
+        for name in names:
+            self._make_image(name)
+        resp = self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat", "workflow": "t2v",
+                  "references": {
+                      "images": [f"/images/{n}" for n in names],   # 9 images
+                      "videos": ["/references-file/v1.mp4",
+                                 "/references-file/v2.mp4",
+                                 "/references-file/v3.mp4"],        # + 3 videos
+                      "audios": ["/references-file/a1.mp3"],        # + 1 audio = 13
+                  }},
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("12", resp.get_json()["error"])
+        self._gen.assert_not_called()
 
     def test_negative_duration_returns_400(self):
         resp = self.client.post(

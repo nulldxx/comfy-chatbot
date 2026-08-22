@@ -1213,43 +1213,44 @@ def api_image2image():
 def _resolve_references(data):
     """Resolve the /references table payload into start_generation_job kwargs.
 
-    The client sends a ``references`` object: ``images`` (up to 3 gallery image URLs),
-    ``video`` (a gallery video URL or an uploaded /references-file URL), ``videoAudio``
-    and ``audio`` (uploaded /references-file audio URLs). Each is resolved to a local
-    Path with the extension class appropriate to its slot. Missing/empty slots stay
-    None; _run_generation_core fills or strips per the workflow's placeholders.
+    The client sends a ``references`` object with four arrays (MiniMax H3 R2V):
+    ``images`` (up to 9 gallery image URLs), ``videos`` (up to 3 gallery or uploaded
+    /references-file video URLs), ``videoAudios`` and ``audios`` (up to 3 uploaded
+    /references-file audio URLs each). Each URL is resolved to a local Path with the
+    extension class appropriate to its slot. Missing/empty slots stay None;
+    _run_generation_core fills or strips per the workflow's placeholders.
+
+    A hard cap of 12 files in total (across every slot type) is enforced — the MiniMax
+    H3 limit — returning a 400 rather than submitting an over-budget job.
 
     Returns (kwargs_dict, None) on success or ({}, error_response) on failure.
     """
     refs = data.get("references") or {}
-    kwargs = {
-        "input_reference_images": [None, None, None],
-        "input_reference_video": None,
-        "input_reference_video_audio": None,
-        "input_reference_audio": None,
-    }
-
-    for i, url in enumerate((refs.get("images") or [])[:3]):
-        if not url:
-            continue
-        path, err = resolve_reference(url, IMAGE_EXTS)
-        if err:
-            return {}, err
-        kwargs["input_reference_images"][i] = path
-
     slot_specs = [
-        ("video", "input_reference_video", VIDEO_EXTS),
-        ("videoAudio", "input_reference_video_audio", AUDIO_EXTS),
-        ("audio", "input_reference_audio", AUDIO_EXTS),
+        ("images",      "input_reference_images",       IMAGE_EXTS, 9),
+        ("videos",      "input_reference_videos",       VIDEO_EXTS, 3),
+        ("videoAudios", "input_reference_video_audios", AUDIO_EXTS, 3),
+        ("audios",      "input_reference_audios",       AUDIO_EXTS, 3),
     ]
-    for key, kw, exts in slot_specs:
-        url = refs.get(key)
-        if not url:
-            continue
-        path, err = resolve_reference(url, exts)
-        if err:
-            return {}, err
-        kwargs[kw] = path
+
+    total = sum(
+        sum(1 for url in (refs.get(key) or [])[:cap] if url)
+        for key, _, _, cap in slot_specs
+    )
+    if total > 12:
+        return {}, (jsonify({
+            "error": f"Too many reference files ({total}); the limit is 12 in total."
+        }), 400)
+
+    kwargs: dict[str, list] = {kw: [None] * cap for _, kw, _, cap in slot_specs}
+    for key, kw, exts, cap in slot_specs:
+        for i, url in enumerate((refs.get(key) or [])[:cap]):
+            if not url:
+                continue
+            path, err = resolve_reference(url, exts)
+            if err:
+                return {}, err
+            kwargs[kw][i] = path
 
     return kwargs, None
 
@@ -1285,7 +1286,7 @@ def api_image2video():
             return err
 
     # Reference assets from the /references table (image slots for the LTX face-ID
-    # <REFERENCE_IMAGE>, plus the MiniMax H3 R2V video/audio slots). See run_generation
+    # <REFERENCE_IMAGE_1>, plus the MiniMax H3 R2V video/audio slots). See run_generation
     # for how each is filled or stripped per the workflow's placeholders.
     ref_kwargs, err = _resolve_references(data)
     if err:
@@ -1343,7 +1344,7 @@ def api_text2video():
     This is /api/image2video minus the image plumbing. Templates live in the
     text2video/ subdir and carry no <INPUT_IMAGE>, so nothing needs uploading or
     stripping — the video comes from <PROMPT> plus the /video-settings slots.
-    An optional <REFERENCE_IMAGE> is still supported (set via /references) for
+    An optional <REFERENCE_IMAGE_1> is still supported (set via /references) for
     identity-preserving models; there's no first-frame to fall back on here, so a
     template using it needs a reference image supplied.
     """
@@ -1354,7 +1355,7 @@ def api_text2video():
     prompt, _ = parse_loras_from_prompt(raw_prompt)
 
     # Reference assets (see api_image2video). A text2video template using
-    # <REFERENCE_IMAGE> has no source image to fall back on, so it needs one supplied.
+    # <REFERENCE_IMAGE_1> has no source image to fall back on, so it needs one supplied.
     ref_kwargs, err = _resolve_references(data)
     if err:
         return err

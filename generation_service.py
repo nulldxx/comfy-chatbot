@@ -247,9 +247,8 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                          server_address, server_os, workflow_name,
                          width=None, height=None, steps=None, denoise=None, workflow_dir=None,
                          input_image=None, input_mask=None, input_last_frame=None,
-                         input_reference=None,
-                         input_reference_images=None, input_reference_video=None,
-                         input_reference_video_audio=None, input_reference_audio=None,
+                         input_reference_images=None, input_reference_videos=None,
+                         input_reference_video_audios=None, input_reference_audios=None,
                          preserve_mtime_from=None,
                          cleanup_input_image=False, duration=None, frames=None, fps=None,
                          video_width=None, video_height=None, retry_event=None,
@@ -346,23 +345,28 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                 except OSError:
                     pass
 
-        # Reference assets (the /references table). Each token is filled only when the
-        # template actually contains it, so unrelated workflows are unaffected.
-        #   <REFERENCE_IMAGE>  — image slot 1 with the LTX face-ID FALLBACK: uses the
+        # Reference assets (the /references table, MiniMax H3 R2V). Up to 9 images,
+        # 3 videos, 3 video-paired audios and 3 standalone audios — all indexed. Each
+        # token is filled only when the template actually contains it, so unrelated
+        # workflows are unaffected.
+        #   <REFERENCE_IMAGE_1>  — image slot 1 with the LTX face-ID FALLBACK: uses the
         #       pinned image when supplied, else falls back to the triggered source image
         #       (its first frame) so those workflows stay usable without an explicit
         #       reference; a text2video run (no source image) with neither raises a clear
-        #       error. Use this token when the workflow must always have a reference.
-        #   <REFERENCE_IMAGE_1/2/3>, <REFERENCE_VIDEO>, <REFERENCE_VIDEO_AUDIO>,
-        #   <REFERENCE_AUDIO>  — OPTIONAL slots (MiniMax H3 R2V): uploaded when supplied,
-        #       else sentinel-filled and their loader nodes stripped after JSON parse (an
-        #       unfilled non-LoRA placeholder is otherwise a hard error). <REFERENCE_IMAGE_1>
-        #       draws from the same image slot 1 as <REFERENCE_IMAGE> but WITHOUT the
-        #       fallback — so a MiniMax graph can run on any subset of references, or none.
-        ref_images = list(input_reference_images or [])
-        ref_images += [None] * (3 - len(ref_images))
-        if input_reference is not None and ref_images[0] is None:
-            ref_images[0] = input_reference
+        #       error. This is the mandatory primary reference.
+        #   <REFERENCE_IMAGE_2..9>, <REFERENCE_VIDEO_1..3>, <REFERENCE_VIDEO_AUDIO_1..3>,
+        #   <REFERENCE_AUDIO_1..3>  — OPTIONAL slots: uploaded when supplied, else
+        #       sentinel-filled and their loader nodes stripped after JSON parse (an
+        #       unfilled non-LoRA placeholder is otherwise a hard error), so a MiniMax
+        #       graph can run on any subset of references.
+        def _padded(seq, n):
+            out = list(seq or [])
+            return out[:n] + [None] * (n - len(out))
+
+        ref_images = _padded(input_reference_images, 9)
+        ref_videos = _padded(input_reference_videos, 3)
+        ref_video_audios = _padded(input_reference_video_audios, 3)
+        ref_audios = _padded(input_reference_audios, 3)
 
         ref_sentinels = set()
         ref_upload_cache = {}
@@ -391,13 +395,16 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                 mapping[token] = sentinel
                 ref_sentinels.add(sentinel)
 
-        _fill_reference("REFERENCE_IMAGE",   ref_images[0], "reference image", image1=True)
-        _fill_reference("REFERENCE_IMAGE_1", ref_images[0], "reference image 1")
-        _fill_reference("REFERENCE_IMAGE_2", ref_images[1], "reference image 2")
-        _fill_reference("REFERENCE_IMAGE_3", ref_images[2], "reference image 3")
-        _fill_reference("REFERENCE_VIDEO",       input_reference_video,       "reference video")
-        _fill_reference("REFERENCE_VIDEO_AUDIO", input_reference_video_audio, "reference audio")
-        _fill_reference("REFERENCE_AUDIO",       input_reference_audio,       "reference audio")
+        _fill_reference("REFERENCE_IMAGE_1", ref_images[0], "reference image 1", image1=True)
+        for i in range(2, 10):
+            _fill_reference(f"REFERENCE_IMAGE_{i}", ref_images[i - 1], f"reference image {i}")
+        for i in range(1, 4):
+            _fill_reference(f"REFERENCE_VIDEO_{i}", ref_videos[i - 1], f"reference video {i}")
+        for i in range(1, 4):
+            _fill_reference(f"REFERENCE_VIDEO_AUDIO_{i}", ref_video_audios[i - 1],
+                            f"reference video audio {i}")
+        for i in range(1, 4):
+            _fill_reference(f"REFERENCE_AUDIO_{i}", ref_audios[i - 1], f"reference audio {i}")
 
         # First-frame/last-frame conditioning (image2video). The template carries an
         # LTXVAddGuide node (frame_idx=-1) that conditions the model on an end frame.

@@ -20,24 +20,50 @@ export const VIDEO_RESOLUTION_PRESETS = {
   square:  { width: 1024, height: 1024, label: 'Square (1024×1024)' },
 };
 
+// Slot counts for the /references table (MiniMax H3 R2V): 9 images, 3 videos,
+// 3 video-paired audios, 3 standalone audios — capped at 12 files in total.
+export const REFERENCE_SLOT_COUNTS = { images: 9, videos: 3, videoAudios: 3, audios: 3 };
+export const REFERENCE_MAX_FILES = 12;
+
+// Pad/trim an array to exactly n entries, filling with null.
+function padSlots(arr, n) {
+  const a = Array.isArray(arr) ? arr.slice(0, n) : [];
+  while (a.length < n) a.push(null);
+  return a;
+}
+
 // Fresh, empty reference-slot structure for the /references table. A factory (not a
 // shared const) so newChat / restore each get their own object rather than aliasing.
 export function newReferences() {
-  return { images: [null, null, null], video: null, videoAudio: null, audio: null };
+  return {
+    images:      padSlots([], REFERENCE_SLOT_COUNTS.images),
+    videos:      padSlots([], REFERENCE_SLOT_COUNTS.videos),
+    videoAudios: padSlots([], REFERENCE_SLOT_COUNTS.videoAudios),
+    audios:      padSlots([], REFERENCE_SLOT_COUNTS.audios),
+  };
 }
 
 // Deep copy of a references object, tolerant of a partial/legacy shape (missing keys
-// default to empty). Used by session save/restore and the /settings-save stack.
+// default to empty). Migrates the pre-expansion single-value slots (video/videoAudio/
+// audio scalars, 3-image array) into the new indexed arrays. Used by session
+// save/restore and the /settings-save stack.
 export function cloneReferences(refs) {
   const r = refs || {};
-  const images = Array.isArray(r.images) ? r.images.slice(0, 3) : [];
-  while (images.length < 3) images.push(null);
+  // Legacy scalar → single-element array so the old first value lands in slot 0.
+  const legacy = (newArr, scalar) => Array.isArray(newArr) ? newArr : (scalar ? [scalar] : []);
   return {
-    images,
-    video: r.video || null,
-    videoAudio: r.videoAudio || null,
-    audio: r.audio || null,
+    images:      padSlots(r.images, REFERENCE_SLOT_COUNTS.images),
+    videos:      padSlots(legacy(r.videos, r.video), REFERENCE_SLOT_COUNTS.videos),
+    videoAudios: padSlots(legacy(r.videoAudios, r.videoAudio), REFERENCE_SLOT_COUNTS.videoAudios),
+    audios:      padSlots(legacy(r.audios, r.audio), REFERENCE_SLOT_COUNTS.audios),
   };
+}
+
+// Count of non-empty reference files across every slot type (for the 12-file cap).
+export function countReferenceFiles(refs) {
+  const r = refs || {};
+  return Object.keys(REFERENCE_SLOT_COUNTS)
+    .reduce((n, k) => n + (Array.isArray(r[k]) ? r[k].filter(Boolean).length : 0), 0);
 }
 
 export const state = {

@@ -790,11 +790,12 @@ function referencesForRun(triggerImage) {
   const images = (r.images || []).map(u => (u && u !== triggerImage) ? u : null);
   const out = {
     images,
-    video: r.video || null,
-    videoAudio: r.videoAudio || null,
-    audio: r.audio || null,
+    videos:      (r.videos || []).slice(),
+    videoAudios: (r.videoAudios || []).slice(),
+    audios:      (r.audios || []).slice(),
   };
-  const any = images.some(Boolean) || out.video || out.videoAudio || out.audio;
+  const any = images.some(Boolean) || out.videos.some(Boolean)
+    || out.videoAudios.some(Boolean) || out.audios.some(Boolean);
   return any ? out : null;
 }
 
@@ -1336,7 +1337,7 @@ function restoreSession(data) {
   if (s.image2videoOverridePrompt !== undefined) state.image2videoOverridePrompt = s.image2videoOverridePrompt;
   // references replaced the old single refImageUrl; fall back to it for old sessions.
   if (s.references !== undefined) state.references = cloneReferences(s.references);
-  else if (s.refImageUrl) state.references = { ...newReferences(), images: [s.refImageUrl, null, null] };
+  else if (s.refImageUrl) state.references = cloneReferences({ images: [s.refImageUrl] });
   if (s.faceDetailReplacements  !== undefined) state.faceDetailReplacements  = s.faceDetailReplacements;
   state.faceSuperN = (s.faceSuperN !== undefined) ? s.faceSuperN : 1;
   if (s.autoFaceDetail          !== undefined) state.autoFaceDetail          = s.autoFaceDetail;

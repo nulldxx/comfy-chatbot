@@ -4,7 +4,7 @@ import {
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE,
 } from './utils.js';
-import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences } from './state.js';
+import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, countReferenceFiles } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
@@ -40,48 +40,101 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
 // /references — reference-asset table (images/video/audio drop targets)
 // ---------------------------------------------------------------------------
 
-// Slots in display order. `key`/`index` locate the value in state.references;
-// `kind` gates which media type each row accepts (drop + upload).
-const REFERENCE_SLOTS = [
-  { key: 'images', index: 0, kind: 'image', label: 'Image 1',
-    note: 'LTX identity ref · MiniMax image 1' },
-  { key: 'images', index: 1, kind: 'image', label: 'Image 2', note: 'MiniMax image 2' },
-  { key: 'images', index: 2, kind: 'image', label: 'Image 3', note: 'MiniMax image 3' },
-  { key: 'video',      kind: 'video', label: 'Reference video',        note: 'MiniMax R2V' },
-  { key: 'videoAudio', kind: 'audio', label: 'Reference audio (video)', note: 'audio for the reference video' },
-  { key: 'audio',      kind: 'audio', label: 'Reference audio (extra)', note: 'further reference audio' },
-];
+// Slots in display order. `key`/`index` locate the value in the matching
+// state.references array; `kind` gates which media type each row accepts (drop +
+// upload); `group` starts a labelled section. MiniMax H3 R2V: 9 images, 3 videos,
+// 3 video-paired audios, 3 standalone audios — capped at REFERENCE_MAX_FILES total.
+function buildReferenceSlots() {
+  const slots = [];
+  const push = (key, kind, count, labeller, noter, group) => {
+    for (let i = 0; i < count; i++) {
+      slots.push({
+        key, index: i, kind,
+        label: labeller(i),
+        note: noter(i),
+        group: i === 0 ? group : undefined,
+      });
+    }
+  };
+  push('images', 'image', 9,
+    i => `Image ${i + 1}`,
+    i => i === 0 ? 'LTX identity ref · MiniMax image 1' : `MiniMax image ${i + 1}`,
+    'Images (up to 9)');
+  push('videos', 'video', 3,
+    i => `Video ${i + 1}`,
+    () => 'MiniMax R2V reference video',
+    'Videos (up to 3)');
+  push('videoAudios', 'audio', 3,
+    i => `Video audio ${i + 1}`,
+    () => 'audio paired with a reference video',
+    'Video-paired audio (up to 3)');
+  push('audios', 'audio', 3,
+    i => `Audio ${i + 1}`,
+    () => 'standalone reference audio',
+    'Standalone audio (up to 3)');
+  return slots;
+}
+
+const REFERENCE_SLOTS = buildReferenceSlots();
 
 function refSlotGet(slot) {
   const r = state.references || (state.references = newReferences());
-  return slot.index !== undefined ? (r.images[slot.index] || null) : (r[slot.key] || null);
+  const arr = r[slot.key];
+  return (Array.isArray(arr) ? arr[slot.index] : null) || null;
 }
 
 function refSlotSet(slot, url) {
   const r = state.references || (state.references = newReferences());
-  if (slot.index !== undefined) r.images[slot.index] = url;
-  else r[slot.key] = url;
+  if (!Array.isArray(r[slot.key])) r[slot.key] = [];
+  r[slot.key][slot.index] = url;
+}
+
+// Reject a new (non-empty) value that would push the total over the 12-file cap.
+// Replacing an already-filled slot, or clearing one, is always allowed.
+function refSlotWouldExceed(slot, url) {
+  if (!url || refSlotGet(slot)) return false;
+  return countReferenceFiles(state.references) >= REFERENCE_MAX_FILES;
 }
 
 function renderReferencesTable() {
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:6px';
 
-  REFERENCE_SLOTS.forEach(slot => wrap.appendChild(buildReferenceRow(slot)));
+  const counter = document.createElement('div');
+  counter.style.cssText = 'font-size:0.78rem;color:#94a3b8;margin-bottom:2px';
+  const refreshCount = () => {
+    const n = countReferenceFiles(state.references);
+    counter.innerHTML = `<strong style="color:${n >= REFERENCE_MAX_FILES ? '#f472b6' : '#a78bfa'}">${n}</strong>` +
+      ` / ${REFERENCE_MAX_FILES} reference files used`;
+  };
+  wrap.appendChild(counter);
+
+  REFERENCE_SLOTS.forEach(slot => {
+    if (slot.group) {
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'font-size:0.74rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-top:6px';
+      hdr.textContent = slot.group;
+      wrap.appendChild(hdr);
+    }
+    wrap.appendChild(buildReferenceRow(slot, refreshCount));
+  });
 
   const hint = document.createElement('div');
-  hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:2px';
+  hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:6px';
   hint.innerHTML = 'Drag a chat image/video onto a row, or drop a file from your desktop (click a row to browse). ' +
-    'Images can also come from the chat; audio must be uploaded. Only <strong>Image 1</strong> is used by LTX face-ID.';
+    'Images can also come from the chat; audio must be uploaded. Only <strong>Image 1</strong> is used by LTX face-ID ' +
+    `(as the mandatory reference). At most ${REFERENCE_MAX_FILES} files in total.`;
   wrap.appendChild(hint);
 
+  refreshCount();
   const bubble = addMessage('bot', '<strong>References</strong> <span style="color:#475569">(image2video / text2video)</span>')
     .parentElement.querySelector('.bubble');
   bubble.appendChild(wrap);
   scrollBottom();
 }
 
-function buildReferenceRow(slot) {
+function buildReferenceRow(slot, onChange) {
+  const notifyChange = () => { if (onChange) onChange(); };
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:0.85rem;color:#cbd5e1';
 
@@ -136,11 +189,27 @@ function buildReferenceRow(slot) {
     clearBtn.style.visibility = 'visible';
   }
 
+  function setSlot(url) {
+    if (refSlotWouldExceed(slot, url)) {
+      flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
+      return false;
+    }
+    refSlotSet(slot, url);
+    render();
+    notifyChange();
+    return true;
+  }
+
   function acceptFile(file) {
     if (!file) return;
     const type = file.type || '';
     if (!type.startsWith(slot.kind + '/')) { flashError(`Expected a ${slot.kind} file`); return; }
-    uploadReferenceFile(slot, file, render, flashError);
+    // Check the cap before uploading, so we don't push a file to the server we'd reject.
+    if (refSlotWouldExceed(slot, 'pending')) {
+      flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
+      return;
+    }
+    uploadReferenceFile(slot, file, url => setSlot(url), flashError);
   }
 
   zone.addEventListener('click', () => fileInput.click());
@@ -156,12 +225,17 @@ function buildReferenceRow(slot) {
     const inAppUrl = e.dataTransfer.getData(COMFY_URL_DND_TYPE);
     if (!inAppUrl) return;
     const isVid = isVideoUrl(inAppUrl);
-    if (slot.kind === 'image' && !isVid) { refSlotSet(slot, inAppUrl); render(); }
-    else if (slot.kind === 'video' && isVid) { refSlotSet(slot, inAppUrl); render(); }
+    if (slot.kind === 'image' && !isVid) { setSlot(inAppUrl); }
+    else if (slot.kind === 'video' && isVid) { setSlot(inAppUrl); }
     else flashError(slot.kind === 'audio' ? 'Audio must be uploaded from a file' : `That isn't a ${slot.kind}`);
   });
 
-  clearBtn.addEventListener('click', e => { e.stopPropagation(); refSlotSet(slot, null); render(); });
+  clearBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    refSlotSet(slot, null);
+    render();
+    notifyChange();
+  });
 
   row.appendChild(labelBox);
   row.appendChild(zone);
@@ -215,8 +289,7 @@ function uploadReferenceFile(slot, file, onDone, onError) {
     .then(r => r.json())
     .then(data => {
       if (data.error) throw new Error(data.error);
-      refSlotSet(slot, data.url);
-      onDone();
+      onDone(data.url);
     })
     .catch(err => onError(err.message || 'Upload failed'));
 }
@@ -1988,7 +2061,7 @@ export function makeCommandHandler(deps) {
         { sig: '/i2v-replacement-reset', desc: 'clear all image2video replacements' },
         { sig: '/i2v-set-prompt <prompt>', desc: 'override prompt used by <code>/i2v</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
         { sig: '/i2v-set-prompt-reset', desc: 'clear the override prompt' },
-        { sig: '/references', desc: 'open the reference-asset table — drag chat images/videos or drop desktop image/video/audio files into the slots', notes: 'up to 3 reference images + 1 reference video + 2 reference audio clips (MiniMax H3 R2V); LTX face-ID uses only Image&nbsp;1 &nbsp;·&nbsp; images can be chat media or uploads, audio must be uploaded &nbsp;·&nbsp; persists with the chat session and the <code>/settings-save</code> stack' },
+        { sig: '/references', desc: 'open the reference-asset table — drag chat images/videos or drop desktop image/video/audio files into the slots', notes: 'up to 9 reference images + 3 videos + 3 video-paired audios + 3 standalone audios, capped at 12 files in total (MiniMax H3 R2V); LTX face-ID uses only Image&nbsp;1 (its mandatory reference) &nbsp;·&nbsp; images can be chat media or uploads, audio must be uploaded &nbsp;·&nbsp; persists with the chat session and the <code>/settings-save</code> stack' },
         { sig: '/i2v-workflow [name]', desc: 'choose which image2video workflow <code>/i2v</code> uses (no arg = picker)' },
         { sig: '/i2v-workflow-reset', desc: 'reset the image2video workflow to its default' },
         { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },
