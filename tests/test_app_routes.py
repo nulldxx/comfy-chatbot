@@ -421,6 +421,19 @@ class TestUploadReference(_AppFixture):
         )
         self.assertEqual(resp.status_code, 400)
 
+    def test_upload_recreates_missing_references_dir(self):
+        # REFERENCES_DIR lives on the lazily-mounted encrypted output volume: the
+        # import-time mkdir can be shadowed when the volume mounts over IMAGES_DIR,
+        # so the endpoint must recreate it rather than fail with ENOENT.
+        shutil.rmtree(self.references_dir)
+        resp = self.client.post(
+            "/api/upload-reference",
+            data={"file": (io.BytesIO(b"\x00\x00\x00\x18ftyp"), "clip.mp4"), "kind": "video"},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+        self.assertTrue(self.references_dir.exists())
+
     def test_uploaded_reference_is_served(self):
         resp = self.client.post(
             "/api/upload-reference",

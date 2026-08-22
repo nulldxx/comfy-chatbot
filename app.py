@@ -655,6 +655,12 @@ def api_upload_reference():
     filename = f"{timestamp}_ref_{uuid.uuid4().hex[:8]}{ext}"
     path = REFERENCES_DIR / filename
     try:
+        # Created here, not at import: REFERENCES_DIR lives under IMAGES_DIR on the
+        # encrypted output volume, which isn't mounted at process start when the mount
+        # is deferred (see config._best_effort_mkdir). The import-time mkdir either
+        # failed or landed on the pre-mount stand-in dir, and the real volume mounted
+        # over it — so without this every reference upload died with ENOENT.
+        REFERENCES_DIR.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw)
     except OSError as e:
         return jsonify({"error": f"Could not save file: {e}"}), 500
