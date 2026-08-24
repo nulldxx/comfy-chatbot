@@ -788,14 +788,17 @@ function runImage2Video(prompt, image) {
 function referencesForRun(triggerImage) {
   const r = state.references || newReferences();
   const images = (r.images || []).map(u => (u && u !== triggerImage) ? u : null);
-  const out = {
-    images,
-    videos:      (r.videos || []).slice(),
-    videoAudios: (r.videoAudios || []).slice(),
-    audios:      (r.audios || []).slice(),
-  };
-  const any = images.some(Boolean) || out.videos.some(Boolean)
-    || out.videoAudios.some(Boolean) || out.audios.some(Boolean);
+  // A video contributes its video and/or audio track; with both boxes unticked the
+  // clip is inactive, so send null and let the backend strip its loader node.
+  const srcVideos = (r.videos || []).slice();
+  const videoTracks = srcVideos.map((url, i) => {
+    const t = (r.videoTracks || [])[i] || {};
+    return { video: !!(url && t.video), audio: !!(url && t.audio) };
+  });
+  const videos = srcVideos.map(
+    (url, i) => (videoTracks[i].video || videoTracks[i].audio) ? url : null);
+  const out = { images, videos, videoTracks, audios: (r.audios || []).slice() };
+  const any = images.some(Boolean) || videos.some(Boolean) || out.audios.some(Boolean);
   return any ? out : null;
 }
 

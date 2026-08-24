@@ -40,6 +40,7 @@ from config import (
     FSCK_TIMEOUT, IDLE_TIMEOUT_SECONDS,
     AUDIO_EXTS, IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT,
     OUTPUT_MARKER, OUTPUT_PASSWORD, OUTPUT_SIZE, OUTPUT_VOLUME, REFERENCES_DIR,
+    REFERENCE_MAX_FILES,
     SECRET_KEY, USERNAME, VIDEO_EXTS,
 )
 from generation_service import (
@@ -1219,36 +1220,59 @@ def api_image2image():
 def _resolve_references(data):
     """Resolve the /references table payload into start_generation_job kwargs.
 
-    The client sends a ``references`` object with four arrays (MiniMax H3 R2V):
-    ``images`` (up to 9 gallery image URLs), ``videos`` (up to 3 gallery or uploaded
-    /references-file video URLs), ``videoAudios`` and ``audios`` (up to 3 uploaded
-    /references-file audio URLs each). Each URL is resolved to a local Path with the
-    extension class appropriate to its slot. Missing/empty slots stay None;
+    The client sends a ``references`` object (MiniMax H3 R2V): ``images`` (up to 9
+    gallery image URLs), ``videos`` (up to 3 gallery or uploaded /references-file video
+    URLs), ``videoTracks`` (a {video, audio} flag pair per video slot) and ``audios``
+    (up to 3 uploaded /references-file audio URLs). Each URL is resolved to a local Path
+    with the extension class appropriate to its slot; missing/empty slots stay None and
     _run_generation_core fills or strips per the workflow's placeholders.
 
-    A hard cap of 12 files in total (across every slot type) is enforced — the MiniMax
-    H3 limit — returning a 400 rather than submitting an over-budget job.
+    A reference video is ONE file with two tracks, not two files: its URL is resolved
+    once, as a video, and the same Path is written into ``input_reference_videos`` and
+    ``input_reference_video_audios`` according to that slot's flags. Downstream, "the
+    same Path in both" means the clip uploads to ComfyUI once and both tracks are used;
+    one side None means only that track is wanted. A slot with both flags off is
+    inactive and never resolved at all. An absent ``videoTracks`` key (a stale browser
+    tab across a deploy) is read as video-track-only.
+
+    A hard cap of REFERENCE_MAX_FILES files in total is enforced — the MiniMax H3 limit
+    — returning a 400 rather than submitting an over-budget job. A video charges once
+    per track it feeds, so a both-tracks clip costs 2.
 
     Returns (kwargs_dict, None) on success or ({}, error_response) on failure.
     """
     refs = data.get("references") or {}
     slot_specs = [
-        ("images",      "input_reference_images",       IMAGE_EXTS, 9),
-        ("videos",      "input_reference_videos",       VIDEO_EXTS, 3),
-        ("videoAudios", "input_reference_video_audios", AUDIO_EXTS, 3),
-        ("audios",      "input_reference_audios",       AUDIO_EXTS, 3),
+        ("images", "input_reference_images", IMAGE_EXTS, 9),
+        ("audios", "input_reference_audios", AUDIO_EXTS, 3),
     ]
+    videos_in = list((refs.get("videos") or [])[:3])
+    tracks_in = refs.get("videoTracks")
+
+    def _tracks(i, url):
+        """(use_video, use_audio) for video slot i."""
+        if not url:
+            return False, False
+        if not isinstance(tracks_in, list):
+            return True, False                      # pre-checkbox client
+        t = tracks_in[i] if i < len(tracks_in) and isinstance(tracks_in[i], dict) else {}
+        return bool(t.get("video")), bool(t.get("audio"))
 
     total = sum(
         sum(1 for url in (refs.get(key) or [])[:cap] if url)
         for key, _, _, cap in slot_specs
     )
-    if total > 12:
+    total += sum(sum(_tracks(i, url)) for i, url in enumerate(videos_in))
+    if total > REFERENCE_MAX_FILES:
         return {}, (jsonify({
-            "error": f"Too many reference files ({total}); the limit is 12 in total."
+            "error": f"Too many reference files ({total}); "
+                     f"the limit is {REFERENCE_MAX_FILES} in total."
         }), 400)
 
     kwargs: dict[str, list] = {kw: [None] * cap for _, kw, _, cap in slot_specs}
+    kwargs["input_reference_videos"] = [None] * 3
+    kwargs["input_reference_video_audios"] = [None] * 3
+
     for key, kw, exts, cap in slot_specs:
         for i, url in enumerate((refs.get(key) or [])[:cap]):
             if not url:
@@ -1257,6 +1281,18 @@ def _resolve_references(data):
             if err:
                 return {}, err
             kwargs[kw][i] = path
+
+    for i, url in enumerate(videos_in):
+        use_video, use_audio = _tracks(i, url)
+        if not (use_video or use_audio):
+            continue
+        path, err = resolve_reference(url, VIDEO_EXTS)
+        if err:
+            return {}, err
+        if use_video:
+            kwargs["input_reference_videos"][i] = path
+        if use_audio:
+            kwargs["input_reference_video_audios"][i] = path
 
     return kwargs, None
 

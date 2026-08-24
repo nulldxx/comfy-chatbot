@@ -20,6 +20,10 @@ from workflow import (
     strip_lora_nodes,
     strip_reference_nodes,
     reference_sentinel,
+    reference_marker,
+    find_marked_node,
+    drop_node_output_links,
+    node_link_output_indices,
     LORA_NAME_SENTINEL,
 )
 
@@ -171,6 +175,94 @@ class TestStripReferenceNodes(unittest.TestCase):
         result, removed = strip_reference_nodes(wf, set())
         self.assertEqual(removed, [])
         self.assertEqual(result, before)
+
+
+class TestReferenceMarker(unittest.TestCase):
+    def test_distinct_from_sentinel(self):
+        # The two scans (unset-slot sentinels vs. node locators) must never cross-match:
+        # a marked node is a *filled* slot and must survive strip_reference_nodes.
+        self.assertNotEqual(reference_marker("REFERENCE_VIDEO_1"),
+                            reference_sentinel("REFERENCE_VIDEO_1"))
+        wf = {"vid": {"class_type": "LoadVideo",
+                      "inputs": {"video": reference_marker("REFERENCE_VIDEO_1")}}}
+        _, removed = strip_reference_nodes(
+            wf, {reference_sentinel("REFERENCE_VIDEO_1")})
+        self.assertEqual(removed, [])
+        self.assertIn("vid", wf)
+
+    def test_per_token(self):
+        self.assertNotEqual(reference_marker("REFERENCE_VIDEO_1"),
+                            reference_marker("REFERENCE_VIDEO_2"))
+
+    def test_find_marked_node(self):
+        marker = reference_marker("REFERENCE_VIDEO_2")
+        wf = {
+            "a": {"class_type": "LoadVideo", "inputs": {"video": "other.mp4"}},
+            "b": {"class_type": "LoadVideo", "inputs": {"video": marker}},
+        }
+        self.assertEqual(find_marked_node(wf, marker), ("b", "video"))
+
+    def test_find_marked_node_absent(self):
+        wf = {"a": {"class_type": "LoadVideo", "inputs": {"video": "other.mp4"}}}
+        self.assertEqual(find_marked_node(wf, reference_marker("X")), (None, None))
+
+
+class TestDropNodeOutputLinks(unittest.TestCase):
+    def _workflow(self):
+        # One VHS loader driving both an image and an audio consumer input, plus a
+        # second, unrelated loader that must be left completely alone.
+        return {
+            "vid":   {"class_type": "VHS_LoadVideo", "inputs": {"video": "clip.mp4"}},
+            "other": {"class_type": "VHS_LoadVideo", "inputs": {"video": "other.mp4"}},
+            "mm":    {"class_type": "MiniMaxH3", "inputs": {
+                "ref_video":       ["vid", 0],
+                "ref_video_audio": ["vid", 2],
+                "ref_video_2":     ["other", 0],
+                "prompt":          "hello",
+            }},
+        }
+
+    def test_drops_only_named_indices(self):
+        wf = self._workflow()
+        removed = drop_node_output_links(wf, "vid", [2])
+        self.assertEqual(removed, [("mm", "ref_video_audio")])
+        self.assertNotIn("ref_video_audio", wf["mm"]["inputs"])
+        self.assertEqual(wf["mm"]["inputs"]["ref_video"], ["vid", 0])
+
+    def test_producer_survives(self):
+        wf = self._workflow()
+        drop_node_output_links(wf, "vid", [0])
+        # The node still has to load the clip for the track that IS wanted.
+        self.assertIn("vid", wf)
+        self.assertEqual(wf["vid"]["inputs"]["video"], "clip.mp4")
+        self.assertNotIn("ref_video", wf["mm"]["inputs"])
+        self.assertEqual(wf["mm"]["inputs"]["ref_video_audio"], ["vid", 2])
+
+    def test_other_producers_untouched(self):
+        wf = self._workflow()
+        drop_node_output_links(wf, "vid", [0, 2])
+        self.assertEqual(wf["mm"]["inputs"]["ref_video_2"], ["other", 0])
+        self.assertEqual(wf["mm"]["inputs"]["prompt"], "hello")
+
+    def test_empty_indices_no_change(self):
+        wf = self._workflow()
+        before = json.loads(json.dumps(wf))
+        self.assertEqual(drop_node_output_links(wf, "vid", []), [])
+        self.assertEqual(wf, before)
+
+
+class TestNodeLinkOutputIndices(unittest.TestCase):
+    def test_splits_by_consumer_input_name(self):
+        wf = {
+            "vid": {"class_type": "VHS_LoadVideo", "inputs": {"video": "clip.mp4"}},
+            "mm":  {"class_type": "MiniMaxH3", "inputs": {
+                "ref_video": ["vid", 0], "ref_video_AUDIO": ["vid", 3]}},
+        }
+        self.assertEqual(node_link_output_indices(wf, "vid"), ([3], [0]))
+
+    def test_no_consumers(self):
+        wf = {"vid": {"class_type": "VHS_LoadVideo", "inputs": {"video": "clip.mp4"}}}
+        self.assertEqual(node_link_output_indices(wf, "vid"), ([], []))
 
 
 class TestStripLastFrameGuide(unittest.TestCase):

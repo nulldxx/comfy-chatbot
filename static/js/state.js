@@ -21,9 +21,15 @@ export const VIDEO_RESOLUTION_PRESETS = {
 };
 
 // Slot counts for the /references table (MiniMax H3 R2V): 9 images, 3 videos,
-// 3 video-paired audios, 3 standalone audios — capped at 12 files in total.
-export const REFERENCE_SLOT_COUNTS = { images: 9, videos: 3, videoAudios: 3, audios: 3 };
+// 3 standalone audios — capped at 12 files in total. This map is the source of truth
+// for the "array of URL-or-null" slot groups, which is why videoTracks (flags, not
+// files) is deliberately not a member of it.
+export const REFERENCE_SLOT_COUNTS = { images: 9, videos: 3, audios: 3 };
 export const REFERENCE_MAX_FILES = 12;
+
+// A reference video is one clip with two usable tracks (ComfyUI's VHS Load Video node
+// emits IMAGE and AUDIO). A freshly dropped clip feeds both, so it costs 2 of the 12.
+export const REFERENCE_TRACK_DEFAULT = { video: true, audio: true };
 
 // Pad/trim an array to exactly n entries, filling with null.
 function padSlots(arr, n) {
@@ -32,38 +38,77 @@ function padSlots(arr, n) {
   return a;
 }
 
+// Pad/trim the per-video track flags to exactly n entries. An empty slot gets the
+// default (both tracks), which is what a clip dropped into it should start with.
+// A slot holding a clip from a session saved before the checkboxes existed has no
+// flags: it used the parallel videoAudios URL array instead, so a filled entry there
+// becomes the audio track and an absent one leaves audio off — preserving exactly what
+// that session used to send.
+function padTracks(arr, n, legacyAudios, videos) {
+  const src = Array.isArray(arr) ? arr : [];
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = src[i];
+    if (t && typeof t === 'object') {
+      out.push({ video: !!t.video, audio: !!t.audio });
+    } else if (videos && videos[i]) {
+      out.push({ video: true, audio: !!(legacyAudios && legacyAudios[i]) });
+    } else {
+      out.push({ ...REFERENCE_TRACK_DEFAULT });
+    }
+  }
+  return out;
+}
+
 // Fresh, empty reference-slot structure for the /references table. A factory (not a
 // shared const) so newChat / restore each get their own object rather than aliasing.
 export function newReferences() {
   return {
     images:      padSlots([], REFERENCE_SLOT_COUNTS.images),
     videos:      padSlots([], REFERENCE_SLOT_COUNTS.videos),
-    videoAudios: padSlots([], REFERENCE_SLOT_COUNTS.videoAudios),
+    videoTracks: padTracks([], REFERENCE_SLOT_COUNTS.videos),
     audios:      padSlots([], REFERENCE_SLOT_COUNTS.audios),
   };
 }
 
 // Deep copy of a references object, tolerant of a partial/legacy shape (missing keys
 // default to empty). Migrates the pre-expansion single-value slots (video/videoAudio/
-// audio scalars, 3-image array) into the new indexed arrays. Used by session
-// save/restore and the /settings-save stack.
+// audio scalars, 3-image array) into the indexed arrays, and the separate
+// videoAudios upload slots into per-video track flags. Used by session save/restore
+// and the /settings-save stack — which is why none of those call sites needs to know
+// about the shape change.
+//
+// One accepted loss: the old table could pair a video with a *different* audio file.
+// That can't survive the one-clip model, so such an audio is dropped on restore.
 export function cloneReferences(refs) {
   const r = refs || {};
   // Legacy scalar → single-element array so the old first value lands in slot 0.
   const legacy = (newArr, scalar) => Array.isArray(newArr) ? newArr : (scalar ? [scalar] : []);
+  const videos = padSlots(legacy(r.videos, r.video), REFERENCE_SLOT_COUNTS.videos);
   return {
     images:      padSlots(r.images, REFERENCE_SLOT_COUNTS.images),
-    videos:      padSlots(legacy(r.videos, r.video), REFERENCE_SLOT_COUNTS.videos),
-    videoAudios: padSlots(legacy(r.videoAudios, r.videoAudio), REFERENCE_SLOT_COUNTS.videoAudios),
+    videos,
+    videoTracks: padTracks(r.videoTracks, REFERENCE_SLOT_COUNTS.videos,
+                           legacy(r.videoAudios, r.videoAudio), videos),
     audios:      padSlots(legacy(r.audios, r.audio), REFERENCE_SLOT_COUNTS.audios),
   };
 }
 
-// Count of non-empty reference files across every slot type (for the 12-file cap).
+// Files charged against the 12-file cap. Images and standalone audios cost 1 each; a
+// video costs one per track ticked (both = 2, one = 1, neither = 0 — the clip is
+// attached but inactive). Flags on an empty slot cost nothing.
 export function countReferenceFiles(refs) {
   const r = refs || {};
-  return Object.keys(REFERENCE_SLOT_COUNTS)
-    .reduce((n, k) => n + (Array.isArray(r[k]) ? r[k].filter(Boolean).length : 0), 0);
+  return Object.keys(REFERENCE_SLOT_COUNTS).reduce((n, k) => {
+    const arr = Array.isArray(r[k]) ? r[k] : [];
+    if (k !== 'videos') return n + arr.filter(Boolean).length;
+    const tracks = Array.isArray(r.videoTracks) ? r.videoTracks : [];
+    return n + arr.reduce((m, url, i) => {
+      if (!url) return m;
+      const t = tracks[i] || {};
+      return m + (t.video ? 1 : 0) + (t.audio ? 1 : 0);
+    }, 0);
+  }, 0);
 }
 
 export const state = {

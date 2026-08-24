@@ -194,6 +194,10 @@ MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 # Reference audio clips accepted by the /references table (MiniMax H3 R2V). Not
 # gallery media — only ever uploaded to REFERENCES_DIR and fed into a workflow.
 AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac"}
+# MiniMax H3's total reference-file budget. A reference video charges once per track
+# fed to the workflow, so a clip contributing both its video and its audio costs 2.
+# Mirrored client-side as REFERENCE_MAX_FILES in static/js/state.js.
+REFERENCE_MAX_FILES = 12
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
 
 # Idle session lock: after this many seconds with no authenticated request and no

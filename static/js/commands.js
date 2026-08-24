@@ -4,7 +4,7 @@ import {
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE,
 } from './utils.js';
-import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, countReferenceFiles } from './state.js';
+import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
@@ -42,17 +42,19 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
 
 // Slots in display order. `key`/`index` locate the value in the matching
 // state.references array; `kind` gates which media type each row accepts (drop +
-// upload); `group` starts a labelled section. MiniMax H3 R2V: 9 images, 3 videos,
-// 3 video-paired audios, 3 standalone audios — capped at REFERENCE_MAX_FILES total.
+// upload); `group` starts a labelled section; `tracks` marks a row whose one clip
+// carries two selectable tracks. MiniMax H3 R2V: 9 images, 3 videos, 3 standalone
+// audios — capped at REFERENCE_MAX_FILES total.
 function buildReferenceSlots() {
   const slots = [];
-  const push = (key, kind, count, labeller, noter, group) => {
+  const push = (key, kind, count, labeller, noter, group, extra) => {
     for (let i = 0; i < count; i++) {
       slots.push({
         key, index: i, kind,
         label: labeller(i),
         note: noter(i),
         group: i === 0 ? group : undefined,
+        ...(extra || {}),
       });
     }
   };
@@ -62,12 +64,8 @@ function buildReferenceSlots() {
     'Images (up to 9)');
   push('videos', 'video', 3,
     i => `Video ${i + 1}`,
-    () => 'MiniMax R2V reference video',
-    'Videos (up to 3)');
-  push('videoAudios', 'audio', 3,
-    i => `Video audio ${i + 1}`,
-    () => 'audio paired with a reference video',
-    'Video-paired audio (up to 3)');
+    () => 'MiniMax R2V — tick the tracks to use',
+    'Videos (up to 3 — video / audio tracks)', { tracks: true });
   push('audios', 'audio', 3,
     i => `Audio ${i + 1}`,
     () => 'standalone reference audio',
@@ -89,11 +87,33 @@ function refSlotSet(slot, url) {
   r[slot.key][slot.index] = url;
 }
 
+// Track flags for a video row, created on demand (both tracks on by default).
+function refTracks(slot) {
+  const r = state.references || (state.references = newReferences());
+  if (!Array.isArray(r.videoTracks)) r.videoTracks = [];
+  if (!r.videoTracks[slot.index]) r.videoTracks[slot.index] = { ...REFERENCE_TRACK_DEFAULT };
+  return r.videoTracks[slot.index];
+}
+
+// Turn one track of a video slot on/off. Ticking is a +1 against the cap that doesn't
+// go through setSlot, so it needs its own check. Returns false if refused.
+function refTrackSet(slot, track, on) {
+  const t = refTracks(slot);
+  if (on && !t[track] && countReferenceFiles(state.references) >= REFERENCE_MAX_FILES) return false;
+  t[track] = on;
+  return true;
+}
+
+// What newly filling this slot costs: a video defaults to both tracks, so 2 files.
+function refSlotFillCost(slot) {
+  return slot.tracks ? 2 : 1;
+}
+
 // Reject a new (non-empty) value that would push the total over the 12-file cap.
 // Replacing an already-filled slot, or clearing one, is always allowed.
 function refSlotWouldExceed(slot, url) {
   if (!url || refSlotGet(slot)) return false;
-  return countReferenceFiles(state.references) >= REFERENCE_MAX_FILES;
+  return countReferenceFiles(state.references) + refSlotFillCost(slot) > REFERENCE_MAX_FILES;
 }
 
 function renderReferencesTable() {
@@ -122,8 +142,9 @@ function renderReferencesTable() {
   const hint = document.createElement('div');
   hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:6px';
   hint.innerHTML = 'Drag a chat image/video onto a row, or drop a file from your desktop (click a row to browse). ' +
-    'Images can also come from the chat; audio must be uploaded. Only <strong>Image 1</strong> is used by LTX face-ID ' +
-    `(as the mandatory reference). At most ${REFERENCE_MAX_FILES} files in total.`;
+    'Images and videos can also come from the chat; standalone audio must be uploaded. Only <strong>Image 1</strong> ' +
+    'is used by LTX face-ID (as the mandatory reference). A reference video counts once per track you tick — using ' +
+    `both its video and its audio costs 2 of the ${REFERENCE_MAX_FILES}.`;
   wrap.appendChild(hint);
 
   refreshCount();
@@ -158,20 +179,83 @@ function buildReferenceRow(slot, onChange) {
   clearBtn.title = 'Clear this reference';
   clearBtn.style.cssText = 'flex:none;width:28px;padding:2px 0;font-size:0.9rem;line-height:1;color:#94a3b8';
 
-  function flashError(msg) {
-    const prev = zone.style.borderColor;
-    zone.style.borderColor = '#f87171';
-    zone.dataset.msg = msg;
-    render();
-    setTimeout(() => { zone.style.borderColor = prev; delete zone.dataset.msg; render(); }, 2500);
+  // Video rows only: two checkboxes selecting which tracks of the one attached clip
+  // are fed to the workflow, plus a caption spelling out what that costs against the
+  // 12-file budget. Lives outside `zone` so ticking a box doesn't open the file picker.
+  let trackBox = null;
+  let trackInputs = null;
+  let trackCaption = null;
+  if (slot.tracks) {
+    trackBox = document.createElement('div');
+    trackBox.style.cssText = 'flex:none;display:flex;flex-direction:column;gap:2px;font-size:0.72rem;color:#94a3b8';
+    trackInputs = {};
+    ['video', 'audio'].forEach(track => {
+      const lbl = document.createElement('label');
+      lbl.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.style.cssText = 'margin:0;cursor:pointer';
+      cb.addEventListener('change', () => {
+        if (!refTrackSet(slot, track, cb.checked)) {
+          cb.checked = !cb.checked;
+          flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
+          return;
+        }
+        syncTracks();
+        notifyChange();
+      });
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(track === 'video' ? '🎞 video' : '🔊 audio'));
+      trackInputs[track] = cb;
+      trackBox.appendChild(lbl);
+    });
+    trackCaption = document.createElement('span');
+    trackCaption.style.cssText = 'font-size:0.68rem;color:#475569';
+    trackBox.appendChild(trackCaption);
   }
 
-  function render() {
+  function syncTracks() {
+    if (!slot.tracks) return;
+    const url = refSlotGet(slot);
+    const t = refTracks(slot);
+    ['video', 'audio'].forEach(track => {
+      trackInputs[track].checked = !!t[track];
+      trackInputs[track].disabled = !url;
+    });
+    const n = (t.video ? 1 : 0) + (t.audio ? 1 : 0);
+    const inactive = url && n === 0;
+    trackCaption.textContent = !url ? '' : (inactive ? 'inactive' : `${n} file${n === 1 ? '' : 's'}`);
+    trackCaption.style.color = inactive ? '#fbbf24' : '#475569';
+    zone.style.opacity = inactive ? '0.5' : '1';
+  }
+
+  function flashMsg(msg, colour) {
+    const prev = zone.style.borderColor;
+    zone.style.borderColor = colour;
+    zone.dataset.msg = msg;
+    zone.dataset.msgColour = colour;
+    render();
+    setTimeout(() => {
+      zone.style.borderColor = prev;
+      delete zone.dataset.msg;
+      delete zone.dataset.msgColour;
+      render();
+    }, 2500);
+  }
+
+  const flashError = msg => flashMsg(msg, '#f87171');
+  const flashNote  = msg => flashMsg(msg, '#fbbf24');
+
+  // render() = the dropzone contents plus, on a video row, the track checkboxes.
+  // renderZone has early returns, so the track refresh can't just be appended to it.
+  function render() { renderZone(); syncTracks(); }
+
+  function renderZone() {
     const url = refSlotGet(slot);
     zone.innerHTML = '';
     if (zone.dataset.msg) {
       const err = document.createElement('span');
-      err.style.cssText = 'color:#f87171;font-size:0.78rem';
+      err.style.cssText = `color:${zone.dataset.msgColour || '#f87171'};font-size:0.78rem`;
       err.textContent = '⚠ ' + zone.dataset.msg;
       zone.appendChild(err);
       clearBtn.style.visibility = url ? 'visible' : 'hidden';
@@ -191,8 +275,18 @@ function buildReferenceRow(slot, onChange) {
 
   function setSlot(url) {
     if (refSlotWouldExceed(slot, url)) {
-      flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
-      return false;
+      // A fresh video costs 2 (both tracks). With exactly one file left, take it
+      // video-only rather than refusing — otherwise the last slot looks broken.
+      const free = REFERENCE_MAX_FILES - countReferenceFiles(state.references);
+      if (!(slot.tracks && url && !refSlotGet(slot) && free === 1)) {
+        flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
+        return false;
+      }
+      refSlotSet(slot, url);
+      Object.assign(refTracks(slot), { video: true, audio: false });
+      flashNote('only 1 slot left — audio track off');
+      notifyChange();
+      return true;
     }
     refSlotSet(slot, url);
     render();
@@ -233,12 +327,14 @@ function buildReferenceRow(slot, onChange) {
   clearBtn.addEventListener('click', e => {
     e.stopPropagation();
     refSlotSet(slot, null);
+    if (slot.tracks) Object.assign(refTracks(slot), REFERENCE_TRACK_DEFAULT);
     render();
     notifyChange();
   });
 
   row.appendChild(labelBox);
   row.appendChild(zone);
+  if (trackBox) row.appendChild(trackBox);
   row.appendChild(clearBtn);
   row.appendChild(fileInput);
   render();
@@ -2061,7 +2157,7 @@ export function makeCommandHandler(deps) {
         { sig: '/i2v-replacement-reset', desc: 'clear all image2video replacements' },
         { sig: '/i2v-set-prompt <prompt>', desc: 'override prompt used by <code>/i2v</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
         { sig: '/i2v-set-prompt-reset', desc: 'clear the override prompt' },
-        { sig: '/references', desc: 'open the reference-asset table — drag chat images/videos or drop desktop image/video/audio files into the slots', notes: 'up to 9 reference images + 3 videos + 3 video-paired audios + 3 standalone audios, capped at 12 files in total (MiniMax H3 R2V); LTX face-ID uses only Image&nbsp;1 (its mandatory reference) &nbsp;·&nbsp; images can be chat media or uploads, audio must be uploaded &nbsp;·&nbsp; persists with the chat session and the <code>/settings-save</code> stack' },
+        { sig: '/references', desc: 'open the reference-asset table — drag chat images/videos or drop desktop image/video/audio files into the slots', notes: 'up to 9 reference images + 3 videos (tick the video and/or audio track of each) + 3 standalone audios, capped at 12 files in total (MiniMax H3 R2V) &nbsp;·&nbsp; a video costs one file per ticked track &nbsp;·&nbsp; LTX face-ID uses only Image&nbsp;1 (its mandatory reference) &nbsp;·&nbsp; images and videos can be chat media or uploads, standalone audio must be uploaded &nbsp;·&nbsp; persists with the chat session and the <code>/settings-save</code> stack' },
         { sig: '/i2v-workflow [name]', desc: 'choose which image2video workflow <code>/i2v</code> uses (no arg = picker)' },
         { sig: '/i2v-workflow-reset', desc: 'reset the image2video workflow to its default' },
         { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },

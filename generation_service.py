@@ -22,6 +22,8 @@ from workflow import (
     collect_seeds, lora_path_for_os,
     apply_resolution, apply_steps,
     reference_sentinel, strip_reference_nodes,
+    reference_marker, find_marked_node, drop_node_output_links,
+    node_link_output_indices,
 )
 
 # In-memory job tracking. Each job record carries:
@@ -243,6 +245,57 @@ def cancel_auto_purge(server_address):
 # Background generation thread
 # ---------------------------------------------------------------------------
 
+def _apply_track_drop(workflow, drop, server, send):
+    """Disconnect the unwanted track of a single-node reference video loader.
+
+    ``drop`` is one entry built by _run_generation_core: the marker substituted for
+    <REFERENCE_VIDEO_n>, the real uploaded filename, and which of the two tracks the
+    user ticked. We find the marked node, restore the filename into it, then delete the
+    consumer links coming out of the track that wasn't wanted — the node itself stays,
+    because it still has to load the clip for the track that was.
+
+    Which output index carries which medium comes from the server's declared output
+    types; if that lookup fails we fall back to classifying by the consumer's input
+    name. If neither can tell them apart we raise rather than submit a graph that does
+    the opposite of what was ticked (an invisible failure the user only sees after
+    paying for a render).
+    """
+    node_id, key = find_marked_node(workflow, drop["marker"])
+    if node_id is None:
+        return
+    workflow[node_id]["inputs"][key] = drop["filename"]
+    class_type = workflow[node_id].get("class_type", "?")
+    dropping = "audio" if not drop["want_audio"] else "video"
+
+    outputs = []
+    try:
+        outputs = server.get_node_output_types(class_type)
+    except Exception as e:                                    # transport/parse failure
+        print(f"[track-drop] /object_info lookup for {class_type} failed: {e}")
+
+    if outputs:
+        audio_idx = [i for i, t in enumerate(outputs) if str(t).upper() == "AUDIO"]
+        other_idx = [i for i, t in enumerate(outputs) if str(t).upper() != "AUDIO"]
+    else:
+        audio_idx, other_idx = node_link_output_indices(workflow, node_id)
+        # Inconclusive: the node drives links, but every one of them landed on the
+        # side we mean to keep, so we can't tell which carries the track to remove.
+        if (audio_idx or other_idx) and not (audio_idx if dropping == "audio" else other_idx):
+            raise ValueError(
+                f"Can't honour the {dropping}-track setting for reference video "
+                f"{drop['slot']}: node class {class_type} declares no AUDIO output and "
+                f"its consumer inputs aren't named distinguishably. Re-tick both boxes, "
+                f"or use a template with a separate "
+                f"<REFERENCE_VIDEO_AUDIO_{drop['slot']}> loader."
+            )
+
+    removed = drop_node_output_links(
+        workflow, node_id, audio_idx if dropping == "audio" else other_idx)
+    if removed:
+        send("progress",
+             message=f"Reference video {drop['slot']}: {dropping} track disconnected")
+
+
 def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                          server_address, server_os, workflow_name,
                          width=None, height=None, steps=None, denoise=None, workflow_dir=None,
@@ -346,19 +399,23 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                     pass
 
         # Reference assets (the /references table, MiniMax H3 R2V). Up to 9 images,
-        # 3 videos, 3 video-paired audios and 3 standalone audios — all indexed. Each
-        # token is filled only when the template actually contains it, so unrelated
-        # workflows are unaffected.
+        # 3 videos (each contributing its video and/or audio track) and 3 standalone
+        # audios — all indexed. Each token is filled only when the template actually
+        # contains it, so unrelated workflows are unaffected.
         #   <REFERENCE_IMAGE_1>  — image slot 1 with the LTX face-ID FALLBACK: uses the
         #       pinned image when supplied, else falls back to the triggered source image
         #       (its first frame) so those workflows stay usable without an explicit
         #       reference; a text2video run (no source image) with neither raises a clear
         #       error. This is the mandatory primary reference.
-        #   <REFERENCE_IMAGE_2..9>, <REFERENCE_VIDEO_1..3>, <REFERENCE_VIDEO_AUDIO_1..3>,
-        #   <REFERENCE_AUDIO_1..3>  — OPTIONAL slots: uploaded when supplied, else
-        #       sentinel-filled and their loader nodes stripped after JSON parse (an
-        #       unfilled non-LoRA placeholder is otherwise a hard error), so a MiniMax
-        #       graph can run on any subset of references.
+        #   <REFERENCE_IMAGE_2..9>, <REFERENCE_VIDEO_1..3>, <REFERENCE_AUDIO_1..3>
+        #       — OPTIONAL slots: uploaded when supplied, else sentinel-filled and their
+        #       loader nodes stripped after JSON parse (an unfilled non-LoRA placeholder
+        #       is otherwise a hard error), so a MiniMax graph can run on any subset of
+        #       references.
+        #   <REFERENCE_VIDEO_AUDIO_1..3>  — the AUDIO TRACK of reference video n, never
+        #       a separately uploaded file. Only meaningful in the two-node convention
+        #       (see the video loop below); input_reference_video_audios[i] is normally
+        #       the very same Path as input_reference_videos[i].
         def _padded(seq, n):
             out = list(seq or [])
             return out[:n] + [None] * (n - len(out))
@@ -398,11 +455,40 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
         _fill_reference("REFERENCE_IMAGE_1", ref_images[0], "reference image 1", image1=True)
         for i in range(2, 10):
             _fill_reference(f"REFERENCE_IMAGE_{i}", ref_images[i - 1], f"reference image {i}")
+        # Reference videos carry two tracks, chosen per slot by the /references
+        # checkboxes. The two kwargs mean "the file feeding the video track" and "the
+        # file feeding the audio track" — when both are on they are the SAME Path, so
+        # ref_upload_cache uploads the clip to ComfyUI only once.
+        #
+        # Two template conventions are supported:
+        #   two-node — the template also carries <REFERENCE_VIDEO_AUDIO_n>, on a second
+        #       loader pointed at the same clip. Each token stands alone, so the plain
+        #       sentinel + strip_reference_nodes path handles an unwanted track.
+        #   one-node (the documented convention) — a single VHS Load Video node holds
+        #       <REFERENCE_VIDEO_n> and drives both an IMAGE and an AUDIO consumer
+        #       input. The node must load the file whenever EITHER track is wanted, so
+        #       an unwanted track is removed by dropping that output's links after the
+        #       graph is parsed (see track_drops below), not by removing the node.
+        track_drops = []
         for i in range(1, 4):
-            _fill_reference(f"REFERENCE_VIDEO_{i}", ref_videos[i - 1], f"reference video {i}")
-        for i in range(1, 4):
-            _fill_reference(f"REFERENCE_VIDEO_AUDIO_{i}", ref_video_audios[i - 1],
-                            f"reference video audio {i}")
+            vtok, atok = f"REFERENCE_VIDEO_{i}", f"REFERENCE_VIDEO_AUDIO_{i}"
+            vpath, apath = ref_videos[i - 1], ref_video_audios[i - 1]
+            if f"<{atok}>" in template or (vpath is None and apath is None):
+                _fill_reference(vtok, vpath, f"reference video {i}")
+                _fill_reference(atok, apath, f"reference video {i} audio track")
+                continue
+            _fill_reference(vtok, vpath or apath, f"reference video {i}")
+            if vpath is not None and apath is not None:
+                continue
+            # Exactly one track wanted: mark the node so we can find it unambiguously
+            # after parsing, then write the uploaded filename back into it.
+            uploaded = mapping[vtok]
+            marker = reference_marker(vtok)
+            mapping[vtok] = marker
+            track_drops.append({
+                "slot": i, "marker": marker, "filename": uploaded,
+                "want_video": vpath is not None, "want_audio": apath is not None,
+            })
         for i in range(1, 4):
             _fill_reference(f"REFERENCE_AUDIO_{i}", ref_audios[i - 1], f"reference audio {i}")
 
@@ -454,6 +540,11 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
             workflow, removed_refs = strip_reference_nodes(workflow, ref_sentinels)
             if removed_refs:
                 send("progress", message=f"Skipping {len(removed_refs)} unused reference node(s)")
+
+        # Single-node video tracks: disconnect the track the user unticked. Runs AFTER
+        # strip_reference_nodes so an inactive slot's loader is already gone.
+        for drop in track_drops:
+            _apply_track_drop(workflow, drop, server, send)
 
         if "nodes" in workflow:
             send("progress", message="Converting UI-format workflow to API format...")

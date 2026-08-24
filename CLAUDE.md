@@ -292,8 +292,8 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 | `<INPUT_LAST_FRAME>` | Source image for the optional end frame in first-frame/last-frame image2video. When no end frame is designated it falls back to `<INPUT_IMAGE>` and the guide is bypassed (see below) |
 | `<REFERENCE_IMAGE_1>` | Reference image slot 1 — the **mandatory primary reference** (identity reference for the LTX 2.3 face-ID workflows, `LTXIdentityOverlapConditioning`; MiniMax H3 image 1) **with fallback**: when unset it falls back to `<INPUT_IMAGE>`, and if there's no source image either (e.g. text2video) the job **errors**. Set via the `/references` table (see the References section below) |
 | `<REFERENCE_IMAGE_2>` … `<REFERENCE_IMAGE_9>` | Reference image slots 2–9 (MiniMax H3 R2V). Optional — when unset the loader node is stripped and the consumer's input dropped, so an R2V graph can run on any subset of the extra images |
-| `<REFERENCE_VIDEO_1>` / `<REFERENCE_VIDEO_2>` / `<REFERENCE_VIDEO_3>` | Reference video slots 1–3 (MiniMax H3 R2V). Optional; stripped when unset. A gallery clip or an uploaded `/references-file/` URL |
-| `<REFERENCE_VIDEO_AUDIO_1>` … `<REFERENCE_VIDEO_AUDIO_3>` | Audio paired with a reference video (MiniMax H3 R2V), slots 1–3. Optional; stripped when unset. Uploaded `/references-file/` audio |
+| `<REFERENCE_VIDEO_1>` / `<REFERENCE_VIDEO_2>` / `<REFERENCE_VIDEO_3>` | Reference video slots 1–3 (MiniMax H3 R2V). Optional; stripped when unset. A gallery clip or an uploaded `/references-file/` URL. Each clip carries **two selectable tracks** — see the References section |
+| `<REFERENCE_VIDEO_AUDIO_1>` … `<REFERENCE_VIDEO_AUDIO_3>` | The **audio track of reference video n**, never a separately uploaded file. Only used by the two-node template convention (a second loader pointed at the same clip); in the single-node convention the token is absent and the loader's AUDIO output is disconnected instead. Optional; stripped when that clip's audio box is unticked |
 | `<REFERENCE_AUDIO_1>` / `<REFERENCE_AUDIO_2>` / `<REFERENCE_AUDIO_3>` | Standalone reference audio (MiniMax H3 R2V), slots 1–3. Optional; stripped when unset. Uploaded `/references-file/` audio |
 
 ### Numeric placeholders (replaced as bare JSON numbers, not quoted strings)
@@ -328,29 +328,43 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
   - **`ltx23-faceid_i2v.json`** — *reference text-to-video*: an **empty** latent (`EmptyLTXVLatentVideo`), so the video content comes entirely from the prompt + the identity reference. **No first frame.** Frames are computed internally (`SimpleCalculatorKJ` = `((duration*fps)//8)*8+1`), so it has **no** `<FRAMES>` slot; it uses `<PROMPT>`, `<REFERENCE_IMAGE_1>`, `<DURATION>`, `<FPS>`, `<VIDEO_WIDTH>`, `<VIDEO_HEIGHT>`.
   - **`ltx23-faceid-firstlast_i2v.json`** — the same identity graph with the proven first-frame (`LTXVImgToVideoInplace`) + optional last-frame (`LTXVAddGuide` @ `frame_idx = -1`) sub-chain spliced between the empty latent and `LTXVConcatAVLatent`, ahead of the identity node. Adds `<INPUT_IMAGE>`, `<INPUT_LAST_FRAME>`, `<LAST_FRAME_STRENGTH>` to the set above. The optional-end-frame handling is the **existing** `strip_last_frame_guide()` path (no end frame → strength `0.0`, guide chain removed, `LTXVConcatAVLatent` falls back to the first-frame `LTXVImgToVideoInplace` latent).
 - **The `<REFERENCE_IMAGE_1>` placeholder** is filled in `_run_generation_core` (`generation_service.py`), guarded on `"<REFERENCE_IMAGE_1>" in template`: reference image slot 1 (uploaded via `ComfyServer.upload_media`) if supplied, else a fallback to the already-uploaded `<INPUT_IMAGE>` filename (and if there's no source image either, the job errors). So slot 1 is the **mandatory override-with-fallback** reference: for the ref_t2v template the triggered image is the reference by default; for the first/last-frame template the **first frame** is the reference by default. Image slots 2–9 are optional/strippable. See the **References** section below for the full multi-slot scheme.
-- **UI:** `/references` opens a table whose rows are drop targets (images 1–9, videos 1–3, video-paired audios 1–3, standalone audios 1–3); `runImage2Video`/`runText2Video` send a `references` object to `/api/image2video`/`/api/text2video`. Only **image 1** is used by the LTX face-ID templates (and it's suppressed when it equals the triggered image, so the backend's `<INPUT_IMAGE>` fallback applies). Pick a template with `/i2v-workflow`.
+- **UI:** `/references` opens a table whose rows are drop targets (images 1–9, videos 1–3 with per-clip video/audio track checkboxes, standalone audios 1–3); `runImage2Video`/`runText2Video` send a `references` object to `/api/image2video`/`/api/text2video`. Only **image 1** is used by the LTX face-ID templates (and it's suppressed when it equals the triggered image, so the backend's `<INPUT_IMAGE>` fallback applies). Pick a template with `/i2v-workflow`.
 - **⚠ Experimental composition:** in `ltx23-faceid-firstlast_i2v.json` the last-frame `LTXVAddGuide` and the identity overlap both add/crop guide frames (the graph's `LTXVCropGuides` uses the identity node's conditioning, not the AddGuide's). This combination must be **test-rendered in the ComfyUI editor**; if the last-frame guide isn't cropped cleanly, move the `AddGuide` to operate on the identity node's output latent/conditioning instead of before it, then re-export.
 
 ### References (`/references`) detail
 
 `/references` replaced the single-slot `/i2v-set-ref-image` with a table of reference
-assets for video workflows: **9 images + 3 videos + 3 video-paired audios + 3 standalone
-audios** (MiniMax H3 R2V), capped at **12 files in total**, of which LTX face-ID uses only
-image 1.
+assets for video workflows: **9 images + 3 videos + 3 standalone audios** (MiniMax H3
+R2V), capped at **12 files in total**, of which LTX face-ID uses only image 1.
 
-- **State**: `state.references = { images: [9], videos: [3], videoAudios: [3], audios: [3] }`
-  (`state.js`, `newReferences()`/`cloneReferences()`, slot counts in
-  `REFERENCE_SLOT_COUNTS`, cap in `REFERENCE_MAX_FILES`). Persisted with the chat session
-  (`saveSession`/`restoreSession`), the `/settings-save` stack, and reset in `newChat`.
-  `cloneReferences` migrates the pre-expansion shape (a 3-image array + scalar
-  `video`/`videoAudio`/`audio`) into the new arrays; an old session's `refImageUrl`
-  lands in `images[0]`.
-- **12-file cap**: enforced both client-side (the table refuses a drop/upload that would
-  exceed 12, shows a live `n / 12` counter — `countReferenceFiles`) and server-side
-  (`_resolve_references` in `app.py` returns **400** if the payload totals more than 12).
+A reference **video is one clip with two usable tracks** — ComfyUI's VHS
+`Load Video (Upload)` node emits AUDIO alongside IMAGE — so each video row has **two
+checkboxes**, video and audio, both ticked by default. There are no separate
+"video-paired audio" upload slots; that audio was never an independent asset, and
+pairing it by array index was only ever a convention nothing enforced.
+
+- **State**: `state.references = { images: [9], videos: [3], videoTracks: [3], audios: [3] }`,
+  where `videoTracks[i]` is `{video, audio}` for `videos[i]` (`state.js`,
+  `newReferences()`/`cloneReferences()`, slot counts in `REFERENCE_SLOT_COUNTS` — which
+  deliberately excludes `videoTracks`, being the source of truth for "array of
+  URL-or-null" groups — defaults in `REFERENCE_TRACK_DEFAULT`, cap in
+  `REFERENCE_MAX_FILES`). Persisted with the chat session (`saveSession`/`restoreSession`),
+  the `/settings-save` stack, and reset in `newChat` — none of which needed changing when
+  the shape changed, because they all funnel through `cloneReferences`. That function
+  migrates the pre-expansion shape (a 3-image array + scalar `video`/`videoAudio`/`audio`)
+  and the old `videoAudios` array (a filled entry becomes that clip's audio track; an
+  orphaned one, with no video in the slot, is dropped). An old session's `refImageUrl`
+  lands in `images[0]`. Accepted loss: the old table could pair a video with a
+  *different* audio file — that can't survive the one-clip model.
+- **12-file cap**: a video charges **once per ticked track**, so a both-tracks clip costs
+  2 and an untouched-but-inactive clip costs 0. Enforced client-side (`countReferenceFiles`
+  + the live `n / 12` counter and a per-row `2 files`/`1 file`/`inactive` caption; a drop
+  with exactly one slot free lands video-only rather than being refused) and server-side
+  (`_resolve_references` in `app.py` returns **400** over `REFERENCE_MAX_FILES`, which
+  now lives in `config.py` so both sides quote one number).
 - **Sources**: image slots hold gallery `/images/` URLs (chat media, or desktop images
   imported via `/api/import-image`). Videos may be a gallery clip or an uploaded
-  `/references-file/` URL; audio is always uploaded. Desktop video/audio go to
+  `/references-file/` URL; standalone audio is always uploaded. Desktop video/audio go to
   `POST /api/upload-reference` (multipart `file` + `kind`), stored in the dot-prefixed,
   **persistent** `REFERENCES_DIR` (`.references/` under `IMAGES_DIR`, kept out of
   galleries) and served by `GET /references-file/<name>`. Not single-use tokens — a
@@ -367,6 +381,34 @@ image 1.
   and their loader nodes are removed by `strip_reference_nodes()` (`workflow.py`) after
   JSON parse — the node is deleted and any consumer input pointing at it is dropped (absent
   optional input).
+- **Video tracks on the wire**: `_resolve_references` resolves a video URL **once**, as a
+  video, and writes the same `Path` into `input_reference_videos[i]` and
+  `input_reference_video_audios[i]` per its flags. "Same Path in both" therefore means
+  both tracks — and `ref_upload_cache` (keyed on the path) uploads the clip to ComfyUI
+  only once. Both flags off = inactive: never resolved, never sent.
+- **Two template conventions** for the tracks:
+  - **single-node** (documented, what the MiniMax graph uses): one VHS loader holds
+    `<REFERENCE_VIDEO_n>` and drives both an IMAGE and an AUDIO consumer input. Since the
+    node must still load the clip for whichever track *is* wanted, an unticked box is
+    honoured by dropping just that output's links —
+    `drop_node_output_links()` (`workflow.py`), applied **after** `strip_reference_nodes`
+    so an inactive slot's node is already gone. Which output index is which comes from
+    `ComfyServer.get_node_output_types()` (`GET /object_info/<class_type>`, cached per
+    server+class): the AUDIO-typed index, or every non-AUDIO index. Reading the declared
+    types beats hardcoding indices — VideoHelperSuite's output tuple has shifted across
+    releases, the type names haven't. If that lookup fails we classify by the consumer's
+    input name (`node_link_output_indices`), and if that's inconclusive too the job
+    **errors** rather than silently rendering the opposite of what was ticked.
+    The loader node is located by `reference_marker()`, a per-token locator substituted in
+    place of the filename and overwritten with the real name right after `json.loads` —
+    a filename scan can't tell two slots holding the same clip apart.
+  - **two-node**: the template also carries `<REFERENCE_VIDEO_AUDIO_n>` on a second loader
+    pointed at the same clip. Each token then stands alone, so an unwanted track uses the
+    plain sentinel + strip path and no output surgery is needed. Kept working as an escape
+    hatch.
+- **API format only**: all node stripping (LoRA, last-frame guide, references, track
+  links) runs **before** `convert_ui_to_api_format`, so a template that needs any of it
+  must be exported from ComfyUI in **API format**.
 - **The workflow JSON is authored separately** (in `~/comfy-workflows/`); this feature
   only defines the tags/plumbing. Reference file names are **string** slots (quote them in
   the template).

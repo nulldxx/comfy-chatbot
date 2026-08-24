@@ -19,6 +19,34 @@ def reference_sentinel(token):
     return f"__REF_UNSET_{token}__"
 
 
+def reference_marker(token):
+    """Locator string substituted for a reference placeholder whose node we must find.
+
+    Used by the single-node video-track convention: one VHS "Load Video (Upload)" node
+    holds <REFERENCE_VIDEO_n> and drives both an IMAGE and an AUDIO consumer input, so
+    turning one track off means dropping that output's links (drop_node_output_links)
+    rather than deleting the node. To do that we must identify the loader node, and the
+    uploaded filename alone is ambiguous — the same clip can sit in two slots with
+    different track flags. Substituting this per-token marker instead makes the node
+    unique by construction; the real filename is written back immediately after the
+    JSON is parsed (see find_marked_node). ``token`` is the name without angle brackets.
+    """
+    return f"__REF_NODE_{token}__"
+
+
+def find_marked_node(workflow, marker):
+    """Locate the node holding ``marker`` as an input value; return (node_id, key).
+
+    Returns (None, None) when the marker isn't present — the node may legitimately
+    have been removed already (e.g. by strip_reference_nodes).
+    """
+    for nid, node in workflow.items():
+        for key, value in node.get("inputs", {}).items():
+            if value == marker:
+                return nid, key
+    return None, None
+
+
 def apply_placeholders(text, mapping):
     for key, value in mapping.items():
         escaped = json.dumps(str(value))[1:-1]
@@ -141,6 +169,48 @@ def strip_reference_nodes(workflow, sentinels):
                     if isinstance(v, list) and len(v) == 2 and v[0] in removed]:
             del inputs[key]
     return workflow, removed
+
+
+def drop_node_output_links(workflow, node_id, output_indices):
+    """Delete every consumer input wired to one of ``node_id``'s given outputs.
+
+    Unlike strip_reference_nodes the producer node SURVIVES: this is how a single
+    loader that emits several tracks (VHS Load Video: IMAGE + AUDIO) has just one of
+    them disconnected, which is what unticking one of a video slot's two track boxes
+    means. As there, the right semantics for "not supplied" is an absent optional
+    input on the consumer, not a passthrough rewire.
+
+    Returns [(consumer_id, input_key), ...] for the links removed.
+    """
+    wanted = set(output_indices)
+    removed = []
+    if not wanted:
+        return removed
+    for cid, node in workflow.items():
+        inputs = node.get("inputs", {})
+        for key in [k for k, v in inputs.items()
+                    if isinstance(v, list) and len(v) == 2
+                    and v[0] == node_id and v[1] in wanted]:
+            del inputs[key]
+            removed.append((cid, key))
+    return removed
+
+
+def node_link_output_indices(workflow, node_id, name_contains="audio"):
+    """Split the output indices ``node_id`` actually drives, by consumer input name.
+
+    Fallback classifier for when the server's declared output types aren't available
+    (see ComfyServer.get_node_output_types): a consumer input whose key contains
+    ``name_contains`` is taken to be the audio link, everything else the video link.
+    Returns (matching, other) as sorted lists of output indices.
+    """
+    needle = name_contains.lower()
+    matching, other = set(), set()
+    for node in workflow.values():
+        for key, value in node.get("inputs", {}).items():
+            if isinstance(value, list) and len(value) == 2 and value[0] == node_id:
+                (matching if needle in key.lower() else other).add(value[1])
+    return sorted(matching), sorted(other)
 
 
 def _rewire_references(workflow, removed_id, passthrough):

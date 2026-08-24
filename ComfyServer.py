@@ -5,9 +5,11 @@ Provides a Python interface to ComfyUI server for workflow execution.
 
 import sys
 import json
+import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 import requests
 
 
@@ -21,6 +23,14 @@ class JobRetry(Exception):
     Unlike JobCancelled (which aborts the whole run), this aborts only the
     in-flight generation so the caller can re-run the same prompt.
     """
+
+
+# Declared node output types, keyed (server, class_type). Module-level rather than
+# per-instance because a ComfyServer is constructed per job, so an instance cache would
+# re-fetch every time; keyed on the address too because two ComfyUI hosts can run
+# different custom-node builds. Node definitions don't change while ComfyUI is running.
+_OBJECT_INFO_CACHE = {}
+_OBJECT_INFO_LOCK = threading.Lock()
 
 
 class ComfyServer:
@@ -394,6 +404,41 @@ class ComfyServer:
         name = result.get("name", media_path.name)
         sub = result.get("subfolder", "")
         return f"{sub}/{name}" if sub else name
+
+    def get_node_output_types(self, class_type, timeout=10):
+        """Declared output type names for a node class, e.g. ["IMAGE","MASK","AUDIO"].
+
+        Fetched from GET /object_info/<class_type>. Used to work out which of a loader
+        node's outputs carries which medium, so a single VHS "Load Video (Upload)" can
+        have just its AUDIO (or just its IMAGE) links dropped when one of a reference
+        video's track boxes is unticked. Reading the declared types beats hardcoding
+        indices: VideoHelperSuite's output tuple has shifted across releases, but the
+        type names are stable.
+
+        Cached per (server, class_type) for the process lifetime; only non-empty
+        results are cached, so a transient empty answer during a ComfyUI restart isn't
+        poisoned in. Returns [] for an unknown class. Raises requests exceptions on
+        transport failure — the caller decides whether to fall back.
+        """
+        key = (self.server, class_type)
+        with _OBJECT_INFO_LOCK:
+            cached = _OBJECT_INFO_CACHE.get(key)
+        if cached is not None:
+            return list(cached)
+
+        url = f"http://{self.server}/object_info/{quote(class_type, safe='')}"
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        info = response.json() or {}
+        # Combo outputs arrive as a nested list of choices rather than a type name.
+        outputs = [
+            t if isinstance(t, str) else "COMBO"
+            for t in ((info.get(class_type) or {}).get("output") or [])
+        ]
+        if outputs:
+            with _OBJECT_INFO_LOCK:
+                _OBJECT_INFO_CACHE[key] = list(outputs)
+        return outputs
 
     def free_memory(self, unload_models=True, free_memory=True):
         """

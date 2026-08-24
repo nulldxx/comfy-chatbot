@@ -844,7 +844,8 @@ class TestText2Video(_AppFixture):
         self.assertEqual(kwargs["video_width"], 1280)
         self.assertEqual(kwargs["video_height"], 720)
         # No source image is uploaded for a text2video run, and with no references
-        # every reference slot is empty (9 images, 3 videos, 3 video-audios, 3 audios).
+        # every reference slot is empty (9 images, 3 videos + their audio tracks,
+        # 3 standalone audios).
         self.assertNotIn("input_image", kwargs)
         self.assertEqual(kwargs["input_reference_images"], [None] * 9)
         self.assertEqual(kwargs["input_reference_videos"], [None] * 3)
@@ -897,13 +898,86 @@ class TestText2Video(_AppFixture):
             "/api/text2video",
             json={"prompt": "a cat", "workflow": "t2v",
                   "references": {"images": [None, "/images/a.png"],  # slot 2 only
-                                 "videos": [], "videoAudios": [], "audios": []}},
+                                 "videos": [], "videoTracks": [], "audios": []}},
         )
         self.assertEqual(resp.status_code, 200)
         _, kwargs = self._gen.call_args
         self.assertIsNone(kwargs["input_reference_images"][0])
         self.assertEqual(Path(kwargs["input_reference_images"][1]).name, "a.png")
         self.assertEqual(len(kwargs["input_reference_images"]), 9)
+
+    def _make_reference(self, name="v.mp4"):
+        p = self.references_dir / name
+        p.write_bytes(b"\x00" * 16)
+        return p
+
+    def _t2v_with_refs(self, refs):
+        return self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat", "workflow": "t2v", "references": refs},
+        )
+
+    def test_video_tracks_share_one_resolved_path(self):
+        """A reference video is ONE file with two tracks: both kwargs get the same
+        resolved video Path, so the clip uploads to ComfyUI once."""
+        self._make_reference("v.mp4")
+        resp = self._t2v_with_refs({
+            "videos": ["/references-file/v.mp4"],
+            "videoTracks": [{"video": True, "audio": True}],
+        })
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        video = kwargs["input_reference_videos"][0]
+        audio = kwargs["input_reference_video_audios"][0]
+        self.assertEqual(Path(video).name, "v.mp4")
+        self.assertEqual(video, audio)
+
+    def test_video_audio_track_only(self):
+        self._make_reference("v.mp4")
+        resp = self._t2v_with_refs({
+            "videos": ["/references-file/v.mp4"],
+            "videoTracks": [{"video": False, "audio": True}],
+        })
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertIsNone(kwargs["input_reference_videos"][0])
+        self.assertEqual(Path(kwargs["input_reference_video_audios"][0]).name, "v.mp4")
+
+    def test_inactive_video_slot_not_resolved(self):
+        # Both boxes off: the clip is never resolved at all, so even a URL pointing at
+        # a file that doesn't exist passes through without a 404.
+        resp = self._t2v_with_refs({
+            "videos": ["/references-file/gone.mp4"],
+            "videoTracks": [{"video": False, "audio": False}],
+        })
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertIsNone(kwargs["input_reference_videos"][0])
+        self.assertIsNone(kwargs["input_reference_video_audios"][0])
+
+    def test_missing_video_tracks_defaults_to_video_only(self):
+        # A browser tab holding pre-checkbox JS across a deploy sends no videoTracks.
+        self._make_reference("v.mp4")
+        resp = self._t2v_with_refs({"videos": ["/references-file/v.mp4"]})
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertEqual(Path(kwargs["input_reference_videos"][0]).name, "v.mp4")
+        self.assertIsNone(kwargs["input_reference_video_audios"][0])
+
+    def test_both_track_video_counts_two_against_cap(self):
+        # 9 images + 2 clips using both tracks = 13.
+        names = [f"c{n}.png" for n in range(9)]
+        for name in names:
+            self._make_image(name)
+        resp = self._t2v_with_refs({
+            "images": [f"/images/{n}" for n in names],
+            "videos": ["/references-file/v1.mp4", "/references-file/v2.mp4"],
+            "videoTracks": [{"video": True, "audio": True},
+                            {"video": True, "audio": True}],
+        })
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("13", resp.get_json()["error"])
+        self._gen.assert_not_called()
 
     def test_over_twelve_reference_files_returns_400(self):
         # 12 valid images is the limit; a 13th file (of any type) over-fills.

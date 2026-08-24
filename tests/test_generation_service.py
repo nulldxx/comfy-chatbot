@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import requests
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import generation_service as gs
@@ -526,10 +528,11 @@ class ReferenceImageMappingTests(unittest.TestCase):
             server.submit_workflow.assert_not_called()
 
     def test_minimax_slots_fill_supplied_and_strip_missing(self):
-        """A MiniMax-style template spanning every indexed slot type: image 1 + image 2
-        + a video-paired audio supplied, image 3 / video / standalone audio absent.
-        Supplied slots upload via upload_media; the absent slots' loader nodes are
-        stripped and their consumer inputs dropped."""
+        """A MiniMax-style template spanning every indexed slot type, in the TWO-NODE
+        convention: image 1 + image 2 + a reference video using both its tracks
+        (a second loader pointed at the same clip carries the audio), image 3 and the
+        standalone audio absent. Supplied slots upload via upload_media — the shared
+        clip only once — and the absent slots' loaders are stripped."""
         from ComfyServer import JobCancelled
 
         template = json.dumps({
@@ -564,25 +567,152 @@ class ReferenceImageMappingTests(unittest.TestCase):
                         job_id, job["channel"], job["cancel"], "p", [],
                         "http://s", "linux", "wf", workflow_dir=Path(tmp),
                         input_reference_images=[Path("/src/a.png"), Path("/src/b.png"), None],
-                        input_reference_video_audios=[Path("/src/c.mp3"), None, None],
+                        input_reference_videos=[Path("/src/c.mp4"), None, None],
+                        input_reference_video_audios=[Path("/src/c.mp4"), None, None],
                         duration=2, frames=48, fps=24,
                         video_width=1280, video_height=720,
                     )
         wf = captured["workflow"]
-        # Supplied images 1 & 2 and the video-paired audio uploaded and wired; the
-        # absent image 3 / video / standalone audio loaders stripped.
+        # Supplied images 1 & 2 wired; both video loaders hold the same clip; the
+        # absent image 3 / standalone audio loaders stripped.
         self.assertEqual(wf["img1"]["inputs"]["image"], "up_a.png")
         self.assertEqual(wf["img2"]["inputs"]["image"], "up_b.png")
-        self.assertEqual(wf["vaud"]["inputs"]["audio"], "up_c.mp3")
-        for gone in ("img3", "vid", "aud"):
+        self.assertEqual(wf["vid"]["inputs"]["video"], "up_c.mp4")
+        self.assertEqual(wf["vaud"]["inputs"]["audio"], "up_c.mp4")
+        for gone in ("img3", "aud"):
             self.assertNotIn(gone, wf)
+        # One clip = one upload, even though two tokens use it (ref_upload_cache).
+        uploaded = [call.args[0] for call in server.upload_media.call_args_list]
+        self.assertEqual(uploaded.count(Path("/src/c.mp4")), 1)
         # The consumer keeps its filled inputs and drops the unconnected optionals.
         mm_inputs = wf["mm"]["inputs"]
         self.assertEqual(mm_inputs["image_1"], ["img1", 0])
         self.assertEqual(mm_inputs["image_2"], ["img2", 0])
+        self.assertEqual(mm_inputs["ref_video"], ["vid", 0])
         self.assertEqual(mm_inputs["ref_video_audio"], ["vaud", 0])
-        for gone_key in ("image_3", "ref_video", "ref_audio"):
+        for gone_key in ("image_3", "ref_audio"):
             self.assertNotIn(gone_key, mm_inputs)
+
+    # ---- Single-node video tracks -------------------------------------------
+    # The documented convention: ONE VHS loader holds <REFERENCE_VIDEO_n> and drives
+    # both an IMAGE and an AUDIO consumer input. Unticking a track box must disconnect
+    # just that output, leaving the node in place to load the clip for the other one.
+
+    SINGLE_NODE_TEMPLATE = json.dumps({
+        "vid": {"inputs": {"video": "<REFERENCE_VIDEO_1>"}, "class_type": "VHS_LoadVideo"},
+        "mm":  {"inputs": {"ref_video": ["vid", 0], "ref_video_audio": ["vid", 2],
+                           "prompt": "<PROMPT>"},
+                "class_type": "MiniMaxH3"},
+    })
+
+    def _run_single_node(self, *, video, audio, output_types=("IMAGE", "MASK", "AUDIO"),
+                         object_info_error=None):
+        """Run the core over SINGLE_NODE_TEMPLATE and return (workflow, server)."""
+        from ComfyServer import JobCancelled
+
+        captured = {}
+        server = MagicMock()
+        server.upload_media.side_effect = lambda p: f"up_{Path(p).name}"
+        if object_info_error is not None:
+            server.get_node_output_types.side_effect = object_info_error
+        else:
+            server.get_node_output_types.return_value = list(output_types)
+
+        def _submit(workflow):
+            captured["workflow"] = workflow
+            raise JobCancelled()
+        server.submit_workflow.side_effect = _submit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "wf.json").write_text(self.SINGLE_NODE_TEMPLATE)
+            job_id = self._make_job()
+            job = gs.jobs[job_id]
+            with patch.object(gs, "ComfyServer", return_value=server):
+                with self.assertRaises(JobCancelled):
+                    gs._run_generation_core(
+                        job_id, job["channel"], job["cancel"], "p", [],
+                        "http://s", "linux", "wf", workflow_dir=Path(tmp),
+                        input_reference_videos=[video, None, None],
+                        input_reference_video_audios=[audio, None, None],
+                        duration=2, frames=48, fps=24,
+                        video_width=1280, video_height=720,
+                    )
+        return captured["workflow"], server
+
+    def test_single_node_video_only_drops_audio_link(self):
+        clip = Path("/src/c.mp4")
+        wf, _ = self._run_single_node(video=clip, audio=None)
+        # The loader survives, holding the real uploaded name (not the locator marker).
+        self.assertEqual(wf["vid"]["inputs"]["video"], "up_c.mp4")
+        self.assertEqual(wf["mm"]["inputs"]["ref_video"], ["vid", 0])
+        self.assertNotIn("ref_video_audio", wf["mm"]["inputs"])
+
+    def test_single_node_audio_only_drops_image_link(self):
+        clip = Path("/src/c.mp4")
+        wf, _ = self._run_single_node(video=None, audio=clip)
+        # The node MUST stay even with no video track: it still loads the clip.
+        self.assertEqual(wf["vid"]["inputs"]["video"], "up_c.mp4")
+        self.assertEqual(wf["mm"]["inputs"]["ref_video_audio"], ["vid", 2])
+        self.assertNotIn("ref_video", wf["mm"]["inputs"])
+
+    def test_single_node_both_tracks_keeps_both_links_without_object_info(self):
+        clip = Path("/src/c.mp4")
+        wf, server = self._run_single_node(video=clip, audio=clip)
+        self.assertEqual(wf["mm"]["inputs"]["ref_video"], ["vid", 0])
+        self.assertEqual(wf["mm"]["inputs"]["ref_video_audio"], ["vid", 2])
+        # The hot path must not cost an /object_info round trip, nor a second upload.
+        server.get_node_output_types.assert_not_called()
+        self.assertEqual(server.upload_media.call_count, 1)
+
+    def test_single_node_inactive_slot_strips_node(self):
+        wf, server = self._run_single_node(video=None, audio=None)
+        self.assertNotIn("vid", wf)
+        for key in ("ref_video", "ref_video_audio"):
+            self.assertNotIn(key, wf["mm"]["inputs"])
+        server.get_node_output_types.assert_not_called()
+
+    def test_single_node_falls_back_to_input_names_when_object_info_fails(self):
+        wf, _ = self._run_single_node(
+            video=Path("/src/c.mp4"), audio=None,
+            object_info_error=requests.exceptions.ConnectionError("down"))
+        # Classified by the consumer input name containing "audio".
+        self.assertEqual(wf["vid"]["inputs"]["video"], "up_c.mp4")
+        self.assertEqual(wf["mm"]["inputs"]["ref_video"], ["vid", 0])
+        self.assertNotIn("ref_video_audio", wf["mm"]["inputs"])
+
+    def test_single_node_raises_when_track_cannot_be_identified(self):
+        """No declared output types and no distinguishable input names: fail loudly
+        rather than submit a graph that does the opposite of what was ticked."""
+        from ComfyServer import JobCancelled
+
+        template = json.dumps({
+            "vid": {"inputs": {"video": "<REFERENCE_VIDEO_1>"},
+                    "class_type": "VHS_LoadVideo"},
+            "mm":  {"inputs": {"in_a": ["vid", 0], "in_b": ["vid", 2],
+                               "prompt": "<PROMPT>"},
+                    "class_type": "MiniMaxH3"},
+        })
+        server = MagicMock()
+        server.upload_media.side_effect = lambda p: f"up_{Path(p).name}"
+        server.get_node_output_types.return_value = []
+        server.submit_workflow.side_effect = AssertionError("should not submit")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "wf.json").write_text(template)
+            job_id = self._make_job()
+            job = gs.jobs[job_id]
+            with patch.object(gs, "ComfyServer", return_value=server):
+                with self.assertRaises(ValueError) as ctx:
+                    gs._run_generation_core(
+                        job_id, job["channel"], job["cancel"], "p", [],
+                        "http://s", "linux", "wf", workflow_dir=Path(tmp),
+                        input_reference_videos=[Path("/src/c.mp4"), None, None],
+                        duration=2, frames=48, fps=24,
+                        video_width=1280, video_height=720,
+                    )
+        msg = str(ctx.exception)
+        self.assertIn("reference video 1", msg)
+        self.assertIn("VHS_LoadVideo", msg)
 
     def test_optional_image_slot_stripped_when_absent(self):
         """The optional image slots (2–9) have no INPUT_IMAGE fallback: an absent
