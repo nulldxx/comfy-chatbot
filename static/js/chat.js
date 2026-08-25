@@ -507,18 +507,8 @@ function openVideoMetaEditor(url, wrap) {
     if (i2v) i2v.title = i2vTooltip(state.imageVideoMeta[url]);
   };
 
-  const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
-  const applyBtn = document.createElement('button');
-  applyBtn.textContent = 'Apply';
-  applyBtn.className = 'sel-btn';
-  applyBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem';
-  const clearBtn = document.createElement('button');
-  clearBtn.textContent = 'Clear';
-  clearBtn.className = 'sel-btn';
-  clearBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
-
-  applyBtn.addEventListener('click', () => {
+  // Write the edited values back onto the image's state. Shared by Apply and Start.
+  const commitMeta = () => {
     const prompt = promptInput.value.trim();
     const action = actionInput.value.trim();
     const audio  = audioInput.value.trim();
@@ -529,7 +519,42 @@ function openVideoMetaEditor(url, wrap) {
       delete state.imageVideoMeta[url];
     }
     refreshTooltip();
+    return { prompt, action, audio };
+  };
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
+  const applyBtn = document.createElement('button');
+  applyBtn.textContent = 'Apply';
+  applyBtn.className = 'sel-btn';
+  applyBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem';
+  const startBtn = document.createElement('button');
+  startBtn.textContent = 'Start';
+  startBtn.title = 'Apply the metadata and start the image2video job';
+  startBtn.className = 'sel-btn';
+  startBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#a78bfa';
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear';
+  clearBtn.className = 'sel-btn';
+  clearBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+
+  applyBtn.addEventListener('click', () => {
+    const { prompt, action, audio } = commitMeta();
     addMessage('bot', `Metadata set — Prompt <strong style="color:#a78bfa">${escapeHtml(prompt || '—')}</strong> · Action <strong style="color:#a78bfa">${escapeHtml(action || '—')}</strong> · Audio <strong style="color:#a78bfa">${escapeHtml(audio || '—')}</strong>.`);
+    scrollBottom();
+  });
+  startBtn.addEventListener('click', () => {
+    if (startBtn.disabled) return;
+    if (sendBtn.disabled) {
+      addMessage('bot', '<span style="color:#f87171">Busy — wait for the current generation to finish.</span>');
+      scrollBottom();
+      return;
+    }
+    commitMeta();
+    startBtn.disabled = true;
+    const run = startImage2VideoFor(url, wrap && wrap.querySelector('.img-i2v'));
+    if (run) run.finally(() => { startBtn.disabled = false; });
+    else startBtn.disabled = false;
     scrollBottom();
   });
   clearBtn.addEventListener('click', () => {
@@ -540,6 +565,7 @@ function openVideoMetaEditor(url, wrap) {
     scrollBottom();
   });
   btnRow.appendChild(applyBtn);
+  btnRow.appendChild(startBtn);
   btnRow.appendChild(clearBtn);
   box.appendChild(btnRow);
 
@@ -765,6 +791,30 @@ function runImage2Image(prompt, image, imgWrap, denoiseOverride) {
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
+}
+
+// Build the image2video prompt for `url` from its stored prompt/metadata and launch
+// the job. Shared by the 🎬 overlay button and the metadata editor's Start button;
+// `btn`, when given, is disabled for the duration of the run. Returns the run promise,
+// or null when nothing was started (busy, or no prompt to work from).
+function startImage2VideoFor(url, btn) {
+  if (sendBtn.disabled) return null;
+  let prompt;
+  if (state.image2videoOverridePrompt) {
+    prompt = state.image2videoOverridePrompt;
+  } else {
+    const orig = state.imagePrompts[url];
+    const meta = state.imageVideoMeta[url];
+    if (!orig && !(meta && meta.action)) {
+      addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
+      return null;
+    }
+    const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
+    prompt = buildVideoPrompt(base, meta, state.currentVideoSettings.audio);
+  }
+  if (btn) btn.disabled = true;
+  addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
+  return runImage2Video(prompt, url).finally(() => { if (btn) btn.disabled = false; });
 }
 
 function runImage2Video(prompt, image) {
@@ -1086,23 +1136,8 @@ function appendChatImage(container, url) {
   i2v.innerHTML = '&#127916;&#xFE0E;';
   i2v.addEventListener('click', e => {
     e.stopPropagation();
-    if (i2v.disabled || sendBtn.disabled) return;
-    let prompt;
-    if (state.image2videoOverridePrompt) {
-      prompt = state.image2videoOverridePrompt;
-    } else {
-      const orig = state.imagePrompts[url];
-      const meta = state.imageVideoMeta[url];
-      if (!orig && !(meta && meta.action)) {
-        addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
-        return;
-      }
-      const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
-      prompt = buildVideoPrompt(base, meta, state.currentVideoSettings.audio);
-    }
-    i2v.disabled = true;
-    addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
-    runImage2Video(prompt, url).finally(() => { i2v.disabled = false; });
+    if (i2v.disabled) return;
+    startImage2VideoFor(url, i2v);
   });
 
   const editMeta = document.createElement('button');
