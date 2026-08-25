@@ -133,6 +133,10 @@ export const state = {
 
   // Prompt overrides
   lastFaceDetailPrompt:        null,
+
+  // Metadata of the most recent image2video launch ({prompt, action, audio}), used by
+  // the metadata editor's Clone button. null = no video generated yet in this chat.
+  lastVideoMeta:               null,
   lastInpaintingPrompt:        null,
   extraPrompt:                 null,
 

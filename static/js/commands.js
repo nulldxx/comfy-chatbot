@@ -510,6 +510,14 @@ function showChatSummary() {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(state.lastFaceDetailPrompt)}</code>` });
   }
 
+  // The metadata editor's Clone button pastes this; showing it makes the clone source
+  // visible without opening the dialog.
+  if (state.lastVideoMeta) {
+    const m = state.lastVideoMeta;
+    const parts = [m.prompt, m.action, m.audio].map(v => `<code>${escapeHtml(v || '—')}</code>`);
+    rows.push({ label: 'Last video metadata', value: `prompt ${parts[0]} · action ${parts[1]} · audio ${parts[2]}` });
+  }
+
   if (state.faceDetailReplacements.length) {
     const list = state.faceDetailReplacements
       .map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`)
@@ -954,6 +962,7 @@ export function makeCommandHandler(deps) {
     state.t2vMode = false;
     state.currentInpaintingWorkflow = null;
     state.lastFaceDetailPrompt = null;
+    state.lastVideoMeta = null;
     state.lastInpaintingPrompt = null;
     state.extraPrompt = null;
     state.currentResolution = { width: 1365, height: 768 };
@@ -2873,6 +2882,7 @@ export function makeCommandHandler(deps) {
         faceSuperN:                state.faceSuperN,
         autoFaceDetail:            state.autoFaceDetail,
         lastFaceDetailPrompt:      state.lastFaceDetailPrompt,
+        lastVideoMeta:             state.lastVideoMeta,
         lastInpaintingPrompt:      state.lastInpaintingPrompt,
         extraPrompt:               state.extraPrompt,
       });
@@ -2917,6 +2927,8 @@ export function makeCommandHandler(deps) {
       if (s.faceSuperN !== undefined) state.faceSuperN = s.faceSuperN;
       state.autoFaceDetail              = s.autoFaceDetail;
       state.lastFaceDetailPrompt        = s.lastFaceDetailPrompt;
+      // Guarded: snapshots pushed before the Clone button existed have no key.
+      if (s.lastVideoMeta !== undefined) state.lastVideoMeta = s.lastVideoMeta;
       state.lastInpaintingPrompt        = s.lastInpaintingPrompt;
       state.extraPrompt                 = s.extraPrompt;
       deps.updateHeaderStatus();

@@ -522,6 +522,29 @@ function openVideoMetaEditor(url, wrap) {
     return { prompt, action, audio };
   };
 
+  // Clone — refill the three fields from the last video that was actually generated
+  // (state.lastVideoMeta, recorded in runImage2Video). It only fills the inputs; nothing
+  // is committed until Apply or Start, so a cloned prompt that doesn't suit this image
+  // can be edited or simply ignored.
+  const cloneBtn = document.createElement('button');
+  cloneBtn.className = 'sel-btn';
+  cloneBtn.textContent = '📋';
+  cloneBtn.style.cssText = 'flex:none;padding:2px 8px;font-size:0.85rem;line-height:1.2';
+  if (state.lastVideoMeta) {
+    cloneBtn.title = 'Clone the last metadata used for a video';
+    cloneBtn.addEventListener('click', () => {
+      const last = state.lastVideoMeta || {};
+      promptInput.value = last.prompt || '';
+      actionInput.value = last.action || '';
+      audioInput.value  = last.audio  || '';
+      promptInput.focus();
+    });
+  } else {
+    cloneBtn.disabled = true;
+    cloneBtn.title = 'No video generated yet in this chat';
+    cloneBtn.style.opacity = '0.4';
+  }
+
   const btnRow = document.createElement('div');
   btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
   const applyBtn = document.createElement('button');
@@ -569,7 +592,17 @@ function openVideoMetaEditor(url, wrap) {
   btnRow.appendChild(clearBtn);
   box.appendChild(btnRow);
 
-  const bubble = addMessage('bot', '<strong>Edit metadata</strong> <span style="color:#475569">(prompt · image2video action / audio)</span>').parentElement.querySelector('.bubble');
+  const bubble = addMessage('bot', '');
+  // Header row rather than an absolutely-positioned icon: addMessage already parks its
+  // ✕ dismiss button at top:6px/right:6px, so the padding-right reserves that corner and
+  // nothing shifts when the ✕ fades in on hover.
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding-right:26px';
+  const title = document.createElement('div');
+  title.innerHTML = '<strong>Edit metadata</strong> <span style="color:#475569">(prompt · image2video action / audio)</span>';
+  header.appendChild(title);
+  header.appendChild(cloneBtn);
+  bubble.appendChild(header);
   bubble.appendChild(box);
   scrollBottom();
 }
@@ -819,6 +852,20 @@ function startImage2VideoFor(url, btn) {
 
 function runImage2Video(prompt, image) {
   state.iterationsFromSequence = false;
+  // Remember what this video was made from, for the metadata editor's Clone button.
+  // Every i2v launch funnels through here (the 🎬 overlay and Start buttons, the review
+  // grid's 🎬, the /i2v command), so this is the one place that needs to record it. The
+  // stored fields go in raw, not buildVideoPrompt's assembled output — cloning that back
+  // into the dialog would double up the Action:/Audio: segments on the next run.
+  const srcMeta = state.imageVideoMeta[image] || {};
+  const srcPrompt = state.imagePrompts[image] || '';
+  if (srcPrompt || srcMeta.action || srcMeta.audio) {
+    state.lastVideoMeta = {
+      prompt: srcPrompt,
+      action: srcMeta.action || '',
+      audio: srcMeta.audio || '',
+    };
+  }
   sendBtn.disabled = true;
   const lastFrame = (state.lastFrameUrl && state.lastFrameUrl !== image) ? state.lastFrameUrl : null;
   return runGeneration(prompt, '', null, {
@@ -1313,6 +1360,7 @@ function doRecordSave() {
         faceSuperN: state.faceSuperN,
         autoFaceDetail: state.autoFaceDetail,
         lastFaceDetailPrompt: state.lastFaceDetailPrompt,
+        lastVideoMeta: state.lastVideoMeta,
         lastInpaintingPrompt: state.lastInpaintingPrompt,
         extraPrompt: state.extraPrompt,
         currentDenoise: { ...state.currentDenoise },
@@ -1380,6 +1428,7 @@ function restoreSession(data) {
   state.faceSuperN = (s.faceSuperN !== undefined) ? s.faceSuperN : 1;
   if (s.autoFaceDetail          !== undefined) state.autoFaceDetail          = s.autoFaceDetail;
   if (s.lastFaceDetailPrompt    !== undefined) state.lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
+  if (s.lastVideoMeta           !== undefined) state.lastVideoMeta           = s.lastVideoMeta;
   if (s.lastInpaintingPrompt    !== undefined) state.lastInpaintingPrompt    = s.lastInpaintingPrompt;
   if (s.extraPrompt             !== undefined) state.extraPrompt             = s.extraPrompt;
   if (s.currentDenoise          !== undefined) state.currentDenoise          = { ...DEFAULT_DENOISE, ...s.currentDenoise };
