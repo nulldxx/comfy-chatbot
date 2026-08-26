@@ -2284,6 +2284,18 @@ const { handleSlashCommand, runDefaultMacroOnImage, newChat } = makeCommandHandl
   appendChatImage,
 });
 
+// Route the header "Sign out" link through /logoff rather than letting it navigate
+// straight to GET /logout. Both close the encrypted volumes, but going via the command
+// means a refusal ("2 job(s) still running") lands as a chat message the user is
+// already looking at, instead of a silent bounce back to the page.
+const signOutEl = document.getElementById('sign-out');
+if (signOutEl) {
+  signOutEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    handleSlashCommand('/logoff');
+  });
+}
+
 // Mount the expandable chat sidebar (collapsed by default). It reuses the
 // command handler and restoreSession, so it must init after both are defined.
 initSidebar({

@@ -140,14 +140,22 @@ class TestComfyChatbot(unittest.TestCase):
         self.assertIn('error', data)
 
     def test_logout(self):
-        with self.client.session_transaction() as sess:
-            sess['authenticated'] = True
-        response = self.client.get('/logout')
-        self.assertEqual(response.status_code, 302)
-        self.assertIn('/login', response.location)
-        response = self.client.get('/')
-        self.assertEqual(response.status_code, 302)
-        self.assertIn('/login', response.location)
+        # /logout now performs a full lockdown, which bumps the process-global auth
+        # epoch. Restore it, or every other test's forged session (which carries no
+        # epoch key, and so defaults to 0) is revoked for the rest of the run.
+        import app as app_module
+        original_epoch = app_module._auth_epoch
+        try:
+            with self.client.session_transaction() as sess:
+                sess['authenticated'] = True
+            response = self.client.get('/logout')
+            self.assertEqual(response.status_code, 302)
+            self.assertIn('/login', response.location)
+            response = self.client.get('/')
+            self.assertEqual(response.status_code, 302)
+            self.assertIn('/login', response.location)
+        finally:
+            app_module._auth_epoch = original_epoch
 
     def test_requests_module_available(self):
         import requests

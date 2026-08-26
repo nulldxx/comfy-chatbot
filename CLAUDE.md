@@ -186,8 +186,12 @@ archive and output volumes now depends on the login password, so a leaked compos
 The in-memory password and the mounted output volume used to persist for the whole
 life of the process, so a box left alone overnight sat decrypted. After
 `IDLE_TIMEOUT_SECONDS` (default `7200`; `0` disables) with no activity, the app logs
-everyone off, forgets the password and closes both volumes. **A restart or an idle
-lockdown means the next request lands on `/login`.**
+everyone off, forgets the password and closes both volumes. **A restart, an idle
+lockdown or a `/logoff` means the next request lands on `/login`.**
+
+- **`/logoff` (and the header *Sign out* link) do the same thing on demand** — see the
+  "On-demand lockdown" section below. The lockdown body lives in `app._lock_down()`;
+  `_idle_lock_down()` is now just that plus the idle-specific log line.
 
 - **`idle_lock.py`** holds one activity timestamp plus a watchdog daemon thread that
   ticks every `TICK_SECONDS`. `configure(timeout, on_idle, is_busy)` wires it from
@@ -217,6 +221,40 @@ lockdown means the next request lands on `/login`.**
   is idempotent and re-opens the output volume.
 - **Caveat**: the idle clock tracks *app* activity, which samba traffic does not
   touch — a long unattended copy over the `m` host mount can be cut off. Re-run `m`.
+
+### On-demand lockdown (`/logoff`, `/logout`)
+
+`/logoff` re-locks the appliance without waiting for the idle timeout: it closes both
+encrypted volumes, forgets the in-memory password, revokes every session cookie and
+sends the browser to `/login`. It is the same `app._lock_down()` the idle watchdog runs.
+
+- **`/logout` was the trap this fixes.** It used to pop the session cookie and *nothing
+  else* — both volumes stayed mounted, the plaintext password stayed in memory (so the
+  LUKS key was still derivable) and, because it never bumped the auth epoch, every other
+  outstanding cookie stayed valid. "Sign out" looked like it secured the box and didn't.
+  It now performs the full lockdown, so there is exactly one way to leave.
+- **`POST /api/logoff`** (`@login_required`) is the real implementation; `GET /logout`
+  is the no-JS/bookmark fallback running the same sequence. The header link
+  (`templates/index.html`, `#sign-out`) is wired in `chat.js` to call
+  `handleSlashCommand('/logoff')` rather than navigate, so a refusal shows up as a chat
+  message instead of a silent bounce.
+- **Refuses rather than half-doing it**, in both directions: while any job is
+  non-terminal (`_logoff_refusal()`, the same `TERMINAL_STATUSES` check `_idle_busy()`
+  uses — a sequence run can go 4h with no request, and unmounting the output volume
+  under it loses its work), and when `_lock_down()` returns `False` because
+  `archive_lock`/`output_mount_lock` is held. Both answer **409** and **leave the
+  session signed in** — signing out of a still-open appliance is the very thing being
+  removed.
+- **`idle_lock.note_locked_down()`** is called at the end of `_lock_down()` so the
+  watchdog doesn't repeat the work — and mislog it as an idle lockdown — when the clock
+  later runs out. `mark_activity()` clears the flag again on the next login.
+- **Cost:** every sign-out now pays the lazy output re-mount on next login (the
+  "🔒 Unlocking encrypted storage…" bubble). That is the point, but it makes signing
+  out non-trivial where it used to be free.
+- **Test note:** a lockdown bumps the process-global auth epoch, which revokes the
+  forged `sess['authenticated'] = True` sessions the rest of the suite relies on. Any
+  test that triggers one must save and restore `app._auth_epoch` (see
+  `tests/test_logoff.py` and `tests/test_idle_lock.py`).
 
 ## Known Pitfalls
 

@@ -89,6 +89,20 @@ def ensure_started():
     thread.start()
 
 
+def note_locked_down():
+    """Record that something else has already re-locked the appliance.
+
+    Called by app.py when a user asks for the lockdown explicitly (/logoff) rather
+    than waiting for the timeout. Without it the watchdog would still fire once the
+    clock ran out and repeat work that is already done — harmless (unmounting an
+    unmounted volume, clearing a cleared password) but it logs a misleading "idle
+    for Ns" and bumps the auth epoch a second time. mark_activity() clears the flag
+    again on the next login."""
+    global _locked_down
+    with _lock:
+        _locked_down = True
+
+
 def check_now(now=None):
     """Run a single idle check. Returns True if the lockdown fired on this call.
 

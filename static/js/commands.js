@@ -1200,6 +1200,7 @@ export function makeCommandHandler(deps) {
       { label: 'Restore last snapshot',               cmd: '/settings-restore',      mode: 'run'    },
       { label: 'Backup settings (ZIP)',               cmd: '/settings-backup',       mode: 'run'    },
       { label: 'Change login password',               cmd: '/change-password',       mode: 'run'    },
+      { label: 'Lock & sign out',                     cmd: '/logoff',                mode: 'run'    },
     ]},
   ];
 
@@ -2177,6 +2178,7 @@ export function makeCommandHandler(deps) {
         { sig: '/iterations <n>', desc: 'generate n images per prompt (default 1)' },
         { sig: '/jobs', desc: 'grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)' },
         { sig: '/last-sent', desc: 'show the last workflow submitted to ComfyUI with all replacements applied — downloadable as JSON' },
+        { sig: '/logoff', desc: 'lock the appliance now: close the encrypted volumes, forget the login password and sign out (the header <em>Sign out</em> link does the same)', notes: 'refuses while a generation is still running; log back in to unlock \u2014 the volumes take a few seconds to remount' },
         { sig: '/lora', desc: 'fuzzy-find a LoRA to insert (works anywhere in a prompt)' },
         { sig: '/macro-create <name>', desc: 'open an inline editor to define a named macro — a sequence of prompts and/or /commands run in order', notes: 'invoke the macro later by typing <code>#name</code> — e.g. <code>/macro-create warmup</code> then <code>#warmup</code><br>re-run <code>/macro-create name</code> to edit an existing macro' },
         { sig: '/macro-list', desc: 'list all defined macros with a delete button for each' },
@@ -2954,6 +2956,27 @@ export function makeCommandHandler(deps) {
         bubble.innerHTML = `<span style="color:#f87171">⚠ Purge failed: ${escapeHtml(err.message)}</span>`;
         scrollBottom();
       });
+      return;
+    }
+
+    if (cmd === '/logoff') {
+      const bubble = addMessage('bot', '<div class="status-text">Locking the appliance\u2026</div>').parentElement.querySelector('.bubble');
+      fetch('/api/logoff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok || !data.ok) throw new Error(data.error || 'Could not lock the appliance.');
+          bubble.innerHTML = '<span style="color:#4ade80">\u2713</span> Volumes closed \u2014 signing out\u2026';
+          scrollBottom();
+          window.location.href = '/login';
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">\u26a0 ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
       return;
     }
 

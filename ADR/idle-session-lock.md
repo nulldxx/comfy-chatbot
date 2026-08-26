@@ -12,9 +12,10 @@ depend on the login password (`ADR/archive-rekeying.md`). The plaintext password
 in memory for the life of the process (`auth_store._session_password`), and the output
 volume, once lazily mounted at first login, stays mounted for the container's whole life.
 
-Nothing dropped either one short of a container restart — `/logout` deliberately keeps
-the in-memory password (`app.py`, the comment there predates this change and still
-describes the explicit-logout path correctly). So a machine left alone overnight sat with:
+Nothing dropped either one short of a container restart — `/logout` deliberately kept
+the in-memory password. **Superseded:** `/logout` now performs the full lockdown too,
+and `/logoff` exposes it as a chat command; see `ADR/on-demand-lockdown.md`. So at the
+time of this record a machine left alone overnight sat with:
 
 - the output volume decrypted and ext4-mounted in the host namespace,
 - the derived key in RAM,
@@ -115,6 +116,9 @@ Returns `bool` so a deferred attempt is retried rather than leaving a half-locke
 Volume work happens before the credentials are dropped so "logged off" and "volumes
 closed" land together; the agent's `unmount` takes no passphrase, so the ordering is
 about atomicity, not capability. Agent failures are logged but never block the logoff.
+
+**Later:** this body was extracted to `app._lock_down()` so an explicit `/logoff` runs
+exactly the same sequence; `_idle_lock_down()` is now that call plus the idle log line.
 
 **No agent-side change was needed** — `handle_unmount` is already target-parameterised
 (`archive` / `output` / `host`).

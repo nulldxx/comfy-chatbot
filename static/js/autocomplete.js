@@ -58,6 +58,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/iterations',                   desc: 'set images generated per prompt',                                                    args: ' ' },
   { cmd: '/jobs',                         desc: 'show the last 10 server-side jobs (status, cancel, pull asset into chat)',           args: ''  },
   { cmd: '/last-sent',                    desc: 'show the last workflow sent to ComfyUI with all replacements (downloadable JSON)',     args: ''  },
+  { cmd: '/logoff',                       desc: 'lock the appliance: close the encrypted volumes and sign out',                       args: ''  },
   { cmd: '/lora',                         desc: 'fuzzy-find a LoRA to insert',                                                        args: ' ' },
   { cmd: '/macro-create',                 desc: 'create or update a macro (name + inline step editor)',                               args: ' ' },
   { cmd: '/macro-list',                   desc: 'list all defined macros',                                                            args: ''  },

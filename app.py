@@ -208,10 +208,20 @@ def login():
 
 @app.route("/logout")
 def logout():
-    # Deliberately keep the in-memory password: the output volume stays mounted in the
-    # host namespace regardless, and clearing it would only break archive ops for this
-    # single-user appliance. It is dropped naturally on process restart.
+    """Sign out and lock the appliance — the no-JS/bookmark route to the same thing
+    /api/logoff does (the header link and the /logoff command go through the API so
+    they can show a refusal in the chat).
+
+    This used to pop the cookie and nothing else, leaving both volumes mounted and the
+    password in memory: it looked like it secured the box and didn't. Now a sign-out
+    always locks, and when it can't (a job running, or the archive busy) it refuses and
+    sends the user back rather than signing them out of a still-open appliance."""
+    if not session.get("authenticated"):
+        return redirect(url_for("login"))
+    if _logoff_refusal() or not _lock_down():
+        return redirect(url_for("index"))
     session.pop("authenticated", None)
+    app.logger.info("logoff requested — closed the encrypted volumes")
     return redirect(url_for("login"))
 
 
@@ -2277,6 +2287,14 @@ def _start_lazy_output_mount() -> None:
     threading.Thread(target=_lazy_output_check_and_mount, daemon=True).start()
 
 
+def _running_job_count() -> int:
+    """How many jobs are still in flight. The one definition of "busy" shared by the
+    idle clock and the explicit lockdown, so the two can't drift apart."""
+    with jobs_lock:
+        return sum(1 for rec in jobs.values()
+                   if rec.get("status") not in TERMINAL_STATUSES)
+
+
 def _idle_busy() -> bool:
     """True while any job is still running, which suspends the idle clock.
 
@@ -2285,24 +2303,27 @@ def _idle_busy() -> bool:
     incoming request — a request-timestamp-only clock would log the user off and
     unmount the output volume from under it. Also covers /api/fscheck jobs, which
     hold archive_lock for up to FSCK_TIMEOUT."""
-    with jobs_lock:
-        return any(rec.get("status") not in TERMINAL_STATUSES
-                   for rec in jobs.values())
+    return _running_job_count() > 0
 
 
-def _idle_lock_down() -> bool:
-    """Re-lock the appliance after an idle timeout: close the encrypted volumes,
-    forget the in-memory login password and invalidate every session cookie.
+def _lock_down() -> bool:
+    """Re-lock the appliance: close the encrypted volumes, forget the in-memory login
+    password and invalidate every session cookie.
+
+    Two callers: the idle timeout (_idle_lock_down) and an explicit user request
+    (/logoff, /logout). Deliberately reason-agnostic — each caller logs its own why —
+    so that "the box is locked" means exactly one thing however it was reached.
 
     Returns True when the lockdown completed, False when it could not run right now
-    (a lock was held by an in-flight archive/fsck/mount) so idle_lock retries on the
-    next tick rather than leaving a half-locked state.
+    (a lock was held by an in-flight archive/fsck/mount). The idle path retries on the
+    next tick; the request paths report it and leave the session alone, rather than
+    leaving a half-locked state or a sign-out that didn't actually lock anything.
 
     Volume work happens before the credentials are dropped so that "logged off" and
     "volumes closed" land together. The agent's `unmount` action takes no passphrase,
     so the ordering is a matter of atomicity, not capability."""
     if not archive_lock.acquire(blocking=False):
-        app.logger.debug("idle lockdown deferred: archive busy")
+        app.logger.debug("lockdown deferred: archive busy")
         return False
     try:
         if ARCHIVE_VOLUME:
@@ -2316,28 +2337,28 @@ def _idle_lock_down() -> bool:
                         "volume": ARCHIVE_VOLUME,
                     })
                     if not resp.get("ok"):
-                        app.logger.warning("idle host-unmount failed: %s",
+                        app.logger.warning("lockdown host-unmount failed: %s",
                                            resp.get("error"))
             except RuntimeError as exc:
-                app.logger.warning("idle host-unmount failed: %s", exc)
+                app.logger.warning("lockdown host-unmount failed: %s", exc)
             # Belt and braces: close the archive if anything left it open.
             try:
                 _agent_request({"action": "unmount", "volume": ARCHIVE_VOLUME})
             except RuntimeError as exc:
-                app.logger.debug("idle archive unmount: %s", exc)
+                app.logger.debug("lockdown archive unmount: %s", exc)
 
         if OUTPUT_VOLUME:
             if not output_mount_lock.acquire(blocking=False):
-                app.logger.debug("idle lockdown deferred: output mount busy")
+                app.logger.debug("lockdown deferred: output mount busy")
                 return False
             try:
                 resp = _agent_request({"action": "unmount", "target": "output",
                                        "volume": OUTPUT_VOLUME})
                 if not resp.get("ok"):
-                    app.logger.warning("idle output unmount failed: %s",
+                    app.logger.warning("lockdown output unmount failed: %s",
                                        resp.get("error"))
             except RuntimeError as exc:
-                app.logger.warning("idle output unmount failed: %s", exc)
+                app.logger.warning("lockdown output unmount failed: %s", exc)
             finally:
                 output_mount_lock.release()
     finally:
@@ -2345,6 +2366,17 @@ def _idle_lock_down() -> bool:
 
     auth_store.clear_session_password()
     bump_auth_epoch()
+    # Tell the watchdog the work is already done, so a manual lockdown isn't repeated
+    # (and misreported as an idle one) when the clock later runs out.
+    idle_lock.note_locked_down()
+    return True
+
+
+def _idle_lock_down() -> bool:
+    """The idle timeout's lockdown callback — _lock_down plus the idle-specific log.
+    Wired into idle_lock.configure() below."""
+    if not _lock_down():
+        return False
     app.logger.info("idle for %ss — logged off and closed the encrypted volumes",
                     IDLE_TIMEOUT_SECONDS)
     return True
@@ -2364,6 +2396,42 @@ def _host_mount_active() -> bool:
     except RuntimeError:
         return False
     return bool(resp.get("host_mounted"))
+
+
+def _logoff_refusal():
+    """Why an explicit lockdown can't run right now, or None if it can.
+
+    Only reason so far: a job is still in flight. A sequence run drives its loop in a
+    daemon thread for up to COMFY_POLL_TIMEOUT_SECONDS (4h) with no incoming requests,
+    so unmounting the output volume under it would throw away everything it had left
+    to write. Same guard the idle clock uses (_idle_busy), surfaced as a message."""
+    running = _running_job_count()
+    if running:
+        return (f"{running} job(s) still running — wait for them to finish "
+                f"or cancel them first.")
+    return None
+
+
+@app.route("/api/logoff", methods=["POST"])
+@login_required
+def api_logoff():
+    """Lock the appliance on demand: close the encrypted volumes, forget the login
+    password and revoke every session cookie. The same thing the idle timeout does,
+    without the wait.
+
+    Refuses (409) rather than half-doing it, in both directions: while a job is
+    running, and while an archive/fsck/mount holds a lock. A sign-out that leaves the
+    volumes open is the exact trap this endpoint exists to remove, so on refusal the
+    session is deliberately left signed in."""
+    busy = _logoff_refusal()
+    if busy:
+        return jsonify({"error": busy}), 409
+    if not _lock_down():
+        return jsonify({"error": "The archive is busy right now — "
+                                 "try again in a moment."}), 409
+    session.pop("authenticated", None)
+    app.logger.info("logoff requested — closed the encrypted volumes")
+    return jsonify({"ok": True})
 
 
 # Wire the idle lock now that both callbacks (and everything they call) exist. The
