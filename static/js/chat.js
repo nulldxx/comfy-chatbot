@@ -3,7 +3,7 @@ import {
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
   buildVideoPrompt, i2vTooltip, COMFY_URL_DND_TYPE,
 } from './utils.js';
-import { state, DEFAULT_DENOISE, newReferences, cloneReferences } from './state.js';
+import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
 import {
   messagesEl, inputEl, sendBtn, slashAcEl,
   scrollBottom, addMessage, createMediaElement,
@@ -882,20 +882,29 @@ function runImage2Video(prompt, image) {
 // of suppressing a reference that is the triggered image itself (the backend then
 // falls back to the source image); the other slots pass straight through. Returns
 // null when nothing is pinned, so the payload key is omitted entirely.
+//
+// A switched-off row is masked to null here rather than being described on the wire:
+// the server has no notion of a parked reference, and an off row is meant to behave
+// in every way like an empty one.
 function referencesForRun(triggerImage) {
   const r = state.references || newReferences();
-  const images = (r.images || []).map(u => (u && u !== triggerImage) ? u : null);
-  // A video contributes its video and/or audio track; with both boxes unticked the
-  // clip is inactive, so send null and let the backend strip its loader node.
+  const on = (key, i) => referenceSlotEnabled(r, key, i);
+  const images = (r.images || []).map(
+    (u, i) => (u && u !== triggerImage && on('images', i)) ? u : null);
+  // A video contributes its video and/or audio track; with both boxes unticked (or the
+  // row switched off) the clip is inactive, so send null and let the backend strip its
+  // loader node.
   const srcVideos = (r.videos || []).slice();
   const videoTracks = srcVideos.map((url, i) => {
     const t = (r.videoTracks || [])[i] || {};
-    return { video: !!(url && t.video), audio: !!(url && t.audio) };
+    const live = !!url && on('videos', i);
+    return { video: !!(live && t.video), audio: !!(live && t.audio) };
   });
   const videos = srcVideos.map(
     (url, i) => (videoTracks[i].video || videoTracks[i].audio) ? url : null);
-  const out = { images, videos, videoTracks, audios: (r.audios || []).slice() };
-  const any = images.some(Boolean) || videos.some(Boolean) || out.audios.some(Boolean);
+  const audios = (r.audios || []).map((u, i) => (u && on('audios', i)) ? u : null);
+  const out = { images, videos, videoTracks, audios };
+  const any = images.some(Boolean) || videos.some(Boolean) || audios.some(Boolean);
   return any ? out : null;
 }
 

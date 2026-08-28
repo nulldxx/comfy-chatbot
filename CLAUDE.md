@@ -366,14 +366,15 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
   - **`ltx23-faceid_i2v.json`** — *reference text-to-video*: an **empty** latent (`EmptyLTXVLatentVideo`), so the video content comes entirely from the prompt + the identity reference. **No first frame.** Frames are computed internally (`SimpleCalculatorKJ` = `((duration*fps)//8)*8+1`), so it has **no** `<FRAMES>` slot; it uses `<PROMPT>`, `<REFERENCE_IMAGE_1>`, `<DURATION>`, `<FPS>`, `<VIDEO_WIDTH>`, `<VIDEO_HEIGHT>`.
   - **`ltx23-faceid-firstlast_i2v.json`** — the same identity graph with the proven first-frame (`LTXVImgToVideoInplace`) + optional last-frame (`LTXVAddGuide` @ `frame_idx = -1`) sub-chain spliced between the empty latent and `LTXVConcatAVLatent`, ahead of the identity node. Adds `<INPUT_IMAGE>`, `<INPUT_LAST_FRAME>`, `<LAST_FRAME_STRENGTH>` to the set above. The optional-end-frame handling is the **existing** `strip_last_frame_guide()` path (no end frame → strength `0.0`, guide chain removed, `LTXVConcatAVLatent` falls back to the first-frame `LTXVImgToVideoInplace` latent).
 - **The `<REFERENCE_IMAGE_1>` placeholder** is filled in `_run_generation_core` (`generation_service.py`), guarded on `"<REFERENCE_IMAGE_1>" in template`: reference image slot 1 (uploaded via `ComfyServer.upload_media`) if supplied, else a fallback to the already-uploaded `<INPUT_IMAGE>` filename (and if there's no source image either, the job errors). So slot 1 is the **mandatory override-with-fallback** reference: for the ref_t2v template the triggered image is the reference by default; for the first/last-frame template the **first frame** is the reference by default. Image slots 2–9 are optional/strippable. See the **References** section below for the full multi-slot scheme.
-- **UI:** `/references` opens a table whose rows are drop targets (images 1–9, videos 1–3 with per-clip video/audio track checkboxes, standalone audios 1–3); `runImage2Video`/`runText2Video` send a `references` object to `/api/image2video`/`/api/text2video`. Only **image 1** is used by the LTX face-ID templates (and it's suppressed when it equals the triggered image, so the backend's `<INPUT_IMAGE>` fallback applies). Pick a template with `/i2v-workflow`.
+- **UI:** `/references` opens a table whose rows are drop targets (images 1–9, videos 1–3 with per-clip video/audio track checkboxes, standalone audios 1–3), each with an on/off switch; `runImage2Video`/`runText2Video` send a `references` object to `/api/image2video`/`/api/text2video`. Only **image 1** is used by the LTX face-ID templates (and it's suppressed when it equals the triggered image, so the backend's `<INPUT_IMAGE>` fallback applies). Pick a template with `/i2v-workflow`.
 - **⚠ Experimental composition:** in `ltx23-faceid-firstlast_i2v.json` the last-frame `LTXVAddGuide` and the identity overlap both add/crop guide frames (the graph's `LTXVCropGuides` uses the identity node's conditioning, not the AddGuide's). This combination must be **test-rendered in the ComfyUI editor**; if the last-frame guide isn't cropped cleanly, move the `AddGuide` to operate on the identity node's output latent/conditioning instead of before it, then re-export.
 
 ### References (`/references`) detail
 
 `/references` replaced the single-slot `/i2v-set-ref-image` with a table of reference
 assets for video workflows: **9 images + 3 videos + 3 standalone audios** (MiniMax H3
-R2V), capped at **12 files in total**, of which LTX face-ID uses only image 1.
+R2V), capped at **12 files in total**, of which LTX face-ID uses only image 1. Each row
+has an **on/off switch** so a reference can be parked without being deleted.
 
 A reference **video is one clip with two usable tracks** — ComfyUI's VHS
 `Load Video (Upload)` node emits AUDIO alongside IMAGE — so each video row has **two
@@ -381,12 +382,13 @@ checkboxes**, video and audio, both ticked by default. There are no separate
 "video-paired audio" upload slots; that audio was never an independent asset, and
 pairing it by array index was only ever a convention nothing enforced.
 
-- **State**: `state.references = { images: [9], videos: [3], videoTracks: [3], audios: [3] }`,
-  where `videoTracks[i]` is `{video, audio}` for `videos[i]` (`state.js`,
-  `newReferences()`/`cloneReferences()`, slot counts in `REFERENCE_SLOT_COUNTS` — which
-  deliberately excludes `videoTracks`, being the source of truth for "array of
-  URL-or-null" groups — defaults in `REFERENCE_TRACK_DEFAULT`, cap in
-  `REFERENCE_MAX_FILES`). Persisted with the chat session (`saveSession`/`restoreSession`),
+- **State**: `state.references = { images: [9], videos: [3], videoTracks: [3], audios: [3],
+  enabled: {images: [9], videos: [3], audios: [3]} }`, where `videoTracks[i]` is
+  `{video, audio}` for `videos[i]` and `enabled[key][i]` is the row's on/off switch
+  (`state.js`, `newReferences()`/`cloneReferences()`, slot counts in
+  `REFERENCE_SLOT_COUNTS` — which deliberately excludes `videoTracks`, being the source
+  of truth for "array of URL-or-null" groups — defaults in `REFERENCE_TRACK_DEFAULT`,
+  cap in `REFERENCE_MAX_FILES`). Persisted with the chat session (`saveSession`/`restoreSession`),
   the `/settings-save` stack, and reset in `newChat` — none of which needed changing when
   the shape changed, because they all funnel through `cloneReferences`. That function
   migrates the pre-expansion shape (a 3-image array + scalar `video`/`videoAudio`/`audio`)
@@ -394,9 +396,22 @@ pairing it by array index was only ever a convention nothing enforced.
   orphaned one, with no video in the slot, is dropped). An old session's `refImageUrl`
   lands in `images[0]`. Accepted loss: the old table could pair a video with a
   *different* audio file — that can't survive the one-clip model.
+- **Per-row enable switch**: every row carries an on/off switch (`references.enabled`)
+  that **parks** a reference — the URL and, for a video, its track ticks are kept, but the
+  row is charged **nothing** against the cap and sent as **empty**, so switching sets in
+  and out doesn't mean re-uploading. Absent flags read as *on*, so a session or payload
+  from before the switches existed behaves exactly as it did (`referenceSlotEnabled`).
+  Attaching a file re-enables a parked row (dropping a file is an unambiguous "I want
+  this"); `✕` resets the flag, so an empty slot never carries hidden state. Off is
+  distinct from a video's **inactive** (on, but neither track ticked) — the row caption
+  says which. Purely client-side: `referencesForRun` (`chat.js`) masks an off row to
+  `null`, so the wire format and `_resolve_references` are untouched.
 - **12-file cap**: a video charges **once per ticked track**, so a both-tracks clip costs
-  2 and an untouched-but-inactive clip costs 0. Enforced client-side (`countReferenceFiles`
-  + the live `n / 12` counter and a per-row `2 files`/`1 file`/`inactive` caption; a drop
+  2 and an untouched-but-inactive clip costs 0; a switched-off row costs 0 whatever it
+  holds. Enforced client-side (`countReferenceFiles`/`referenceSlotCost` + the live
+  `n / 12` counter and a per-row `2 files`/`1 file`/`inactive`/`off` caption; the three
+  edits that can change a row's price — filling it, ticking a track, switching it on —
+  all go through one prospective-cost check, `refWouldExceed` in `commands.js`; a drop
   with exactly one slot free lands video-only rather than being refused) and server-side
   (`_resolve_references` in `app.py` returns **400** over `REFERENCE_MAX_FILES`, which
   now lives in `config.py` so both sides quote one number).

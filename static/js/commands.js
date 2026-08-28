@@ -4,7 +4,7 @@ import {
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE,
 } from './utils.js';
-import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles } from './state.js';
+import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles, referenceSlotCost } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
@@ -95,25 +95,42 @@ function refTracks(slot) {
   return r.videoTracks[slot.index];
 }
 
-// Turn one track of a video slot on/off. Ticking is a +1 against the cap that doesn't
-// go through setSlot, so it needs its own check. Returns false if refused.
+// Enable flag for a row, created on demand (on by default). A switched-off row keeps
+// its URL and its track ticks but is charged nothing and sent as empty.
+function refEnabled(slot) {
+  const r = state.references || (state.references = newReferences());
+  if (!r.enabled || typeof r.enabled !== 'object') r.enabled = {};
+  if (!Array.isArray(r.enabled[slot.key])) r.enabled[slot.key] = [];
+  const arr = r.enabled[slot.key];
+  if (arr[slot.index] === undefined) arr[slot.index] = true;
+  return arr[slot.index];
+}
+
+function refEnabledSet(slot, on) {
+  refEnabled(slot);                                    // materialise the array
+  state.references.enabled[slot.key][slot.index] = on;
+}
+
+// Three different edits can change what a row charges against the 12-file cap — filling
+// it, ticking a track, switching it on — so they all price the change the same way:
+// total, minus what this row costs now, plus what it would cost after. `next` overrides
+// any of {url, enabled, tracks}; the rest is read from the row's current state.
+function refWouldExceed(slot, next) {
+  const url     = 'url'     in next ? next.url     : refSlotGet(slot);
+  const enabled = 'enabled' in next ? next.enabled : refEnabled(slot);
+  const tracks  = 'tracks'  in next ? next.tracks  : (slot.tracks ? refTracks(slot) : null);
+  const now = referenceSlotCost(slot.key, refSlotGet(slot), refEnabled(slot),
+                                slot.tracks ? refTracks(slot) : null);
+  const after = referenceSlotCost(slot.key, url, enabled, tracks);
+  return countReferenceFiles(state.references) - now + after > REFERENCE_MAX_FILES;
+}
+
+// Turn one track of a video slot on/off. Returns false if refused by the cap.
 function refTrackSet(slot, track, on) {
   const t = refTracks(slot);
-  if (on && !t[track] && countReferenceFiles(state.references) >= REFERENCE_MAX_FILES) return false;
+  if (refWouldExceed(slot, { tracks: { ...t, [track]: on } })) return false;
   t[track] = on;
   return true;
-}
-
-// What newly filling this slot costs: a video defaults to both tracks, so 2 files.
-function refSlotFillCost(slot) {
-  return slot.tracks ? 2 : 1;
-}
-
-// Reject a new (non-empty) value that would push the total over the 12-file cap.
-// Replacing an already-filled slot, or clearing one, is always allowed.
-function refSlotWouldExceed(slot, url) {
-  if (!url || refSlotGet(slot)) return false;
-  return countReferenceFiles(state.references) + refSlotFillCost(slot) > REFERENCE_MAX_FILES;
 }
 
 function renderReferencesTable() {
@@ -144,7 +161,8 @@ function renderReferencesTable() {
   hint.innerHTML = 'Drag a chat image/video onto a row, or drop a file from your desktop (click a row to browse). ' +
     'Images and videos can also come from the chat; standalone audio must be uploaded. Only <strong>Image 1</strong> ' +
     'is used by LTX face-ID (as the mandatory reference). A reference video counts once per track you tick — using ' +
-    `both its video and its audio costs 2 of the ${REFERENCE_MAX_FILES}.`;
+    `both its video and its audio costs 2 of the ${REFERENCE_MAX_FILES}. Use the switch to park a reference: it keeps ` +
+    'the file (and its track ticks) but is not sent and costs nothing, so you can swap sets without re-uploading.';
   wrap.appendChild(hint);
 
   refreshCount();
@@ -178,6 +196,28 @@ function buildReferenceRow(slot, onChange) {
   clearBtn.textContent = '✕';
   clearBtn.title = 'Clear this reference';
   clearBtn.style.cssText = 'flex:none;width:28px;padding:2px 0;font-size:0.9rem;line-height:1;color:#94a3b8';
+
+  // Enable switch: parks a reference without discarding it. Off costs nothing against
+  // the 12-file budget and is sent as empty, so it is a real "not using this right now"
+  // rather than a dimmed decoration. Meaningless on an empty row, so disabled there.
+  const enableWrap = document.createElement('label');
+  enableWrap.className = 'ref-switch';
+  const enableInput = document.createElement('input');
+  enableInput.type = 'checkbox';
+  const enableKnob = document.createElement('span');
+  enableKnob.className = 'ref-switch-track';
+  enableWrap.appendChild(enableInput);
+  enableWrap.appendChild(enableKnob);
+  enableInput.addEventListener('change', () => {
+    if (enableInput.checked && refWouldExceed(slot, { enabled: true })) {
+      enableInput.checked = false;
+      flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
+      return;
+    }
+    refEnabledSet(slot, enableInput.checked);
+    render();
+    notifyChange();
+  });
 
   // Video rows only: two checkboxes selecting which tracks of the one attached clip
   // are fed to the workflow, plus a caption spelling out what that costs against the
@@ -214,19 +254,37 @@ function buildReferenceRow(slot, onChange) {
     trackBox.appendChild(trackCaption);
   }
 
-  function syncTracks() {
-    if (!slot.tracks) return;
+  // Reflect the enable flag: the switch itself, the row's dimming, and whether the
+  // track boxes can be reached at all (an off row feeds nothing, ticks or no ticks).
+  function syncEnabled() {
     const url = refSlotGet(slot);
+    const on = refEnabled(slot);
+    enableInput.checked = on;
+    enableInput.disabled = !url;
+    enableWrap.title = !url ? 'Nothing to switch off'
+      : (on ? 'Switch this reference off (kept, but not used or counted)'
+            : 'Switch this reference back on');
+    // "off" (switched out) and "inactive" (on, but a video with no track ticked) are
+    // different states; off wins the dimming and the caption.
+    const off = url && !on;
+    labelBox.style.opacity = off ? '0.45' : '1';
+    zone.style.opacity = off ? '0.45' : '1';
+    return { url, on, off };
+  }
+
+  function syncTracks() {
+    const { url, on, off } = syncEnabled();
+    if (!slot.tracks) return;
     const t = refTracks(slot);
     ['video', 'audio'].forEach(track => {
       trackInputs[track].checked = !!t[track];
-      trackInputs[track].disabled = !url;
+      trackInputs[track].disabled = !url || !on;
     });
     const n = (t.video ? 1 : 0) + (t.audio ? 1 : 0);
-    const inactive = url && n === 0;
-    trackCaption.textContent = !url ? '' : (inactive ? 'inactive' : `${n} file${n === 1 ? '' : 's'}`);
-    trackCaption.style.color = inactive ? '#fbbf24' : '#475569';
-    zone.style.opacity = inactive ? '0.5' : '1';
+    const inactive = url && on && n === 0;
+    trackCaption.textContent = !url ? '' : (off ? 'off' : (inactive ? 'inactive' : `${n} file${n === 1 ? '' : 's'}`));
+    trackCaption.style.color = (off || inactive) ? '#fbbf24' : '#475569';
+    if (!off) zone.style.opacity = inactive ? '0.5' : '1';
   }
 
   function flashMsg(msg, colour) {
@@ -246,8 +304,9 @@ function buildReferenceRow(slot, onChange) {
   const flashError = msg => flashMsg(msg, '#f87171');
   const flashNote  = msg => flashMsg(msg, '#fbbf24');
 
-  // render() = the dropzone contents plus, on a video row, the track checkboxes.
-  // renderZone has early returns, so the track refresh can't just be appended to it.
+  // render() = the dropzone contents plus the enable switch and, on a video row, the
+  // track checkboxes. renderZone has early returns, so those refreshes can't just be
+  // appended to it.
   function render() { renderZone(); syncTracks(); }
 
   function renderZone() {
@@ -273,22 +332,33 @@ function buildReferenceRow(slot, onChange) {
     clearBtn.style.visibility = 'visible';
   }
 
+  // Would setSlot(url) be accepted, and would it have to degrade the clip to fit?
+  // Attaching a file is an unambiguous "I want this", so it switches a parked row back
+  // on and is priced as enabled. acceptFile asks the same question *before* uploading,
+  // which is why this is a predicate rather than logic inlined in setSlot.
+  function fitCheck(url) {
+    if (!url || !refWouldExceed(slot, { url, enabled: true })) return { ok: true };
+    // A fresh video costs 2 (both tracks). With exactly one file left, take it
+    // video-only rather than refusing — otherwise the last slot looks broken.
+    const tracks = { video: true, audio: false };
+    if (slot.tracks && !refWouldExceed(slot, { url, enabled: true, tracks })) {
+      return { ok: true, tracks };
+    }
+    return { ok: false };
+  }
+
   function setSlot(url) {
-    if (refSlotWouldExceed(slot, url)) {
-      // A fresh video costs 2 (both tracks). With exactly one file left, take it
-      // video-only rather than refusing — otherwise the last slot looks broken.
-      const free = REFERENCE_MAX_FILES - countReferenceFiles(state.references);
-      if (!(slot.tracks && url && !refSlotGet(slot) && free === 1)) {
-        flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
-        return false;
-      }
-      refSlotSet(slot, url);
-      Object.assign(refTracks(slot), { video: true, audio: false });
-      flashNote('only 1 slot left — audio track off');
-      notifyChange();
-      return true;
+    const fit = fitCheck(url);
+    if (!fit.ok) {
+      flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
+      return false;
     }
     refSlotSet(slot, url);
+    if (url) refEnabledSet(slot, true);
+    if (fit.tracks) {
+      Object.assign(refTracks(slot), fit.tracks);
+      flashNote('only 1 slot left — audio track off');
+    }
     render();
     notifyChange();
     return true;
@@ -299,7 +369,7 @@ function buildReferenceRow(slot, onChange) {
     const type = file.type || '';
     if (!type.startsWith(slot.kind + '/')) { flashError(`Expected a ${slot.kind} file`); return; }
     // Check the cap before uploading, so we don't push a file to the server we'd reject.
-    if (refSlotWouldExceed(slot, 'pending')) {
+    if (!fitCheck('pending').ok) {
       flashError(`Reference limit reached (${REFERENCE_MAX_FILES} files total)`);
       return;
     }
@@ -327,6 +397,8 @@ function buildReferenceRow(slot, onChange) {
   clearBtn.addEventListener('click', e => {
     e.stopPropagation();
     refSlotSet(slot, null);
+    // An empty slot must never carry hidden state, so both flag sets go back to default.
+    refEnabledSet(slot, true);
     if (slot.tracks) Object.assign(refTracks(slot), REFERENCE_TRACK_DEFAULT);
     render();
     notifyChange();
@@ -335,6 +407,7 @@ function buildReferenceRow(slot, onChange) {
   row.appendChild(labelBox);
   row.appendChild(zone);
   if (trackBox) row.appendChild(trackBox);
+  row.appendChild(enableWrap);
   row.appendChild(clearBtn);
   row.appendChild(fileInput);
   render();
@@ -2167,7 +2240,7 @@ export function makeCommandHandler(deps) {
         { sig: '/i2v-replacement-reset', desc: 'clear all image2video replacements' },
         { sig: '/i2v-set-prompt <prompt>', desc: 'override prompt used by <code>/i2v</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
         { sig: '/i2v-set-prompt-reset', desc: 'clear the override prompt' },
-        { sig: '/references', desc: 'open the reference-asset table — drag chat images/videos or drop desktop image/video/audio files into the slots', notes: 'up to 9 reference images + 3 videos (tick the video and/or audio track of each) + 3 standalone audios, capped at 12 files in total (MiniMax H3 R2V) &nbsp;·&nbsp; a video costs one file per ticked track &nbsp;·&nbsp; LTX face-ID uses only Image&nbsp;1 (its mandatory reference) &nbsp;·&nbsp; images and videos can be chat media or uploads, standalone audio must be uploaded &nbsp;·&nbsp; persists with the chat session and the <code>/settings-save</code> stack' },
+        { sig: '/references', desc: 'open the reference-asset table — drag chat images/videos or drop desktop image/video/audio files into the slots', notes: 'up to 9 reference images + 3 videos (tick the video and/or audio track of each) + 3 standalone audios, capped at 12 files in total (MiniMax H3 R2V) &nbsp;·&nbsp; each row has an on/off switch — off keeps the file but sends nothing and costs nothing &nbsp;·&nbsp; a video costs one file per ticked track &nbsp;·&nbsp; LTX face-ID uses only Image&nbsp;1 (its mandatory reference) &nbsp;·&nbsp; images and videos can be chat media or uploads, standalone audio must be uploaded &nbsp;·&nbsp; persists with the chat session and the <code>/settings-save</code> stack' },
         { sig: '/i2v-workflow [name]', desc: 'choose which image2video workflow <code>/i2v</code> uses (no arg = picker)' },
         { sig: '/i2v-workflow-reset', desc: 'reset the image2video workflow to its default' },
         { sig: '/image-settings', desc: 'set resolution &amp; generation steps for image generation', notes: 'resolution presets: ipad, hd, fhd, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; tick <em>Use workflow default</em> to ignore the override &nbsp;·&nbsp; steps does not affect face-detail, upscale, image2image or image2video' },

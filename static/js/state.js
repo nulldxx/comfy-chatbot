@@ -60,6 +60,28 @@ function padTracks(arr, n, legacyAudios, videos) {
   return out;
 }
 
+// Pad/trim one group's enable flags to exactly n entries. Anything absent — an empty
+// slot, a whole group, a session saved before the toggles existed — is on, so a
+// restored table behaves exactly as it did before this flag existed.
+function padEnabled(arr, n) {
+  const src = Array.isArray(arr) ? arr : [];
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(src[i] === undefined ? true : !!src[i]);
+  return out;
+}
+
+// The enable flags for every slot group, keyed like REFERENCE_SLOT_COUNTS. A disabled
+// slot keeps its URL (and, for a video, its track ticks) but is charged nothing against
+// the cap and sent as empty — the whole point being to park a reference without losing
+// it. Kept parallel to the URL arrays rather than boxing each slot into an object so
+// the existing padSlots/countReferenceFiles shape survives untouched.
+function padEnabledGroups(src) {
+  const r = src || {};
+  const out = {};
+  for (const [key, n] of Object.entries(REFERENCE_SLOT_COUNTS)) out[key] = padEnabled(r[key], n);
+  return out;
+}
+
 // Fresh, empty reference-slot structure for the /references table. A factory (not a
 // shared const) so newChat / restore each get their own object rather than aliasing.
 export function newReferences() {
@@ -68,6 +90,7 @@ export function newReferences() {
     videos:      padSlots([], REFERENCE_SLOT_COUNTS.videos),
     videoTracks: padTracks([], REFERENCE_SLOT_COUNTS.videos),
     audios:      padSlots([], REFERENCE_SLOT_COUNTS.audios),
+    enabled:     padEnabledGroups(null),
   };
 }
 
@@ -91,23 +114,39 @@ export function cloneReferences(refs) {
     videoTracks: padTracks(r.videoTracks, REFERENCE_SLOT_COUNTS.videos,
                            legacy(r.videoAudios, r.videoAudio), videos),
     audios:      padSlots(legacy(r.audios, r.audio), REFERENCE_SLOT_COUNTS.audios),
+    enabled:     padEnabledGroups(r.enabled),
   };
 }
 
-// Files charged against the 12-file cap. Images and standalone audios cost 1 each; a
-// video costs one per track ticked (both = 2, one = 1, neither = 0 — the clip is
-// attached but inactive). Flags on an empty slot cost nothing.
+// Whether slot i of group `key` is switched on. Absent flags read as on, so a payload
+// from a client that predates the toggles is counted exactly as it used to be.
+export function referenceSlotEnabled(refs, key, i) {
+  const g = (refs || {}).enabled;
+  const arr = g && Array.isArray(g[key]) ? g[key] : null;
+  return !arr || arr[i] === undefined ? true : !!arr[i];
+}
+
+// Files charged against the 12-file cap by one slot, given its URL and flags. Images
+// and standalone audios cost 1; a video costs one per track ticked (both = 2, one = 1,
+// neither = 0 — the clip is attached but inactive). An empty or switched-off slot costs
+// nothing, which is what makes disabling a row a way to free budget rather than a
+// cosmetic dimming. Exported because the /references table needs to price a prospective
+// edit (fill, tick, enable) before applying it.
+export function referenceSlotCost(key, url, enabled, tracks) {
+  if (!url || !enabled) return 0;
+  if (key !== 'videos') return 1;
+  const t = tracks || {};
+  return (t.video ? 1 : 0) + (t.audio ? 1 : 0);
+}
+
+// Total files charged against the 12-file cap.
 export function countReferenceFiles(refs) {
   const r = refs || {};
+  const tracks = Array.isArray(r.videoTracks) ? r.videoTracks : [];
   return Object.keys(REFERENCE_SLOT_COUNTS).reduce((n, k) => {
     const arr = Array.isArray(r[k]) ? r[k] : [];
-    if (k !== 'videos') return n + arr.filter(Boolean).length;
-    const tracks = Array.isArray(r.videoTracks) ? r.videoTracks : [];
-    return n + arr.reduce((m, url, i) => {
-      if (!url) return m;
-      const t = tracks[i] || {};
-      return m + (t.video ? 1 : 0) + (t.audio ? 1 : 0);
-    }, 0);
+    return n + arr.reduce((m, url, i) => m + referenceSlotCost(
+      k, url, referenceSlotEnabled(r, k, i), tracks[i]), 0);
   }, 0);
 }
 
@@ -185,7 +224,9 @@ export const state = {
   // identity reference (falls back to the triggered image when null); slots 2/3 and
   // the video/audio slots drive MiniMax H3 (R2V) workflows. Images hold gallery
   // /images/ URLs; video may be a gallery or /references-file/ URL; audio is always
-  // a /references-file/ URL. See newReferences() for the shape.
+  // a /references-file/ URL. Each slot also carries an enable flag (references.enabled)
+  // so a reference can be switched off — costing nothing, sent as empty — without
+  // being thrown away. See newReferences() for the shape.
   references:                  newReferences(),
 
   // Active slideshow controller (keyboard navigation target)

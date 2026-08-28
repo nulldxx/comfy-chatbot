@@ -1267,3 +1267,62 @@ header a:hover { color: #a78bfa; }
   max-height: 3.6em;
   overflow: hidden;
 }
+
+/* Enable/disable switch on a /references row. A switched-off reference is kept
+   (URL and video-track ticks intact) but charged nothing against the 12-file cap
+   and sent as empty, so the control has to read as a hard on/off rather than a
+   styling state — hence a switch, not another checkbox next to the track boxes. */
+.ref-switch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.ref-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.ref-switch-track {
+  position: relative;
+  display: block;
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  transition: background .15s, border-color .15s;
+}
+.ref-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #64748b;
+  transition: transform .15s, background .15s;
+}
+.ref-switch input:checked + .ref-switch-track {
+  background: #4c1d95;
+  border-color: #7c3aed;
+}
+.ref-switch input:checked + .ref-switch-track::after {
+  transform: translateX(14px);
+  background: #c4b5fd;
+}
+.ref-switch input:disabled + .ref-switch-track {
+  opacity: 0.35;
+}
+.ref-switch input:disabled {
+  cursor: default;
+}
+.ref-switch:has(input:disabled) {
+  cursor: default;
+}
+.ref-switch input:focus-visible + .ref-switch-track {
+  outline: 2px solid #7c3aed;
+  outline-offset: 2px;
+}
