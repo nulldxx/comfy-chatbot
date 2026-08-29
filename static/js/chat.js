@@ -17,6 +17,7 @@ import {
 import { openMaskEditor, buildComparisonSlider, buildFaceSuperTiles, openCropEditor } from './editors.js';
 import { makeCommandHandler } from './commands.js';
 import { initSidebar } from './sidebar.js';
+import { initMediaMenu } from './mediamenu.js';
 
 // ---------------------------------------------------------------------------
 // LoRA catalogue and alias catalogue — populated from server on load
@@ -2313,3 +2314,7 @@ initSidebar({
   getRecordingName: () => state.recordingName,
   setRecordingName: (n) => { state.recordingName = n; },
 });
+
+// Reclaim the right-click menu over generated images and videos (Save / Copy /
+// Copy seed). One delegated listener on document — see mediamenu.js.
+initMediaMenu();

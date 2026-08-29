@@ -135,6 +135,16 @@ _best_effort_mkdir(INPAINT_INPUTS_DIR)
 # survive reload, so files here persist with stable /references-file/<name> URLs.
 REFERENCES_DIR = IMAGES_DIR / '.references'
 _best_effort_mkdir(REFERENCES_DIR)
+# Per-image seed index (the right-click "Copy seed" menu item): a flat JSON map of
+# output filename -> the seed that produced it, written by every generation. A single
+# dot-prefixed FILE rather than a directory of sidecars, so it can't be mistaken for
+# gallery media: select_images() filters on MEDIA_EXTS, so this is never listed by
+# /api/images nor swept into an archive. See seed_store.py.
+SEEDS_FILE = IMAGES_DIR / '.seeds.json'
+# Cap on the number of remembered seeds. Past this the store drops entries whose
+# image no longer exists, then oldest-first — so archiving (which moves files out of
+# IMAGES_DIR) self-heals with no hook of its own.
+SEED_STORE_MAX = 5000
 
 # Archive config — the /archive-* commands copy images into an encrypted volume
 # and then delete the originals (move semantics). The container is unprivileged

@@ -41,6 +41,7 @@ COPY gunicorn.conf.py .
 COPY idle_lock.py .
 COPY image_store.py .
 COPY persistence.py .
+COPY seed_store.py .
 COPY workflow.py .
 COPY docker-entrypoint.sh .
 COPY templates/ templates/

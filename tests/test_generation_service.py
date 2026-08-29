@@ -17,6 +17,8 @@ import requests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import generation_service as gs
+import seed_store
+import shutil
 
 
 def _drain(channel):
@@ -74,6 +76,125 @@ class RunGenerationWrapperTests(unittest.TestCase):
         err = [m for m in _drain(gs.jobs[job_id]["channel"]) if m["type"] == "error"][0]
         self.assertEqual(err["message"], "boom")
         self.assertEqual(gs.jobs[job_id]["status"], "error")
+
+
+class CoreSeedRecordingTests(unittest.TestCase):
+    """_run_generation_core links each output file to the seed that made it.
+
+    This is the only place the seed and the final filenames are both in scope, and
+    the whole "Copy seed" menu item hangs off it, so the core is driven for real
+    here (everything else in this file mocks it out) with a stub ComfyUI server.
+    """
+
+    TEMPLATE = json.dumps({
+        "1": {"class_type": "KSampler",
+              "inputs": {"seed": 0, "text": "<PROMPT>"}},
+    })
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.root = Path(self.tmp)
+        self.images_dir = self.root / "images"
+        self.images_dir.mkdir()
+        self.wf_dir = self.root / "workflows"
+        self.wf_dir.mkdir()
+        (self.wf_dir / "t2i.json").write_text(self.TEMPLATE)
+
+        self.submitted = {}
+
+        outer = self
+
+        class FakeServer:
+            def __init__(self, address):
+                pass
+
+            def submit_workflow(self, workflow):
+                outer.submitted["workflow"] = workflow
+                return "prompt-id-1234"
+
+            def poll_status(self, *a, **k):
+                return {"outputs": {}}
+
+            def get_output_images(self, prompt_data):
+                return ["out.png"]
+
+            def download_images(self, images, dest_dir):
+                paths = []
+                for name in images:
+                    p = Path(dest_dir) / name
+                    p.write_bytes(b"\x89PNG\r\n\x1a\n")
+                    paths.append(p)
+                return paths
+
+        self._patchers = [
+            patch.object(gs, "ComfyServer", FakeServer),
+            patch.object(gs, "IMAGES_DIR", self.images_dir),
+            patch.object(gs, "purge_generation_started", lambda *a, **k: None),
+            patch.object(gs, "purge_generation_finished", lambda *a, **k: None),
+            patch.object(seed_store, "IMAGES_DIR", self.images_dir),
+            patch.object(seed_store, "SEEDS_FILE", self.images_dir / ".seeds.json"),
+        ]
+        for p in self._patchers:
+            p.start()
+
+        self.job_id = "job-1"
+        self.channel = gs._JobChannel()
+        gs.jobs[self.job_id] = {"prompt_id": None}
+
+    def tearDown(self):
+        for p in self._patchers:
+            p.stop()
+        gs.jobs.pop(self.job_id, None)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, **kwargs):
+        return gs._run_generation_core(
+            self.job_id, self.channel, threading.Event(),
+            "a cat", [], "127.0.0.1:8188", "unix", "t2i",
+            workflow_dir=self.wf_dir, **kwargs,
+        )
+
+    def _recorded(self, urls):
+        return [seed_store.get_seed(u.split("/")[-1]) for u in urls]
+
+    def test_randomized_seed_is_recorded_against_the_output(self):
+        urls = self._run()
+        used = self.submitted["workflow"]["1"]["inputs"]["seed"]
+        self.assertNotEqual(used, 0)  # actually randomized
+        self.assertEqual(self._recorded(urls), [str(used)])
+
+    def test_pinned_seed_is_applied_and_recorded(self):
+        # The round trip the menu promises: copy a seed, generate, get it back.
+        pinned = 2**64 - 1
+        urls = self._run(seed=pinned)
+        self.assertEqual(self.submitted["workflow"]["1"]["inputs"]["seed"], pinned)
+        self.assertEqual(self._recorded(urls), [str(pinned)])
+
+    def test_recorded_without_track_seed(self):
+        # Every job kind records — face-detail, upscale, i2i, inpaint, remove and
+        # sequence-run shots all pass track_seed=False but still produce a file.
+        gs.set_last_seed(4242)
+        urls = self._run(track_seed=False)
+        self.assertIsNotNone(self._recorded(urls)[0])
+        # ...while the /getseed global stays untouched, so its semantics are unchanged.
+        self.assertEqual(gs.get_last_seed(), 4242)
+
+    def test_track_seed_updates_the_getseed_global(self):
+        urls = self._run(track_seed=True)
+        self.assertEqual(str(gs.get_last_seed()), self._recorded(urls)[0])
+
+    def test_workflow_without_a_seed_input_records_nothing(self):
+        (self.wf_dir / "t2i.json").write_text(
+            json.dumps({"1": {"class_type": "SaveImage", "inputs": {"text": "<PROMPT>"}}})
+        )
+        urls = self._run()
+        self.assertEqual(self._recorded(urls), [None])
+
+    def test_a_failed_seed_write_does_not_fail_the_generation(self):
+        # Best-effort by design: losing a seed must never cost the user an image.
+        with patch.object(seed_store, "atomic_write_json", side_effect=OSError("full")):
+            urls = self._run()
+        self.assertEqual(len(urls), 1)
 
 
 class RunSequenceRunTests(unittest.TestCase):

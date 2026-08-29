@@ -14,6 +14,7 @@ from config import COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS
 from ComfyServer import ComfyServer, JobCancelled, JobRetry
 from catalogue import parse_loras_from_prompt
 from persistence import append_session_image, append_session_note, rename_session
+from seed_store import record_seeds
 from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequence
 from workflow import (
     LORA_PLACEHOLDER_RE,
@@ -558,20 +559,22 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
             apply_steps(workflow, steps)
             send("progress", message=f"Steps set to {steps}")
 
-        # Seed handling: reuse a pinned seed (from /getseed) if one was passed,
-        # otherwise randomize as usual. Either way capture the effective seed so a
-        # later /getseed can reproduce this run — but only for primary generations
-        # (t2i / i2v / t2v), which pass track_seed=True.
+        # Seed handling: reuse a pinned seed (from /getseed, or the right-click
+        # "Copy seed" menu item) if one was passed, otherwise randomize as usual.
         if seed is not None:
             if apply_seed(workflow, seed):
                 send("progress", message=f"Reusing seed {seed}")
         elif randomize_seeds(workflow):
             send("progress", message="Randomized seed values")
 
-        if track_seed:
-            used = collect_seeds(workflow)
-            if used:
-                set_last_seed(used[0])
+        # Capture the effective seed. Read unconditionally — every job kind records
+        # it against its own output files below (seed_store), while only primary
+        # generations (t2i / i2v / t2v, track_seed=True) update the single global
+        # that /getseed reads. Empty for a workflow with no seed input.
+        used = collect_seeds(workflow)
+        effective_seed = used[0] if used else None
+        if track_seed and effective_seed is not None:
+            set_last_seed(effective_seed)
 
         if cancel_event.is_set():
             raise JobCancelled()
@@ -614,6 +617,10 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
             dest_paths.append(dest)
             image_urls.append(f"/images/{dest.name}")
         tmp_dir.rmdir()
+
+        # Remember which seed made these files, for the right-click "Copy seed"
+        # menu item. Best-effort: a failure here must never fail the generation.
+        record_seeds([p.name for p in dest_paths], effective_seed)
 
         # When this job replaces an existing image (a do-over, or an accepted
         # face-detail / upscale), copy the source image's mtime onto the result

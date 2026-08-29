@@ -256,6 +256,62 @@ sends the browser to `/login`. It is the same `app._lock_down()` the idle watchd
   test that triggers one must save and restore `app._auth_epoch` (see
   `tests/test_logoff.py` and `tests/test_idle_lock.py`).
 
+### Media right-click menu & per-image seeds (`mediamenu.js`, `seed_store.py`)
+
+Right-clicking any generated image or video opens an in-app menu — **Save**, **Copy**,
+**Copy seed** — instead of the browser's. Two motivations: `.img-wrap` had run out of
+edges (twelve `img-*` hover buttons, one per corner and side), and `/getseed` could only
+ever offer the *most recent* seed, which is rarely the image you are looking at.
+
+- **One delegated `contextmenu` listener on `document`** (`initMediaMenu`, called from
+  `chat.js`), not per-render wiring. The `/images/...` URL is already the identity key
+  everywhere, so a single handler covers chat bubbles, the `/review-all` and
+  sequence-review grids, the slideshow and the lightbox — including `grids.js` and
+  `slideshow.js`, which render media without going through `appendChatImage`. Gating on
+  the `/images/` prefix leaves the native menu over mask/crop editor canvases,
+  `/references` thumbs and `/references-file/` previews. **Shift+right-click** always
+  falls through to the browser menu (a `<video>`'s playback-speed and PiP entries live
+  there).
+- **Copy image needs a secure context.** `navigator.clipboard.write` exists only under
+  HTTPS or localhost, and the appliance is normally reached over plain HTTP on a LAN
+  address, so the row is feature-detected and becomes **Copy image address**
+  (`writeText`) when unavailable. When it *is* available the blob is transcoded through a
+  canvas to PNG first — Chrome and Firefox accept only `image/png` in a `ClipboardItem`,
+  but the gallery also holds `.webp`/`.jpg`. Video is address-only. The `ClipboardItem`
+  is built from a **promise**, not an awaited blob, so `write()` is called synchronously
+  inside the click handler (Safari discards the user gesture otherwise); older Firefox
+  rejects that form and falls back to copying the address.
+- **`seed_store.py`** is the per-image seed index: a flat `{filename: "seed-as-string"}`
+  map at `SEEDS_FILE` (`.seeds.json` under `IMAGES_DIR`). Dot-prefixed, and
+  `select_images()` filters on `MEDIA_EXTS`, so it is never listed by `/api/images` nor
+  swept into an archive. Read by `GET /api/image-seed/<filename>`, which the menu calls
+  on **open** so the row can say up front whether there is a seed to take. Seeds are
+  strings on the wire for the same reason `/api/last-seed` uses them — a 64-bit seed does
+  not survive a JS `Number`.
+- **No in-memory cache, deliberately.** `IMAGES_DIR` is the lazily-mounted encrypted
+  output volume, so a dict loaded before the mount lands would cache the empty stand-in
+  directory for the life of the process — the exact failure `@requires_output_storage`
+  exists to prevent. The file is small and generations are seconds apart.
+- **Written for every job kind.** `_run_generation_core` now reads `collect_seeds()`
+  unconditionally into `effective_seed` and calls `record_seeds()` after the output files
+  are renamed, so face-detail, upscale, i2i, inpaint, remove and each sequence-run shot
+  all get a recorded seed — none of which `/getseed` ever covered. `set_last_seed` stays
+  gated on `track_seed`, so `/getseed` semantics are unchanged. Best-effort: a failed
+  write must never cost the user an image.
+- **Bounded and self-healing.** Past `SEED_STORE_MAX` (5000) the store drops entries whose
+  image is gone, then oldest-first — so `/api/archive`, which *moves* files out of
+  `IMAGES_DIR`, needs no hook. `DELETE /api/images/<name>` and `DELETE /api/images` prune
+  eagerly as well.
+- **Copy seed reuses `/getseed`'s pipeline entirely**: it sets the same one-shot
+  `state.reuseSeed`, consumed by `runGeneration` and cleared after the response is
+  accepted, so it inherits the same scope — **t2i / i2v / t2v only** — and
+  `/getseed-reset` clears it. `newChat()` now resets it too (it previously did not, so a
+  pin leaked into the next chat).
+- **Not retroactive**, and **archived images lose their seed**: the map is a convenience
+  index, not provenance. iOS long-press is unsupported — desktop and Android Chrome both
+  fire `contextmenu`, iOS Safari does not, and a synthetic touch-hold would collide with
+  the pinch/swipe handlers in `lightbox.js` and the drag-sort in `grids.js`.
+
 ## Known Pitfalls
 
 ### Curly/smart quote corruption in JS files

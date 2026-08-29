@@ -19,6 +19,19 @@ export function isVideoUrl(url) {
   return /\.(mp4|webm)(?:[?#]|$)/i.test(String(url));
 }
 
+// Clamp a popup's top-left corner so the whole box stays inside the viewport.
+// Used by the media right-click menu: the pointer can be anywhere, including the
+// bottom-right corner, where a menu drawn at (x, y) would overflow off-screen.
+// Prefers the requested position, flips back by the box size when it would spill,
+// and never returns a negative coordinate (a menu taller than the viewport is
+// pinned to the top-left rather than pushed off the other edge).
+export function clampMenuPosition(x, y, w, h, vw, vh, margin = 8) {
+  return {
+    left: Math.max(margin, Math.min(x, vw - w - margin)),
+    top:  Math.max(margin, Math.min(y, vh - h - margin)),
+  };
+}
+
 // Summarise one volume's /api/fscheck result into a small {icon, label, tone}
 // for display. Pure — covers every result shape the server sends:
 //   {configured:false}     -> not configured on this server

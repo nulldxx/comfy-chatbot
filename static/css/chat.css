@@ -1326,3 +1326,57 @@ header a:hover { color: #a78bfa; }
   outline: 2px solid #7c3aed;
   outline-offset: 2px;
 }
+
+/* Right-click menu over generated images and videos (mediamenu.js). Sits above
+   every other layer — the lightbox (300), the drop overlay (400) and the
+   full-screen editors (1000 / 9999) — because right-clicking a lightboxed or
+   maximised image has to work too. */
+.media-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 190px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  font-size: 0.82rem;
+}
+.media-menu-head {
+  padding: 4px 8px 6px;
+  color: #475569;
+  font-size: 0.7rem;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 2px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-menu-item {
+  appearance: none;
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #e2e8f0;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.media-menu-item:hover:not(:disabled) {
+  background: #1e1040;
+  border-color: #7c3aed;
+  color: #a78bfa;
+}
+.media-menu-item:disabled {
+  color: #475569;
+  cursor: default;
+}
+.media-menu-item.media-menu-fail {
+  color: #f87171;
+}

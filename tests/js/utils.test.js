@@ -1,6 +1,6 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement, deriveFaceDetailPrompt, isVideoUrl,
          fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList,
-         formatFscheckResult, computeDiffBox } from '../../static/js/utils.js';
+         formatFscheckResult, computeDiffBox, clampMenuPosition } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -682,5 +682,50 @@ describe('formatFscheckResult', () => {
   test('null / undefined is handled without throwing', () => {
     expect(formatFscheckResult(null).tone).toBe('muted');
     expect(formatFscheckResult(undefined).tone).toBe('muted');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// clampMenuPosition — keeps the media right-click menu inside the viewport.
+// The pointer can be anywhere, including the bottom-right corner, where a menu
+// drawn at the click point would spill off-screen.
+// ---------------------------------------------------------------------------
+
+describe('clampMenuPosition', () => {
+  const VW = 1000, VH = 800, W = 200, H = 150;
+
+  test('a click with room to spare uses the click point', () => {
+    expect(clampMenuPosition(100, 120, W, H, VW, VH)).toEqual({ left: 100, top: 120 });
+  });
+
+  test('a click near the right edge pulls the menu back inside', () => {
+    const { left } = clampMenuPosition(950, 100, W, H, VW, VH);
+    expect(left + W).toBeLessThanOrEqual(VW);
+  });
+
+  test('a click near the bottom edge pulls the menu back inside', () => {
+    const { top } = clampMenuPosition(100, 780, W, H, VW, VH);
+    expect(top + H).toBeLessThanOrEqual(VH);
+  });
+
+  test('the bottom-right corner clamps on both axes at once', () => {
+    expect(clampMenuPosition(1000, 800, W, H, VW, VH)).toEqual({ left: 792, top: 642 });
+  });
+
+  test('never returns a negative coordinate', () => {
+    // A menu taller/wider than the viewport pins to the top-left rather than
+    // being pushed off the opposite edge.
+    const { left, top } = clampMenuPosition(10, 10, 2000, 2000, VW, VH);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(top).toBeGreaterThanOrEqual(0);
+  });
+
+  test('a click at the origin keeps the margin', () => {
+    expect(clampMenuPosition(0, 0, W, H, VW, VH)).toEqual({ left: 8, top: 8 });
+  });
+
+  test('the margin is configurable', () => {
+    expect(clampMenuPosition(0, 0, W, H, VW, VH, 20)).toEqual({ left: 20, top: 20 });
   });
 });

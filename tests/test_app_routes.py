@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import app as app_module
 import image_store as image_store_module
 import persistence as persistence_module
+import seed_store as seed_store_module
 from app import app
 
 
@@ -154,6 +155,72 @@ class TestLastSeed(_AppFixture):
         resp = self.client.get("/api/last-seed")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json(), {"seed": str(big)})
+
+
+class TestImageSeed(_AppFixture):
+    """GET /api/image-seed/<filename> — the per-file seed behind "Copy seed"."""
+
+    def setUp(self):
+        super().setUp()
+        self._patcher_seeds = patch.object(
+            seed_store_module, "SEEDS_FILE", self.images_dir / ".seeds.json"
+        )
+        self._patcher_seeds.start()
+        self._patcher_seeds_dir = patch.object(
+            seed_store_module, "IMAGES_DIR", self.images_dir
+        )
+        self._patcher_seeds_dir.start()
+
+    def tearDown(self):
+        self._patcher_seeds.stop()
+        self._patcher_seeds_dir.stop()
+        super().tearDown()
+
+    def test_returns_recorded_seed_as_string(self):
+        # As with /api/last-seed, a full 64-bit seed must come back as a string or
+        # the browser rounds it and silently reproduces a different image.
+        big = 2**64 - 1
+        self._make_image("a.png")
+        seed_store_module.record_seeds(["a.png"], big)
+        resp = self.client.get("/api/image-seed/a.png")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"seed": str(big)})
+
+    def test_null_when_no_seed_recorded(self):
+        self._make_image("a.png")
+        resp = self.client.get("/api/image-seed/a.png")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"seed": None})
+
+    def test_null_for_unknown_file(self):
+        # The store is an index, not a directory listing: an absent image is just
+        # an absent seed, not a 404.
+        resp = self.client.get("/api/image-seed/never-existed.png")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"seed": None})
+
+    def test_rejects_non_media_extension(self):
+        resp = self.client.get("/api/image-seed/.seeds.json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rejects_traversal(self):
+        resp = self.client.get("/api/image-seed/..%2F..%2Fetc%2Fpasswd.png")
+        self.assertIn(resp.status_code, (400, 404))
+
+    def test_delete_image_forgets_its_seed(self):
+        self._make_image("a.png")
+        seed_store_module.record_seeds(["a.png"], 42)
+        self.assertEqual(self.client.delete("/api/images/a.png").status_code, 200)
+        self.assertEqual(self.client.get("/api/image-seed/a.png").get_json(),
+                         {"seed": None})
+
+    def test_delete_all_images_clears_the_store(self):
+        self._make_image("a.png")
+        self._make_image("b.png")
+        seed_store_module.record_seeds(["a.png", "b.png"], 42)
+        self.assertEqual(self.client.delete("/api/images").status_code, 200)
+        self.assertEqual(self.client.get("/api/image-seed/a.png").get_json(),
+                         {"seed": None})
 
 
 class TestParseSeed(unittest.TestCase):

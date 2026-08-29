@@ -61,6 +61,7 @@ from persistence import (
     save_aliases, save_default_macro, save_macros,
     save_session, sessions_dir, slugify,
 )
+import seed_store
 import auth_store
 import idle_lock
 from auth_store import save_password_hash, verify_password
@@ -2141,6 +2142,7 @@ def api_delete_image(filename):
     if not path.is_file():
         return jsonify({"error": "Image not found"}), 404
     path.unlink()
+    seed_store.forget(safe)
     return jsonify({"deleted": safe})
 
 
@@ -2162,7 +2164,30 @@ def api_delete_all_images():
             failed.append(f"{p.name}: {exc}")
     if failed:
         return jsonify({"deleted": deleted, "error": "; ".join(failed)}), 500
+    seed_store.clear()
     return jsonify({"deleted": deleted})
+
+
+@app.route("/api/image-seed/<filename>")
+@login_required
+@requires_output_storage
+def api_image_seed(filename):
+    """Return the seed that produced one gallery file (or null).
+
+    Backs the right-click "Copy seed" menu item: the client reads this, then sends
+    it back as ``seed`` on the next generation so that image is reproduced. Like
+    /api/last-seed the seed is a *string* — seeds range up to 2**64-1 and a JSON
+    number would lose precision in the browser. _parse_seed accepts the string.
+
+    Unlike /api/last-seed this is per-file and survives a restart, so it answers
+    "reproduce THAT image" rather than "reproduce whatever ran most recently".
+    """
+    safe = secure_filename(filename)
+    if not safe or safe != filename:
+        return jsonify({"error": "Invalid filename"}), 400
+    if Path(safe).suffix.lower() not in MEDIA_EXTS:
+        return jsonify({"error": "Invalid filename"}), 400
+    return jsonify({"seed": seed_store.get_seed(safe)})
 
 
 @app.route("/api/images")

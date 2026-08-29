@@ -1044,6 +1044,10 @@ export function makeCommandHandler(deps) {
     state.currentVideoSettings = { ...DEFAULT_VIDEO_SETTINGS };
     state.videoLock = 'fps';
     state.currentVideoSteps = null;
+    // One-shot seed pin (/getseed, or the right-click "Copy seed"): a new chat is a
+    // clean slate, and a pin left over from the previous one would silently
+    // reproduce its image here. restoreSession clears it for the same reason.
+    state.reuseSeed = null;
     state.iterations = 1;
     state.iterationsFromSequence = false;
     state.sequenceReplacements = [];
@@ -2247,7 +2251,7 @@ export function makeCommandHandler(deps) {
         { sig: '/inpaint-workflow [name]', desc: 'choose which inpainting workflow the 🩹 button uses (no arg = picker)' },
         { sig: '/inpaint-workflow-reset', desc: 'reset the inpainting workflow to its default' },
         { sig: '/inpainting-prompt <prompt>', desc: 'set the prompt used by the 🩹 inpaint button; no args clears it' },
-        { sig: '/getseed', desc: 'reuse the seed from the last t2i/i2v/t2v generation on the next such run, to reproduce or tweak it', notes: 'one-shot: reverts to random seeds after the next generation &nbsp;·&nbsp; <code>/getseed-reset</code> cancels a pending reuse' },
+        { sig: '/getseed', desc: 'reuse the seed from the last t2i/i2v/t2v generation on the next such run, to reproduce or tweak it', notes: 'one-shot: reverts to random seeds after the next generation &nbsp;·&nbsp; <code>/getseed-reset</code> cancels a pending reuse &nbsp;·&nbsp; to take the seed of a <em>specific</em> image rather than the most recent one, right-click it and choose <em>Copy seed</em>' },
         { sig: '/iterations <n>', desc: 'generate n images per prompt (default 1)' },
         { sig: '/jobs', desc: 'grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)' },
         { sig: '/last-sent', desc: 'show the last workflow submitted to ComfyUI with all replacements applied — downloadable as JSON' },

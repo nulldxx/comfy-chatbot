@@ -18,7 +18,7 @@ from config import IMAGES_DIR, MEDIA_EXTS
 sessions_write_lock = threading.Lock()
 
 
-def _atomic_write_json(path, data):
+def atomic_write_json(path, data):
     """Write ``data`` as pretty JSON to ``path`` atomically (temp file + replace)."""
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2))
@@ -69,7 +69,7 @@ def save_session(name, body):
     payload = {k: v for k, v in body.items() if k != "name"}
     payload["saved_at"] = datetime.now().isoformat()
     with sessions_write_lock:
-        _atomic_write_json(path, payload)
+        atomic_write_json(path, payload)
     return path
 
 
@@ -114,7 +114,7 @@ def append_session_image(name, url, prompt, video_meta=None, settings=None):
         doc["messages"].append({"role": "bot", "images": [url], "text": ""})
 
         doc["saved_at"] = datetime.now().isoformat()
-        _atomic_write_json(path, doc)
+        atomic_write_json(path, doc)
     return doc
 
 
@@ -148,7 +148,7 @@ def append_session_note(name, prompt, note):
         doc["messages"].append({"role": "bot", "images": [], "text": note})
 
         doc["saved_at"] = datetime.now().isoformat()
-        _atomic_write_json(path, doc)
+        atomic_write_json(path, doc)
     return doc
 
 
@@ -172,7 +172,7 @@ def rename_session(src, dst):
         except Exception:
             doc = {}
         doc["recordingName"] = dst
-        _atomic_write_json(dst_path, doc)
+        atomic_write_json(dst_path, doc)
         src_path.unlink()
     return dst
 
