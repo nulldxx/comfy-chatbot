@@ -3,7 +3,8 @@ import {
   buildVideoPrompt, isVideoUrl, fmtDuration, clampVideo, recomputeVideo,
   splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
-  COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
+  COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, BASE_VIDEO_STEPS,
+  activeAccelerator, videoOptsPayload,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles, referenceSlotCost } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
@@ -625,7 +626,11 @@ function showChatSummary() {
            `<span style="color:#475569">(🔒 ${state.videoLock})</span>` +
            (state.currentVideoSteps !== null ? ` · steps <span style="color:#a78bfa">${state.currentVideoSteps}</span>` : ''),
   });
-  const optsOn = VIDEO_OPTIMIZATIONS.filter(o => vs[o.stateKey] !== false);
+  // Read through the wire payload rather than the raw flags, so a pre-upgrade session
+  // (where the absent 8-step flags read as on beside an explicit turbo) is summarised
+  // as the single accelerator that will actually be used.
+  const optsWire = videoOptsPayload(vs);
+  const optsOn = VIDEO_OPTIMIZATIONS.filter(o => optsWire[o.key]);
   rows.push({
     label: 'Video optimisations',
     value: optsOn.length
@@ -3432,14 +3437,26 @@ export function makeCommandHandler(deps) {
       ];
       const work    = { ...state.currentVideoSettings };
       let   lockSel = state.videoLock;
+      // Collapse a pre-upgrade session's stacked accelerators (see activeAccelerator)
+      // down to the one in force, so the ticks below match what is actually sent.
+      const collapseAccels = () => {
+        const winner = activeAccelerator(work);
+        VIDEO_OPTIMIZATIONS.forEach(o => {
+          if (o.steps && (!winner || o.steps !== winner.steps)) work[o.stateKey] = false;
+        });
+      };
+      collapseAccels();
       // Steps override is kept out of `work` (which is spread wholesale into
       // state.currentVideoSettings on Apply) — it has its own state field.
-      // With Turbo on and no explicit override the template's baked-in steps are
-      // wrong for the 4-step LoRA, so the panel opens pre-filled at TURBO_STEPS.
-      const turboOn = work.optTurbo !== false;
+      // With an accelerator LoRA on and no explicit override the template's baked-in
+      // steps are wrong for it, so the panel opens pre-filled at that LoRA's count.
+      const accelSteps = () => {
+        const accel = activeAccelerator(work);
+        return { steps: accel ? accel.steps : BASE_VIDEO_STEPS, useDefault: !accel };
+      };
       const stepsWork = state.currentVideoSteps !== null
         ? { steps: state.currentVideoSteps, useDefault: false }
-        : { steps: turboOn ? TURBO_STEPS : BASE_VIDEO_STEPS, useDefault: !turboOn };
+        : accelSteps();
       const els = {};
 
       const wrap = document.createElement('div');
@@ -3634,17 +3651,25 @@ export function makeCommandHandler(deps) {
 
       const optsHdr = document.createElement('div');
       optsHdr.style.cssText = 'font-size:0.82rem;color:#94a3b8;margin-top:8px';
-      optsHdr.innerHTML = 'Optimisations <span style="color:#475569">— all on is a fast, lower-quality preview</span>';
+      optsHdr.innerHTML = 'Optimisations <span style="color:#475569">— trade quality for speed; the accelerator LoRAs are mutually exclusive</span>';
       wrap.appendChild(optsHdr);
-      VIDEO_OPTIMIZATIONS.forEach(({ stateKey, label, hint: optHint }) => {
+      VIDEO_OPTIMIZATIONS.forEach(({ stateKey, label, steps, hint: optHint }) => {
         const labelHtml = escapeHtml(label) +
           (optHint ? ` <span style="color:#475569">— ${escapeHtml(optHint)}</span>` : '');
-        // Turbo carries the step count with it: the 4-step LoRA at the template's
+        // An accelerator carries its step count with it: the LoRA at the template's
         // baked-in steps is wasted work, and the template's steps without the LoRA
         // is mush. An explicit steps edit afterwards still wins.
-        mkCheckbox(stateKey, labelHtml, stateKey === 'optTurbo' ? on => {
-          stepsWork.steps = on ? TURBO_STEPS : BASE_VIDEO_STEPS;
-          stepsWork.useDefault = !on;
+        mkCheckbox(stateKey, labelHtml, steps ? on => {
+          if (on) {
+            // Accelerators of a different step count cannot be stacked with this one.
+            VIDEO_OPTIMIZATIONS.forEach(o => {
+              if (!o.steps || o.stateKey === stateKey || o.steps === steps) return;
+              work[o.stateKey] = false;
+              const reg = boxes.find(b => b.key === o.stateKey);
+              if (reg) reg.box.checked = false;
+            });
+          }
+          Object.assign(stepsWork, accelSteps());
           refreshSteps();
         } : null);
       });
@@ -3675,15 +3700,15 @@ export function makeCommandHandler(deps) {
         const off = VIDEO_OPTIMIZATIONS.filter(o => work[o.stateKey] === false);
         addMessage('bot', off.length
           ? `Optimisations bypassed: <strong style="color:#a78bfa">${off.map(o => escapeHtml(o.label)).join(', ')}</strong>`
-          : 'All <strong style="color:#a78bfa">5</strong> optimisations on <span style="color:#475569">— fast preview quality</span>');
+          : `All <strong style="color:#a78bfa">${VIDEO_OPTIMIZATIONS.length}</strong> optimisations on <span style="color:#475569">— fast preview quality</span>`);
         scrollBottom();
       });
       resetBtn.addEventListener('click', () => {
         Object.assign(work, DEFAULT_VIDEO_SETTINGS);
         lockSel = 'fps';
         boxes.forEach(({ key, box }) => { box.checked = work[key] !== false; });
-        // Defaults have Turbo on, so the steps override follows it (see mkCheckbox).
-        stepsWork.steps = TURBO_STEPS; stepsWork.useDefault = false;
+        // Defaults have an accelerator on, so the steps override follows it.
+        Object.assign(stepsWork, accelSteps());
         refreshSteps();
         refreshRes();
         refresh();

@@ -573,12 +573,13 @@ pairing it by array index was only ever a convention nothing enforced.
 
 ### Video optimisation toggles (`/video-settings`)
 
-The MiniMax H3 workflows carry five speed-for-quality optimisations — **4-step turbo
-LoRA**, **H3 FirstBlockCache**, **Sage attention**, **Sol attention**, **H3 Spectrum** —
-each a `MODEL → MODEL` passthrough chained between the `UNETLoader` and the
-guider/scheduler. They used to be baked in, which meant one template file per
-combination (eight of them, differing in nothing else). They are now **one chain in one
-template per kind**, bypassed per run from five checkboxes in `/video-settings`.
+The MiniMax H3 workflows carry seven speed-for-quality optimisations — **4-step turbo
+LoRA**, **8-step accel LoRA (fl2va)**, **8-step accel LoRA (ref2va)**, **H3
+FirstBlockCache**, **Sage attention**, **Sol attention**, **H3 Spectrum** — each a
+`MODEL → MODEL` passthrough chained between the `UNETLoader` and the guider/scheduler.
+They used to be baked in, which meant one template file per combination (eight of them,
+differing in nothing else). They are now **one chain in one template per kind**,
+bypassed per run from checkboxes in `/video-settings`.
 
 There are consequently three H3 templates, not eight: `image2video/minimax-h3-i2v.json`,
 `text2video/minimax-h3-t2v.json` and `text2video/minimax-h3-r2v.json`. They stay separate
@@ -587,11 +588,18 @@ UNET (`minimax_h3_ref2va_…`) with the 15-slot `MiniMaxH3ReferenceToVideo` node
 adds the `LoadImage → resize → first_frame` sub-chain to T2V's graph.
 
 - **Marked by title, not class.** A node is an optimisation iff its `_meta.title` starts
-  with `[opt:<key>]`, key ∈ `turbo cache sage sol spectrum` (`OPT_TITLE_RE` /
-  `optimisation_nodes` in `workflow.py`). Deliberately **not** `class_type`: the i2v
-  graph holds two `LoraLoaderModelOnly` nodes — the turbo LoRA and the `<LORA_1_NAME>`
-  user slot — and only the first may be bypassed. Node titles also survive a ComfyUI
-  re-export, so re-editing a template in the editor does not lose the marking.
+  with `[opt:<key>]`, key ∈ `turbo accel8fl accel8ref cache sage sol spectrum`
+  (`OPT_TITLE_RE` / `optimisation_nodes` in `workflow.py`). Deliberately **not**
+  `class_type`: the i2v graph holds *three* `LoraLoaderModelOnly` nodes — the turbo LoRA,
+  the 8-step accel LoRA and the `<LORA_1_NAME>` user slot — and only the marked ones may
+  be bypassed. Node titles also survive a ComfyUI re-export, so re-editing a template in
+  the editor does not lose the marking.
+- **Two 8-step variants, one per UNET.** `accel8fl`
+  (`h3\minimax-h3-fl2va-acc-8step.safetensors`) is in the i2v and t2v templates, which
+  share the `fl2va` UNET; `accel8ref` (`…-ref2va-acc-8step…`) is in r2v, which uses
+  `ref2va`. Each sits directly after `[opt:turbo]` in the chain. Both checkboxes are
+  always shown — the panel does not know which workflow is active, and a key absent from
+  a template bypasses nothing, so ticking the irrelevant one is a harmless no-op.
 - **`bypass_optimisation_nodes()`** (`workflow.py`) deletes each marked node and rewires
   its consumers to whatever fed its `model` input — the same `_rewire_references`
   passthrough `strip_lora_nodes` uses. Nodes go **one at a time**, which makes chained
@@ -600,7 +608,7 @@ adds the `LoadImage → resize → first_frame` sub-chain to T2V's graph.
   dangling reference. Called in `_run_generation_core` alongside the other node surgery,
   after the track drops and before the UI→API conversion — so, as with all of it, the
   template must be exported in **API format**.
-- **Wire format**: the client sends `video_opts` as `{key: bool}` for **all five** keys;
+- **Wire format**: the client sends `video_opts` as `{key: bool}` for **every** key;
   `_parse_video_opts` (`app.py`) returns the set of keys that are **off**, forwarded as
   `disabled_optimizations`. An absent `video_opts` disables nothing, so an older client
   or a non-video job runs the template exactly as authored — which is why every flag is
@@ -608,29 +616,44 @@ adds the `LoadImage → resize → first_frame` sub-chain to T2V's graph.
   Unknown keys are a **400**, checked against `VIDEO_OPTIMIZATIONS` in `config.py`
   (mirrored client-side in `utils.js`, which is where the descriptors live rather than
   `state.js` because `state.js` imports from `utils.js`).
-- **Client state is five flat booleans** on `currentVideoSettings` — `optTurbo`,
-  `optCache`, `optSage`, `optSol`, `optSpectrum`, all default `true`, all read with the
-  `!== false` idiom so an absent key means on. Flat, not a nested `opts` object, because
+- **Client state is flat booleans** on `currentVideoSettings` — `optTurbo`,
+  `optAccel8Fl`, `optAccel8Ref`, `optCache`, `optSage`, `optSol`, `optSpectrum`, all
+  read with the `!== false` idiom so an absent key means on. Flat, not a nested `opts`
+  object, because
   both restore paths shallow-merge (`{ ...DEFAULT_VIDEO_SETTINGS, ...s.videoSettings }`)
   and Apply does `{ ...work }`: a nested object would be replaced wholesale by an old
   snapshot and would share a reference between the panel and state. Flat keys ride the
   existing spread, so `saveSession`/`restoreSession`, the `/settings-save` stack and
   `newChat` needed **no** changes — exactly as when `audio` was added.
-- **Turbo carries the step count.** The templates bake `steps: 20`; the 4-step LoRA needs
-  4. Ticking Turbo in the panel switches the steps override on and sets it to
-  `TURBO_STEPS`, unticking it re-ticks *Use workflow default* — one-way coupling only, so
-  an explicit steps edit afterwards still wins. This lives purely in the panel: forcing
-  steps at send time would also hit the Wan 2.2 and LTX 2.3 templates, which have no
-  `[opt:turbo]` node to untick.
-- **Default is all five on**, i.e. a fast, low-quality preview. ⚠ **Turbo + cache +
-  Spectrum has never been rendered** — Spectrum previously appeared only in a 32-step HQ
-  t2v file where it *replaced* FirstBlockCache, and its forecast params (warmup 1,
-  window 2, max_history 8) have little to work with across 4 steps. Test-render the
-  default stack in the ComfyUI editor before trusting it.
+- **An accelerator carries its step count.** A descriptor with a `steps` field
+  (`VIDEO_OPTIMIZATIONS` in `utils.js`) is an accelerator — a distillation LoRA that only
+  makes sense at that step count. The templates bake `steps: 20`; ticking one switches
+  the steps override on and sets it to that LoRA's count (4 or 8), unticking the last one
+  re-ticks *Use workflow default* — one-way coupling only, so an explicit steps edit
+  afterwards still wins. This lives purely in the panel: forcing steps at send time would
+  also hit any template with no accelerator node to untick.
+- **Accelerators are mutually exclusive by step count.** A 4-step and an 8-step
+  distillation LoRA chained together give mush, so ticking one unticks every accelerator
+  of a *different* count (and updates its checkbox). The two 8-step variants share a
+  count and so do **not** exclude each other — they are never both present in one
+  template anyway, so "both on" just means "whichever 8-step LoRA this workflow has".
+- **`activeAccelerator(vs)`** (`utils.js`) is the single resolver: the on accelerator
+  with the **lowest** step count wins. Several can read as on only in a session saved
+  before the 8-step LoRAs existed — it carries an explicit `optTurbo: true` and no 8-step
+  keys, and absent reads as on — so lowest-wins resolves such a session back to the turbo
+  LoRA it actually chose, and it renders exactly as before. `videoOptsPayload` forces the
+  losing group to `false` on the wire, the panel collapses `work` the same way on open,
+  and the `/settings` summary reads through the payload so all three agree.
+- **Default is the 8-step accel plus the four non-LoRA optimisations**; turbo is off.
+  ⚠ That stack has **never been rendered** — Spectrum previously appeared only in a
+  32-step HQ t2v file where it *replaced* FirstBlockCache, and its forecast params
+  (warmup 1, window 2, max_history 8) have little to work with across 8 steps.
+  Test-render the default stack in the ComfyUI editor before trusting it.
 - **Known gap**: on a fresh session where `/video-settings` has never been opened,
-  `currentVideoSteps` is `null` while Turbo is on, so the first run loads the turbo LoRA
-  at the template's 20 steps — slower than intended, not broken. Opening the panel once
-  (it pre-fills the override to 4) and pressing Apply fixes it for the session.
+  `currentVideoSteps` is `null` while an accelerator is on, so the first run loads that
+  LoRA at the template's 20 steps — slower than intended, not broken. Opening the panel
+  once (it pre-fills the override to the LoRA's count) and pressing Apply fixes it for
+  the session.
 
 ### Alternate models in a workflow (`UNETLoader` comma lists)
 

@@ -846,13 +846,14 @@ class TestImage2VideoSettings(_AppFixture):
         resp = self.client.post(
             "/api/image2video",
             json={"image": "/images/src.png", "workflow": "vid",
-                  "video_opts": {"turbo": True, "cache": False, "sage": True,
+                  "video_opts": {"turbo": False, "accel8fl": True, "accel8ref": True,
+                                 "cache": False, "sage": True,
                                  "sol": False, "spectrum": True}},
         )
         self.assertEqual(resp.status_code, 200)
         _, kwargs = self._gen.call_args
         # Only the switched-off keys reach the workflow layer.
-        self.assertEqual(kwargs["disabled_optimizations"], {"cache", "sol"})
+        self.assertEqual(kwargs["disabled_optimizations"], {"turbo", "cache", "sol"})
 
     def test_video_opts_absent_disables_nothing(self):
         resp = self.client.post(

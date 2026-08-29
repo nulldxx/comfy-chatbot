@@ -242,33 +242,62 @@ export function workflowLabelHtml(name) {
 // Bypassable optimisations in the video workflows, each matching an "[opt:<key>] ..."
 // marked node in the template (see workflow.bypass_optimisation_nodes). `key` is the
 // wire/marker name — mirrored server-side as VIDEO_OPTIMIZATIONS in config.py — and
-// `stateKey` is its flag on currentVideoSettings. All default ON: that is the fast
+// `stateKey` is its flag on currentVideoSettings. Most default ON: that is the fast
 // preview mode, traded against quality. Declared here rather than in state.js because
 // state.js imports from this module.
+//
+// A descriptor carrying `steps` is an *accelerator* — a distillation LoRA that only
+// makes sense at that sampler step count. Chaining two of different step counts gives
+// mush, so they are mutually exclusive by step count (see activeAccelerator). The two
+// 8-step variants share a count and so do not exclude each other: they are never both
+// present in one template (fl2va in i2v/t2v, ref2va in r2v), so "both on" just means
+// "whichever 8-step LoRA this workflow has".
 export const VIDEO_OPTIMIZATIONS = [
-  { key: 'turbo',    stateKey: 'optTurbo',    label: 'Turbo 4-step LoRA', hint: 'sets Steps to 4' },
+  { key: 'turbo',     stateKey: 'optTurbo',     label: 'Turbo 4-step LoRA',                   steps: 4, hint: 'sets Steps to 4' },
+  { key: 'accel8fl',  stateKey: 'optAccel8Fl',  label: '8-step accel LoRA (fl2va — i2v/t2v)', steps: 8, hint: 'sets Steps to 8' },
+  { key: 'accel8ref', stateKey: 'optAccel8Ref', label: '8-step accel LoRA (ref2va — r2v)',    steps: 8, hint: 'sets Steps to 8' },
   { key: 'cache',    stateKey: 'optCache',    label: 'H3 FirstBlockCache' },
   { key: 'sage',     stateKey: 'optSage',     label: 'Sage attention' },
   { key: 'sol',      stateKey: 'optSol',      label: 'Sol attention' },
   { key: 'spectrum', stateKey: 'optSpectrum', label: 'H3 Spectrum' },
 ];
 // Sampler steps the Turbo LoRA needs, and the step count the templates bake in for
-// running without it. The /video-settings panel moves the steps override between the
-// two as Turbo is ticked and unticked.
+// running with no accelerator at all. The /video-settings panel moves the steps
+// override between an accelerator's own count and this base as they are ticked.
 export const TURBO_STEPS = 4;
 export const BASE_VIDEO_STEPS = 20;
 
 export const DEFAULT_VIDEO_SETTINGS = {
   duration: 5, frames: 125, fps: 25, audio: true, width: 1280, height: 720,
-  optTurbo: true, optCache: true, optSage: true, optSol: true, optSpectrum: true,
+  optTurbo: false, optAccel8Fl: true, optAccel8Ref: true,
+  optCache: true, optSage: true, optSol: true, optSpectrum: true,
 };
+
+// The accelerator actually in force, or null if none is on.
+//
+// Accelerators of two different step counts can read as on at once only in a session
+// saved before the 8-step LoRAs existed: it carries an explicit optTurbo:true and no
+// 8-step flags at all, and absent reads as on. The lowest step count wins, so such a
+// session resolves to the turbo LoRA it actually chose and renders exactly as before.
+// From the panel the exclusion is enforced as you tick, so this never fires there.
+export function activeAccelerator(vs) {
+  const on = VIDEO_OPTIMIZATIONS.filter(o => o.steps && (vs || {})[o.stateKey] !== false);
+  if (!on.length) return null;
+  return on.reduce((a, b) => (b.steps < a.steps ? b : a));
+}
 
 // Build the video_opts wire object. Every flag is sent explicitly: the server reads an
 // absent video_opts as "bypass nothing", so omitting an off flag would silently mean on.
 export function videoOptsPayload(vs) {
   const out = {};
+  const accel = activeAccelerator(vs);
   // Absent reads as on, so an old saved session keeps today's behaviour.
-  VIDEO_OPTIMIZATIONS.forEach(({ key, stateKey }) => { out[key] = (vs || {})[stateKey] !== false; });
+  VIDEO_OPTIMIZATIONS.forEach(({ key, stateKey, steps }) => {
+    const on = (vs || {})[stateKey] !== false;
+    // Only the winning step-count group survives; a loser is forced off rather than
+    // stacked, whatever the stored flags say.
+    out[key] = steps ? (on && !!accel && steps === accel.steps) : on;
+  });
   return out;
 }
 export const VIDEO_LIMITS = {

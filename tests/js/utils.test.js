@@ -1,7 +1,7 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement, deriveFaceDetailPrompt, isVideoUrl,
          fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList,
          formatFscheckResult, computeDiffBox, clampMenuPosition,
-         videoOptsPayload, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
+         videoOptsPayload, activeAccelerator, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
          splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
          WORKFLOW_VARIANT_SEP, progressPercent, progressCaption } from '../../static/js/utils.js';
 
@@ -744,31 +744,83 @@ describe('videoOptsPayload', () => {
     expect(Object.keys(out).sort()).toEqual(VIDEO_OPTIMIZATIONS.map(o => o.key).sort());
   });
 
-  test('all optimisations default to on', () => {
+  test('every non-accelerator optimisation defaults to on', () => {
     const out = videoOptsPayload(DEFAULT_VIDEO_SETTINGS);
-    expect(Object.values(out).every(Boolean)).toBe(true);
+    VIDEO_OPTIMIZATIONS.filter(o => !o.steps).forEach(({ key }) => {
+      expect(out[key]).toBe(true);
+    });
+  });
+
+  test('the 8-step accelerators are the default, not turbo', () => {
+    const out = videoOptsPayload(DEFAULT_VIDEO_SETTINGS);
+    expect(out).toMatchObject({ turbo: false, accel8fl: true, accel8ref: true });
   });
 
   test('an off flag is reported as false', () => {
-    const out = videoOptsPayload({ ...DEFAULT_VIDEO_SETTINGS, optTurbo: false, optSol: false });
-    expect(out).toEqual({ turbo: false, cache: true, sage: true, sol: false, spectrum: true });
+    const out = videoOptsPayload({ ...DEFAULT_VIDEO_SETTINGS, optSol: false });
+    expect(out).toEqual({
+      turbo: false, accel8fl: true, accel8ref: true,
+      cache: true, sage: true, sol: false, spectrum: true,
+    });
   });
 
-  test('a pre-upgrade settings object reads as all on', () => {
-    // Old saved sessions and snapshots carry none of these keys; absent means on.
-    expect(Object.values(videoOptsPayload({ duration: 5 })).every(Boolean)).toBe(true);
-    expect(Object.values(videoOptsPayload(undefined)).every(Boolean)).toBe(true);
+  test('a pre-upgrade settings object resolves to the turbo LoRA it chose', () => {
+    // Old saved sessions carry an explicit optTurbo:true and no 8-step keys at all;
+    // absent reads as on, so all three accelerators would otherwise stack.
+    const out = videoOptsPayload({ duration: 5, optTurbo: true });
+    expect(out).toMatchObject({ turbo: true, accel8fl: false, accel8ref: false });
+    VIDEO_OPTIMIZATIONS.filter(o => !o.steps).forEach(({ key }) => {
+      expect(out[key]).toBe(true);
+    });
+  });
+
+  test('never sends two accelerators of different step counts', () => {
+    [DEFAULT_VIDEO_SETTINGS, { duration: 5 }, undefined,
+     { optTurbo: true, optAccel8Fl: true, optAccel8Ref: true }].forEach(vs => {
+      const on = VIDEO_OPTIMIZATIONS.filter(o => o.steps && videoOptsPayload(vs)[o.key]);
+      expect(new Set(on.map(o => o.steps)).size).toBeLessThanOrEqual(1);
+    });
   });
 
   test('DEFAULT_VIDEO_SETTINGS carries a flag for every declared optimisation', () => {
     VIDEO_OPTIMIZATIONS.forEach(({ stateKey }) => {
-      expect(DEFAULT_VIDEO_SETTINGS[stateKey]).toBe(true);
+      expect(typeof DEFAULT_VIDEO_SETTINGS[stateKey]).toBe('boolean');
     });
   });
 
-  test('turbo is the only optimisation that carries a step count', () => {
-    expect(VIDEO_OPTIMIZATIONS.filter(o => o.hint).map(o => o.key)).toEqual(['turbo']);
+  test('every optimisation carrying a step count also carries a hint', () => {
+    expect(VIDEO_OPTIMIZATIONS.filter(o => o.hint).map(o => o.key))
+      .toEqual(VIDEO_OPTIMIZATIONS.filter(o => o.steps).map(o => o.key));
     expect(TURBO_STEPS).toBeLessThan(BASE_VIDEO_STEPS);
+    VIDEO_OPTIMIZATIONS.filter(o => o.steps).forEach(({ steps }) => {
+      expect(steps).toBeLessThan(BASE_VIDEO_STEPS);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// activeAccelerator — which distillation LoRA is actually in force
+// ---------------------------------------------------------------------------
+
+describe('activeAccelerator', () => {
+  test('the defaults resolve to an 8-step accelerator', () => {
+    expect(activeAccelerator(DEFAULT_VIDEO_SETTINGS).steps).toBe(8);
+  });
+
+  test('turbo wins when a pre-upgrade session stacks it with the absent 8-step keys', () => {
+    expect(activeAccelerator({ optTurbo: true }).key).toBe('turbo');
+  });
+
+  test('returns null when every accelerator is off', () => {
+    const off = { ...DEFAULT_VIDEO_SETTINGS };
+    VIDEO_OPTIMIZATIONS.filter(o => o.steps).forEach(({ stateKey }) => { off[stateKey] = false; });
+    expect(activeAccelerator(off)).toBeNull();
+  });
+
+  test('either 8-step variant alone resolves to 8 steps', () => {
+    const base = { ...DEFAULT_VIDEO_SETTINGS, optAccel8Ref: false };
+    expect(activeAccelerator(base).key).toBe('accel8fl');
+    expect(activeAccelerator({ ...DEFAULT_VIDEO_SETTINGS, optAccel8Fl: false }).key).toBe('accel8ref');
   });
 });
 

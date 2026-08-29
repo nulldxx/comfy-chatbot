@@ -230,8 +230,10 @@ REFERENCE_MAX_FILES = 12
 # Bypassable optimisations in the video workflows, toggled per run from /video-settings.
 # Each key names a "[opt:<key>] ..." marked node in the template (see
 # workflow.bypass_optimisation_nodes); a key absent from a template just bypasses
-# nothing. Mirrored client-side as VIDEO_OPTIMIZATIONS in static/js/state.js.
-VIDEO_OPTIMIZATIONS = ("turbo", "cache", "sage", "sol", "spectrum")
+# nothing. Mirrored client-side as VIDEO_OPTIMIZATIONS in static/js/utils.js, which
+# also decides which of them are mutually-exclusive accelerator LoRAs — the server
+# takes the client's word for that and only validates the key names.
+VIDEO_OPTIMIZATIONS = ("turbo", "accel8fl", "accel8ref", "cache", "sage", "sol", "spectrum")
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
 
 # Idle session lock: after this many seconds with no authenticated request and no

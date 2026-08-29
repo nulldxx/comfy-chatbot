@@ -322,11 +322,19 @@ class TestBypassOptimisationNodes(unittest.TestCase):
         self.assertEqual(bypass_optimisation_nodes(wf, set())[1], [])
         self.assertEqual(wf, before)
 
+    # The optimisation chain in template order: the accelerator LoRAs sit at the head,
+    # ahead of the attention patches. Taken from config so the two cannot drift.
+    CHAIN = ("turbo", "accel8fl", "accel8ref", "sage", "sol", "cache", "spectrum")
+
+    def test_chain_covers_every_declared_optimisation(self):
+        from config import VIDEO_OPTIMIZATIONS
+        self.assertEqual(set(self.CHAIN), set(VIDEO_OPTIMIZATIONS))
+
     def _full_chain(self):
-        """All five optimisations chained as the consolidated H3 templates have them."""
+        """Every optimisation chained as the consolidated H3 templates have them."""
         wf = {"unet": {"class_type": "UNETLoader", "inputs": {"unet_name": "h3.safetensors"}}}
         prev = "unet"
-        for key in ("turbo", "sage", "sol", "cache", "spectrum"):
+        for key in self.CHAIN:
             wf[key] = {"_meta": {"title": f"[opt:{key}] node"},
                        "class_type": f"Opt{key.capitalize()}",
                        "inputs": {"model": [prev, 0]}}
@@ -336,16 +344,16 @@ class TestBypassOptimisationNodes(unittest.TestCase):
         return wf
 
     def test_every_subset_leaves_the_graph_intact(self):
-        """All 32 on/off combinations must leave a whole graph, not a dangling ref."""
-        keys = ["turbo", "sage", "sol", "cache", "spectrum"]
-        for bits in range(32):
+        """Every on/off combination must leave a whole graph, not a dangling ref."""
+        keys = list(self.CHAIN)
+        for bits in range(1 << len(keys)):
             disabled = {k for i, k in enumerate(keys) if bits >> i & 1}
             with self.subTest(disabled=sorted(disabled)):
                 wf, _ = bypass_optimisation_nodes(self._full_chain(), disabled)
                 for nid, node in wf.items():
                     for k, v in node.get("inputs", {}).items():
                         if isinstance(v, list) and len(v) == 2:
-                            self.assertIn(v[0], wf, f"{nid}.{k} dangles at {bits:05b}")
+                            self.assertIn(v[0], wf, f"{nid}.{k} dangles at {bits:07b}")
                 # The guider and scheduler still trace back to the UNETLoader.
                 for consumer in ("guide", "sched"):
                     seen, ref = set(), wf[consumer]["inputs"]["model"]
@@ -353,7 +361,7 @@ class TestBypassOptimisationNodes(unittest.TestCase):
                         self.assertNotIn(ref[0], seen, "cycle in the model chain")
                         seen.add(ref[0])
                         ref = wf[ref[0]]["inputs"]["model"]
-                self.assertEqual(len(wf), 8 - len(disabled))
+                self.assertEqual(len(wf), len(keys) + 3 - len(disabled))
 
     def test_raises_when_node_has_no_model_input(self):
         wf = self._workflow()

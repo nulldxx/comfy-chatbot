@@ -43,9 +43,11 @@ valid JSON whether the token sits as a whole string value, a bare number, or a s
 inside a math expression, and reversible with one text replace.
 
 ```
-UNETLoader → [opt:turbo] LoRA → [opt:sage] → [opt:sol] → [opt:cache] → [opt:spectrum] → BasicGuider.model
-                                                                                      → BasicScheduler.model
+UNETLoader → [opt:turbo] LoRA → [opt:accel8*] LoRA → [opt:sage] → [opt:sol] → [opt:cache] → [opt:spectrum] → BasicGuider.model
+                                                                                                          → BasicScheduler.model
 ```
+
+(The `[opt:accel8*]` node was added later — see the amendment at the foot of this file.)
 
 Spectrum sits outermost so it wraps the rest. Beyond marking and adding it, the pass also
 closed real gaps in placeholder coverage:
@@ -145,3 +147,91 @@ lives in the panel and not at send time.
 **Still outstanding:** test-render the default all-on stack in the ComfyUI editor, and
 deploy the three templates to `~/comfy-workflows/{image2video,text2video}/` on
 `$PROD_SERVER`.
+
+---
+
+# Amendment: the 8-step accelerator LoRAs
+
+## Context
+
+A second distillation LoRA arrived in two flavours — `minimax-h3-fl2va-acc-8step`
+(matching the `fl2va` UNET the i2v and t2v graphs use) and `minimax-h3-ref2va-acc-8step`
+(matching r2v's `ref2va`). Eight steps buys noticeably better quality than four, so it
+becomes the default accelerator; the 4-step turbo LoRA stays available.
+
+This is exactly the "adding a seventh now means one node and one checkbox" case the
+consolidation was built for, and it played out that way: `workflow.py`,
+`generation_service.py` and `app.py` needed **no** change at all, `config.py` one line.
+The one genuinely new mechanic is that accelerators must exclude each other.
+
+## Decisions
+
+- **Mutually exclusive by step count, not by key.** Chaining a 4-step and an 8-step
+  distillation LoRA gives mush. Ticking an accelerator unticks every accelerator of a
+  *different* count and moves the steps override to its own. The two 8-step variants
+  share a count and so coexist — they are never both present in one template (fl2va in
+  i2v/t2v, ref2va in r2v), so "both on" means "whichever 8-step LoRA this workflow has".
+- **`steps` on the descriptor is what makes something an accelerator.** It replaced the
+  hardcoded `stateKey === 'optTurbo'` test in the panel, so the exclusion group, the
+  step-count coupling and the label hint all fall out of one field. `TURBO_STEPS` survives
+  only as turbo's value.
+- **Both 8-step rows are always shown**, captioned by workflow kind. The panel has no idea
+  which workflow is active, and a key absent from a template bypasses nothing — so ticking
+  the irrelevant one is a no-op, exactly as the original five are on a non-H3 template.
+- **Default is 8-step on, turbo off.**
+
+## The pre-upgrade session trap
+
+Flags are read as "absent means on". A session saved before this change carries an
+explicit `optTurbo: true` and *no* 8-step keys — which reads as all three accelerators on,
+i.e. precisely the stacked graph to avoid. Shallow-merging the new defaults cannot fix it:
+the old explicit `true` wins.
+
+`activeAccelerator(vs)` (`utils.js`) resolves it in one rule — **the on accelerator with
+the lowest step count wins** — so such a session resolves back to the turbo LoRA it
+actually chose and renders exactly as it did before. Three call sites agree on it:
+`videoOptsPayload` forces the losing group to `false` on the wire, the `/video-settings`
+panel collapses its `work` copy the same way on open so the ticks match what will be sent,
+and the `/settings` summary reads through the payload rather than the raw flags.
+
+## What was built
+
+- **Templates** (`~/Code/comfy-workflows`): one `LoraLoaderModelOnly` appended to each of
+  the three H3 files, directly after `[opt:turbo]` in the chain, at `strength_model: 1.0`
+  from the same `h3\` LoRA subfolder — `105:129` in i2v and t2v, `170` in r2v — with the
+  node that used to consume turbo repointed at it. Edited as text: the templates hold
+  unquoted placeholders and are not parseable JSON until `fill_placeholders_for_validation`
+  runs over them.
+- **`config.py`**: two keys added to `VIDEO_OPTIMIZATIONS`, and its stale "mirrored in
+  state.js" comment corrected to `utils.js`.
+- **`utils.js`**: two descriptors, the `steps` field, `activeAccelerator`, the exclusion
+  rule inside `videoOptsPayload`, and the new defaults.
+- **`commands.js`**: `collapseAccels()`/`accelSteps()` at panel open, a generic
+  accelerator handler replacing the turbo special case in the checkbox loop, Reset and the
+  Apply summary de-hardcoded off `TURBO_STEPS` and the literal `5`.
+
+## Verification
+
+- `tests/test_workflow.py::TestBypassOptimisationNodes` — the subset invariant now runs
+  over all 128 combinations of seven keys, and its chain is asserted equal to
+  `config.VIDEO_OPTIMIZATIONS` so the two cannot drift again.
+  `test_key_absent_from_template_is_a_no_op` already covered the fl2va-on-r2v case.
+- `tests/test_app_routes.py` — the i2v payload sends all seven keys.
+- `tests/js/utils.test.js` — the new defaults, the exclusion on the wire, and
+  `activeAccelerator` including the pre-upgrade case.
+- Against the **real** templates, as before: all three parse after placeholder fill, carry
+  exactly the expected `[opt:]` keys, and over all 64 subsets of their six keys leave no
+  dangling reference with `BasicGuider` and `BasicScheduler` still tracing to the
+  `UNETLoader`. Scripted, not committed — the templates live in another repo.
+- Full suite: 660 passed / 5 skipped; 181 JS tests.
+
+## Known gap carried forward
+
+The original `currentVideoSteps === null` gap stands, now at 8 steps rather than 4: on a
+fresh session where `/video-settings` was never opened, the first run uses the template's
+baked-in 20 steps. Unchanged reasoning — the override is global across all video
+workflows, which is why the coupling lives in the panel.
+
+**Still outstanding:** test-render the new default stack (8-step accel + cache + sage +
+sol + spectrum) in the ComfyUI editor, and deploy the three templates to
+`~/comfy-workflows/{image2video,text2video}/` on `$PROD_SERVER`.
