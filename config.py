@@ -208,6 +208,11 @@ AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac"}
 # fed to the workflow, so a clip contributing both its video and its audio costs 2.
 # Mirrored client-side as REFERENCE_MAX_FILES in static/js/state.js.
 REFERENCE_MAX_FILES = 12
+# Bypassable optimisations in the video workflows, toggled per run from /video-settings.
+# Each key names a "[opt:<key>] ..." marked node in the template (see
+# workflow.bypass_optimisation_nodes); a key absent from a template just bypasses
+# nothing. Mirrored client-side as VIDEO_OPTIMIZATIONS in static/js/state.js.
+VIDEO_OPTIMIZATIONS = ("turbo", "cache", "sage", "sol", "spectrum")
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
 
 # Idle session lock: after this many seconds with no authenticated request and no

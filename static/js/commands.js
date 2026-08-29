@@ -2,7 +2,7 @@ import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement,
   buildVideoPrompt, isVideoUrl, fmtDuration, clampVideo, recomputeVideo,
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
-  COMFY_URL_DND_TYPE,
+  COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles, referenceSlotCost } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
@@ -573,6 +573,15 @@ function showChatSummary() {
            `audio <span style="color:#a78bfa">${vs.audio !== false ? 'on' : 'off'}</span> ` +
            `<span style="color:#475569">(🔒 ${state.videoLock})</span>` +
            (state.currentVideoSteps !== null ? ` · steps <span style="color:#a78bfa">${state.currentVideoSteps}</span>` : ''),
+  });
+  const optsOn = VIDEO_OPTIMIZATIONS.filter(o => vs[o.stateKey] !== false);
+  rows.push({
+    label: 'Video optimisations',
+    value: optsOn.length
+      ? `<span style="color:#a78bfa">${optsOn.map(o => escapeHtml(o.label)).join('</span> · <span style="color:#a78bfa">')}</span>` +
+        (optsOn.length < VIDEO_OPTIMIZATIONS.length
+          ? ` <span style="color:#475569">(${VIDEO_OPTIMIZATIONS.length - optsOn.length} off)</span>` : '')
+      : '<span style="color:#475569">all off</span>',
   });
 
   if (state.autoFaceDetail) {
@@ -2288,7 +2297,7 @@ export function makeCommandHandler(deps) {
         { sig: '/upscale-workflow [name]', desc: 'choose which upscaler workflow the <code>/upscale</code> command and ⬆ button use (no arg = picker)' },
         { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
         { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video' },
-        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound' },
+        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound &nbsp;·&nbsp; the five <em>Optimisations</em> boxes bypass the matching <code>[opt:&hellip;]</code> nodes in the video workflow (all on = fast, lower-quality preview) &nbsp;·&nbsp; ticking <em>Turbo 4-step LoRA</em> sets Steps to 4, unticking it returns them to the workflow default' },
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
         { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
         { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
@@ -3339,10 +3348,12 @@ export function makeCommandHandler(deps) {
       let   lockSel = state.videoLock;
       // Steps override is kept out of `work` (which is spread wholesale into
       // state.currentVideoSettings on Apply) — it has its own state field.
-      const stepsWork = {
-        steps: state.currentVideoSteps !== null ? state.currentVideoSteps : 20,
-        useDefault: state.currentVideoSteps === null,
-      };
+      // With Turbo on and no explicit override the template's baked-in steps are
+      // wrong for the 4-step LoRA, so the panel opens pre-filled at TURBO_STEPS.
+      const turboOn = work.optTurbo !== false;
+      const stepsWork = state.currentVideoSteps !== null
+        ? { steps: state.currentVideoSteps, useDefault: false }
+        : { steps: turboOn ? TURBO_STEPS : BASE_VIDEO_STEPS, useDefault: !turboOn };
       const els = {};
 
       const wrap = document.createElement('div');
@@ -3465,17 +3476,30 @@ export function makeCommandHandler(deps) {
       }));
       wrap.appendChild(presetRow);
 
-      const audioRow = document.createElement('label');
-      audioRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;cursor:pointer';
-      const audioBox = document.createElement('input');
-      audioBox.type = 'checkbox';
-      audioBox.checked = work.audio !== false;
-      audioBox.style.cssText = 'width:15px;height:15px;accent-color:#f472b6;cursor:pointer';
-      audioBox.addEventListener('change', () => { work.audio = audioBox.checked; });
-      const audioLbl = document.createElement('span');
-      audioLbl.innerHTML = 'Audio <span style="color:#475569">— include <code>Audio:</code> cues in video prompts</span>';
-      audioRow.appendChild(audioBox); audioRow.appendChild(audioLbl);
-      wrap.appendChild(audioRow);
+      // Every boolean row goes through one factory, and every box it makes is
+      // registered in `boxes` so Reset can re-sync them all — forgetting one is how a
+      // stale tick survives a Reset.
+      const boxes = [];
+      const mkCheckbox = (key, labelHtml, onToggle) => {
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;cursor:pointer';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = work[key] !== false;
+        box.style.cssText = 'width:15px;height:15px;accent-color:#f472b6;cursor:pointer';
+        box.addEventListener('change', () => {
+          work[key] = box.checked;
+          if (onToggle) onToggle(box.checked);
+        });
+        const lbl = document.createElement('span');
+        lbl.innerHTML = labelHtml;
+        row.appendChild(box); row.appendChild(lbl);
+        boxes.push({ key, box });
+        wrap.appendChild(row);
+        return box;
+      };
+
+      mkCheckbox('audio', 'Audio <span style="color:#475569">— include <code>Audio:</code> cues in video prompts</span>');
 
       const stepsRow = document.createElement('div');
       stepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;margin-top:4px';
@@ -3491,14 +3515,19 @@ export function makeCommandHandler(deps) {
       stepsInp.type = 'text';
       stepsInp.value = String(stepsWork.steps);
       stepsInp.style.cssText = 'width:52px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+      // Sync all three steps controls from stepsWork. Shared by manual edits, the
+      // Turbo checkbox and Reset, so they cannot drift apart.
+      const refreshSteps = () => {
+        stepsInp.value = String(stepsWork.steps);
+        stepsSlider.value = String(Math.min(100, stepsWork.steps));
+        defaultStepsBox.checked = stepsWork.useDefault;
+      };
       const onStepsEdit = v => {
         const n = parseInt(v, 10);
         if (isNaN(n)) { stepsInp.value = String(stepsWork.steps); return; }
         stepsWork.steps = Math.min(200, Math.max(1, n));
-        stepsInp.value = String(stepsWork.steps);
-        stepsSlider.value = String(Math.min(100, stepsWork.steps));
         stepsWork.useDefault = false;
-        defaultStepsBox.checked = false;
+        refreshSteps();
       };
       stepsSlider.addEventListener('input', () => onStepsEdit(stepsSlider.value));
       stepsInp.addEventListener('change', () => onStepsEdit(stepsInp.value));
@@ -3516,6 +3545,23 @@ export function makeCommandHandler(deps) {
       defaultStepsLbl.innerHTML = 'Use workflow default <span style="color:#475569">— ignore the steps above</span>';
       defaultStepsRow.appendChild(defaultStepsBox); defaultStepsRow.appendChild(defaultStepsLbl);
       wrap.appendChild(defaultStepsRow);
+
+      const optsHdr = document.createElement('div');
+      optsHdr.style.cssText = 'font-size:0.82rem;color:#94a3b8;margin-top:8px';
+      optsHdr.innerHTML = 'Optimisations <span style="color:#475569">— all on is a fast, lower-quality preview</span>';
+      wrap.appendChild(optsHdr);
+      VIDEO_OPTIMIZATIONS.forEach(({ stateKey, label, hint: optHint }) => {
+        const labelHtml = escapeHtml(label) +
+          (optHint ? ` <span style="color:#475569">— ${escapeHtml(optHint)}</span>` : '');
+        // Turbo carries the step count with it: the 4-step LoRA at the template's
+        // baked-in steps is wasted work, and the template's steps without the LoRA
+        // is mush. An explicit steps edit afterwards still wins.
+        mkCheckbox(stateKey, labelHtml, stateKey === 'optTurbo' ? on => {
+          stepsWork.steps = on ? TURBO_STEPS : BASE_VIDEO_STEPS;
+          stepsWork.useDefault = !on;
+          refreshSteps();
+        } : null);
+      });
 
       const hint = document.createElement('div');
       hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:2px';
@@ -3540,16 +3586,19 @@ export function makeCommandHandler(deps) {
           ? `<strong style="color:#a78bfa">${state.currentVideoSteps}</strong>`
           : '<span style="color:#475569">workflow default</span>';
         addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> · Resolution <strong style="color:#a78bfa">${work.width}×${work.height}</strong> · Audio <strong style="color:#a78bfa">${work.audio !== false ? 'on' : 'off'}</strong> · Steps ${stepsTxt} <span style="color:#475569">(🔒 ${lockSel})</span>`);
+        const off = VIDEO_OPTIMIZATIONS.filter(o => work[o.stateKey] === false);
+        addMessage('bot', off.length
+          ? `Optimisations bypassed: <strong style="color:#a78bfa">${off.map(o => escapeHtml(o.label)).join(', ')}</strong>`
+          : 'All <strong style="color:#a78bfa">5</strong> optimisations on <span style="color:#475569">— fast preview quality</span>');
         scrollBottom();
       });
       resetBtn.addEventListener('click', () => {
         Object.assign(work, DEFAULT_VIDEO_SETTINGS);
         lockSel = 'fps';
-        audioBox.checked = work.audio !== false;
-        stepsWork.steps = 20; stepsWork.useDefault = true;
-        defaultStepsBox.checked = true;
-        stepsSlider.value = String(stepsWork.steps);
-        stepsInp.value = String(stepsWork.steps);
+        boxes.forEach(({ key, box }) => { box.checked = work[key] !== false; });
+        // Defaults have Turbo on, so the steps override follows it (see mkCheckbox).
+        stepsWork.steps = TURBO_STEPS; stepsWork.useDefault = false;
+        refreshSteps();
         refreshRes();
         refresh();
       });

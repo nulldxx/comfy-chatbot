@@ -22,6 +22,7 @@ from workflow import (
     strip_lora_nodes, strip_last_frame_guide, randomize_seeds, apply_seed,
     collect_seeds, lora_path_for_os,
     apply_resolution, apply_steps,
+    bypass_optimisation_nodes,
     reference_sentinel, strip_reference_nodes,
     reference_marker, find_marked_node, drop_node_output_links,
     node_link_output_indices,
@@ -306,7 +307,7 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                          preserve_mtime_from=None,
                          cleanup_input_image=False, duration=None, frames=None, fps=None,
                          video_width=None, video_height=None, retry_event=None,
-                         seed=None, track_seed=False):
+                         seed=None, track_seed=False, disabled_optimizations=None):
     """Core generation pipeline shared by run_generation and run_sequence_run.
 
     Runs everything from placeholder substitution through downloading the output,
@@ -546,6 +547,14 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
         # strip_reference_nodes so an inactive slot's loader is already gone.
         for drop in track_drops:
             _apply_track_drop(workflow, drop, server, send)
+
+        # Optimisation bypasses from /video-settings: drop the "[opt:<key>]" marked
+        # nodes the user switched off, rewiring the model chain around them. Kept with
+        # the other node surgery, i.e. before the UI->API conversion below.
+        if disabled_optimizations:
+            workflow, bypassed = bypass_optimisation_nodes(workflow, disabled_optimizations)
+            if bypassed:
+                send("progress", message=f"Bypassing optimisation(s): {', '.join(sorted(bypassed))}")
 
         if "nodes" in workflow:
             send("progress", message="Converting UI-format workflow to API format...")

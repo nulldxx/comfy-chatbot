@@ -7,6 +7,13 @@ LORA_PLACEHOLDER_RE = re.compile(r"<LORA_\d+_(?:NAME|STRENGTH)>")
 LORA_NAME_SENTINEL = "__LORA_UNSET__"
 LORA_TAG_RE = re.compile(r'<lora:([^:>\s]+)(?::([0-9.]+))?>', re.IGNORECASE)
 
+# A node whose _meta.title starts with "[opt:<key>]" is a bypassable optimisation
+# (see bypass_optimisation_nodes). Matched on the title rather than the class_type
+# because class_type cannot tell the H3 turbo LoRA apart from the <LORA_1_NAME>
+# user slot — both are LoraLoaderModelOnly — and node titles survive a ComfyUI
+# re-export, so the marking is not lost when a template is edited in the editor.
+OPT_TITLE_RE = re.compile(r"^\s*\[opt:([a-z0-9_]+)\]")
+
 
 def reference_sentinel(token):
     """Sentinel filename substituted for an unfilled optional reference placeholder.
@@ -194,6 +201,52 @@ def drop_node_output_links(workflow, node_id, output_indices):
             del inputs[key]
             removed.append((cid, key))
     return removed
+
+
+def optimisation_nodes(workflow):
+    """Map optimisation key -> [node_id, ...] from the templates' _meta.title markers."""
+    found = {}
+    for nid, node in workflow.items():
+        m = OPT_TITLE_RE.match((node.get("_meta") or {}).get("title", ""))
+        if m:
+            found.setdefault(m.group(1), []).append(nid)
+    return found
+
+
+def bypass_optimisation_nodes(workflow, disabled):
+    """Remove the marked optimisation nodes for every key in ``disabled``.
+
+    Each of these (the H3 turbo LoRA, FirstBlockCache, Sage/Sol attention patches,
+    Spectrum) is a MODEL -> MODEL passthrough chained between the UNETLoader and the
+    guider/scheduler, so bypassing one is the same rewire strip_lora_nodes does: delete
+    the node and point its consumers at whatever fed its ``model`` input.
+
+    Nodes are removed one at a time so that *chained* removals need no special case —
+    dropping sage first repoints sol's ``model`` at sage's upstream, which leaves the
+    subsequent removal of sol correct.
+
+    Returns (workflow, removed_keys).
+    """
+    if not disabled:
+        return workflow, []
+    marked = optimisation_nodes(workflow)
+    removed = []
+    for key in disabled:
+        for nid in marked.get(key, []):
+            inputs = workflow[nid].get("inputs", {})
+            if "model" not in inputs:
+                # Deleting it would leave its consumers pointing at nothing; refuse
+                # rather than submit a broken graph (as _apply_track_drop does).
+                raise ValueError(
+                    f"Optimisation node {nid} ([opt:{key}] "
+                    f"{workflow[nid].get('class_type')}) has no 'model' input to "
+                    f"bypass through"
+                )
+            passthrough = {0: inputs["model"]}
+            del workflow[nid]
+            _rewire_references(workflow, nid, passthrough)
+            removed.append(key)
+    return workflow, removed
 
 
 def node_link_output_indices(workflow, node_id, name_contains="audio"):

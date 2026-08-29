@@ -1,7 +1,7 @@
 import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
-  buildVideoPrompt, i2vTooltip, COMFY_URL_DND_TYPE,
+  buildVideoPrompt, i2vTooltip, COMFY_URL_DND_TYPE, videoOptsPayload,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
 import {
@@ -2025,6 +2025,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(upscale     ? { denoise: upscale.denoiseOverride != null ? upscale.denoiseOverride : state.currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video || text2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
+      ...(image2video || text2video ? { video_opts: videoOptsPayload(state.currentVideoSettings) } : {}),
       ...((image2video || text2video) && state.currentVideoSteps !== null ? { steps: state.currentVideoSteps } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
       ...(image2video && image2video.references ? { references: image2video.references } : {}),

@@ -24,6 +24,8 @@ from workflow import (
     find_marked_node,
     drop_node_output_links,
     node_link_output_indices,
+    optimisation_nodes,
+    bypass_optimisation_nodes,
     LORA_NAME_SENTINEL,
 )
 
@@ -249,6 +251,112 @@ class TestDropNodeOutputLinks(unittest.TestCase):
         before = json.loads(json.dumps(wf))
         self.assertEqual(drop_node_output_links(wf, "vid", []), [])
         self.assertEqual(wf, before)
+
+
+class TestBypassOptimisationNodes(unittest.TestCase):
+    def _workflow(self):
+        # The video templates' shape: a chain of MODEL -> MODEL passthroughs between the
+        # UNETLoader and the guider/scheduler, plus a same-class user LoRA that carries
+        # no [opt:] marker and must never be bypassed.
+        return {
+            "unet":  {"class_type": "UNETLoader", "inputs": {"unet_name": "h3.safetensors"}},
+            "turbo": {"_meta": {"title": "[opt:turbo] Load LoRA"},
+                      "class_type": "LoraLoaderModelOnly",
+                      "inputs": {"lora_name": "turbo.safetensors", "model": ["unet", 0]}},
+            "user":  {"_meta": {"title": "Load LoRA 1"},
+                      "class_type": "LoraLoaderModelOnly",
+                      "inputs": {"lora_name": "user.safetensors", "model": ["turbo", 0]}},
+            "sage":  {"_meta": {"title": "[opt:sage] Patch Sage Attention KJ"},
+                      "class_type": "PathchSageAttentionKJ", "inputs": {"model": ["user", 0]}},
+            "sol":   {"_meta": {"title": "[opt:sol] Patch Sol-Attn"},
+                      "class_type": "SolAttnPatch", "inputs": {"model": ["sage", 0]}},
+            "guide": {"class_type": "BasicGuider", "inputs": {"model": ["sol", 0]}},
+            "sched": {"class_type": "BasicScheduler", "inputs": {"model": ["sol", 0], "steps": 20}},
+        }
+
+    def test_finds_marked_nodes_only(self):
+        found = optimisation_nodes(self._workflow())
+        self.assertEqual(found, {"turbo": ["turbo"], "sage": ["sage"], "sol": ["sol"]})
+
+    def test_removes_node_and_rewires_model(self):
+        wf = self._workflow()
+        wf, removed = bypass_optimisation_nodes(wf, {"sol"})
+        self.assertEqual(removed, ["sol"])
+        self.assertNotIn("sol", wf)
+        self.assertEqual(wf["guide"]["inputs"]["model"], ["sage", 0])
+        self.assertEqual(wf["sched"]["inputs"]["model"], ["sage", 0])
+
+    def test_chained_removals_collapse_the_chain(self):
+        wf = self._workflow()
+        wf, removed = bypass_optimisation_nodes(wf, ["sage", "sol"])
+        self.assertEqual(sorted(removed), ["sage", "sol"])
+        # Both gone, and the guider reaches straight past them to the user LoRA.
+        self.assertEqual(wf["guide"]["inputs"]["model"], ["user", 0])
+
+    def test_all_off_leaves_unet_driving_the_guider(self):
+        wf = self._workflow()
+        wf, _ = bypass_optimisation_nodes(wf, ["turbo", "sage", "sol"])
+        self.assertEqual(wf["user"]["inputs"]["model"], ["unet", 0])
+        self.assertEqual(wf["guide"]["inputs"]["model"], ["user", 0])
+
+    def test_unmarked_same_class_node_survives(self):
+        wf = self._workflow()
+        wf, _ = bypass_optimisation_nodes(wf, ["turbo"])
+        self.assertIn("user", wf)
+        self.assertEqual(wf["user"]["inputs"]["lora_name"], "user.safetensors")
+
+    def test_key_absent_from_template_is_a_no_op(self):
+        wf = self._workflow()
+        before = json.loads(json.dumps(wf))
+        wf, removed = bypass_optimisation_nodes(wf, ["spectrum"])
+        self.assertEqual(removed, [])
+        self.assertEqual(wf, before)
+
+    def test_nothing_disabled_is_a_no_op(self):
+        wf = self._workflow()
+        before = json.loads(json.dumps(wf))
+        self.assertEqual(bypass_optimisation_nodes(wf, set())[1], [])
+        self.assertEqual(wf, before)
+
+    def _full_chain(self):
+        """All five optimisations chained as the consolidated H3 templates have them."""
+        wf = {"unet": {"class_type": "UNETLoader", "inputs": {"unet_name": "h3.safetensors"}}}
+        prev = "unet"
+        for key in ("turbo", "sage", "sol", "cache", "spectrum"):
+            wf[key] = {"_meta": {"title": f"[opt:{key}] node"},
+                       "class_type": f"Opt{key.capitalize()}",
+                       "inputs": {"model": [prev, 0]}}
+            prev = key
+        wf["guide"] = {"class_type": "BasicGuider", "inputs": {"model": [prev, 0]}}
+        wf["sched"] = {"class_type": "BasicScheduler", "inputs": {"model": [prev, 0], "steps": 20}}
+        return wf
+
+    def test_every_subset_leaves_the_graph_intact(self):
+        """All 32 on/off combinations must leave a whole graph, not a dangling ref."""
+        keys = ["turbo", "sage", "sol", "cache", "spectrum"]
+        for bits in range(32):
+            disabled = {k for i, k in enumerate(keys) if bits >> i & 1}
+            with self.subTest(disabled=sorted(disabled)):
+                wf, _ = bypass_optimisation_nodes(self._full_chain(), disabled)
+                for nid, node in wf.items():
+                    for k, v in node.get("inputs", {}).items():
+                        if isinstance(v, list) and len(v) == 2:
+                            self.assertIn(v[0], wf, f"{nid}.{k} dangles at {bits:05b}")
+                # The guider and scheduler still trace back to the UNETLoader.
+                for consumer in ("guide", "sched"):
+                    seen, ref = set(), wf[consumer]["inputs"]["model"]
+                    while ref[0] != "unet":
+                        self.assertNotIn(ref[0], seen, "cycle in the model chain")
+                        seen.add(ref[0])
+                        ref = wf[ref[0]]["inputs"]["model"]
+                self.assertEqual(len(wf), 8 - len(disabled))
+
+    def test_raises_when_node_has_no_model_input(self):
+        wf = self._workflow()
+        del wf["sol"]["inputs"]["model"]
+        # Deleting it would leave the guider pointing at nothing; refuse instead.
+        with self.assertRaises(ValueError):
+            bypass_optimisation_nodes(wf, ["sol"])
 
 
 class TestNodeLinkOutputIndices(unittest.TestCase):

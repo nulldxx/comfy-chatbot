@@ -531,6 +531,67 @@ pairing it by array index was only ever a convention nothing enforced.
 - **Video resolution**: `/video-settings` also sets `<VIDEO_WIDTH>`/`<VIDEO_HEIGHT>` (stored on `currentVideoSettings.width`/`.height`, default `1280×720`), sent to `/api/image2video` as `video_width`/`video_height`. This is deliberately **separate** from the still-image resolution in `/image-settings` (which flows through `apply_resolution`/`currentResolution`) because video models have very different size constraints. Dimensions are clamped to 64–2048 and snapped to a multiple of 16 (`clampVideo` in `utils.js`). In templates they replace the width/height primitives directly: the Wan templates' `WanImageToVideo` width/height (node `129:98`), and the LTX template's separate `Width`/`Height` `PrimitiveInt` nodes (`320:312`/`320:299`). The Wan and image-resolution paths don't collide because image2video never sends the still `width`/`height`, so `apply_resolution` isn't called for it.
 - **Audio toggle**: `/video-settings` has an Audio checkbox stored on `currentVideoSettings.audio` (default `true`). It is purely client-side — when off, `buildVideoPrompt()` (`utils.js`) drops the `Audio: <audio>` segment that `/video-sequence` folds into a video prompt, so audio-less workflows (e.g. the Wan template) aren't fed audio cues they ignore. It does not alter the workflow graph; audio-capable workflows still generate their own audio track regardless.
 
+### Video optimisation toggles (`/video-settings`)
+
+The MiniMax H3 workflows carry five speed-for-quality optimisations — **4-step turbo
+LoRA**, **H3 FirstBlockCache**, **Sage attention**, **Sol attention**, **H3 Spectrum** —
+each a `MODEL → MODEL` passthrough chained between the `UNETLoader` and the
+guider/scheduler. They used to be baked in, which meant one template file per
+combination (eight of them, differing in nothing else). They are now **one chain in one
+template per kind**, bypassed per run from five checkboxes in `/video-settings`.
+
+There are consequently three H3 templates, not eight: `image2video/minimax-h3-i2v.json`,
+`text2video/minimax-h3-t2v.json` and `text2video/minimax-h3-r2v.json`. They stay separate
+files because they are different graphs, not optimisation variants — R2V uses a different
+UNET (`minimax_h3_ref2va_…`) with the 15-slot `MiniMaxH3ReferenceToVideo` node, and I2V
+adds the `LoadImage → resize → first_frame` sub-chain to T2V's graph.
+
+- **Marked by title, not class.** A node is an optimisation iff its `_meta.title` starts
+  with `[opt:<key>]`, key ∈ `turbo cache sage sol spectrum` (`OPT_TITLE_RE` /
+  `optimisation_nodes` in `workflow.py`). Deliberately **not** `class_type`: the i2v
+  graph holds two `LoraLoaderModelOnly` nodes — the turbo LoRA and the `<LORA_1_NAME>`
+  user slot — and only the first may be bypassed. Node titles also survive a ComfyUI
+  re-export, so re-editing a template in the editor does not lose the marking.
+- **`bypass_optimisation_nodes()`** (`workflow.py`) deletes each marked node and rewires
+  its consumers to whatever fed its `model` input — the same `_rewire_references`
+  passthrough `strip_lora_nodes` uses. Nodes go **one at a time**, which makes chained
+  removals correct without a special case: dropping sage first repoints sol's `model` at
+  sage's upstream. A marked node with no `model` input **raises** rather than leaving a
+  dangling reference. Called in `_run_generation_core` alongside the other node surgery,
+  after the track drops and before the UI→API conversion — so, as with all of it, the
+  template must be exported in **API format**.
+- **Wire format**: the client sends `video_opts` as `{key: bool}` for **all five** keys;
+  `_parse_video_opts` (`app.py`) returns the set of keys that are **off**, forwarded as
+  `disabled_optimizations`. An absent `video_opts` disables nothing, so an older client
+  or a non-video job runs the template exactly as authored — which is why every flag is
+  sent explicitly rather than only the off ones (`videoOptsPayload` in `utils.js`).
+  Unknown keys are a **400**, checked against `VIDEO_OPTIMIZATIONS` in `config.py`
+  (mirrored client-side in `utils.js`, which is where the descriptors live rather than
+  `state.js` because `state.js` imports from `utils.js`).
+- **Client state is five flat booleans** on `currentVideoSettings` — `optTurbo`,
+  `optCache`, `optSage`, `optSol`, `optSpectrum`, all default `true`, all read with the
+  `!== false` idiom so an absent key means on. Flat, not a nested `opts` object, because
+  both restore paths shallow-merge (`{ ...DEFAULT_VIDEO_SETTINGS, ...s.videoSettings }`)
+  and Apply does `{ ...work }`: a nested object would be replaced wholesale by an old
+  snapshot and would share a reference between the panel and state. Flat keys ride the
+  existing spread, so `saveSession`/`restoreSession`, the `/settings-save` stack and
+  `newChat` needed **no** changes — exactly as when `audio` was added.
+- **Turbo carries the step count.** The templates bake `steps: 20`; the 4-step LoRA needs
+  4. Ticking Turbo in the panel switches the steps override on and sets it to
+  `TURBO_STEPS`, unticking it re-ticks *Use workflow default* — one-way coupling only, so
+  an explicit steps edit afterwards still wins. This lives purely in the panel: forcing
+  steps at send time would also hit the Wan 2.2 and LTX 2.3 templates, which have no
+  `[opt:turbo]` node to untick.
+- **Default is all five on**, i.e. a fast, low-quality preview. ⚠ **Turbo + cache +
+  Spectrum has never been rendered** — Spectrum previously appeared only in a 32-step HQ
+  t2v file where it *replaced* FirstBlockCache, and its forecast params (warmup 1,
+  window 2, max_history 8) have little to work with across 4 steps. Test-render the
+  default stack in the ComfyUI editor before trusting it.
+- **Known gap**: on a fresh session where `/video-settings` has never been opened,
+  `currentVideoSteps` is `null` while Turbo is on, so the first run loads the turbo LoRA
+  at the template's 20 steps — slower than intended, not broken. Opening the panel once
+  (it pre-fills the override to 4) and pressing Apply fixes it for the session.
+
 ### Text-to-video (`/t2v`)
 
 `/t2v` is a **mode toggle**: while it is on, a plain chat prompt is generated as a video

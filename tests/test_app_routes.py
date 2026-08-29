@@ -819,6 +819,43 @@ class TestImage2VideoSettings(_AppFixture):
         self.assertEqual(kwargs["frames"], 125)
         self.assertEqual(kwargs["fps"], 25)
 
+    def test_video_opts_forwarded_as_disabled_set(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid",
+                  "video_opts": {"turbo": True, "cache": False, "sage": True,
+                                 "sol": False, "spectrum": True}},
+        )
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        # Only the switched-off keys reach the workflow layer.
+        self.assertEqual(kwargs["disabled_optimizations"], {"cache", "sol"})
+
+    def test_video_opts_absent_disables_nothing(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertEqual(kwargs["disabled_optimizations"], set())
+
+    def test_unknown_video_opt_returns_400(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid",
+                  "video_opts": {"turbo": True, "nitro": False}},
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("nitro", resp.get_json()["error"])
+
+    def test_video_opts_not_an_object_returns_400(self):
+        resp = self.client.post(
+            "/api/image2video",
+            json={"image": "/images/src.png", "workflow": "vid", "video_opts": "all"},
+        )
+        self.assertEqual(resp.status_code, 400)
+
     def test_negative_duration_returns_400(self):
         resp = self.client.post(
             "/api/image2video",
@@ -915,6 +952,16 @@ class TestText2Video(_AppFixture):
         # 3 standalone audios).
         self.assertNotIn("input_image", kwargs)
         self.assertEqual(kwargs["input_reference_images"], [None] * 9)
+
+    def test_video_opts_forwarded(self):
+        resp = self.client.post(
+            "/api/text2video",
+            json={"prompt": "a cat", "workflow": "t2v",
+                  "video_opts": {"turbo": False, "spectrum": False}},
+        )
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = self._gen.call_args
+        self.assertEqual(kwargs["disabled_optimizations"], {"turbo", "spectrum"})
         self.assertEqual(kwargs["input_reference_videos"], [None] * 3)
         self.assertEqual(kwargs["input_reference_video_audios"], [None] * 3)
         self.assertEqual(kwargs["input_reference_audios"], [None] * 3)

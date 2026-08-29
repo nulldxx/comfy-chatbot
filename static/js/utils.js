@@ -203,7 +203,38 @@ export function i2vTooltip(meta) {
 // derived value and may round by a frame at the extremes.
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_VIDEO_SETTINGS = { duration: 5, frames: 125, fps: 25, audio: true, width: 1280, height: 720 };
+// Bypassable optimisations in the video workflows, each matching an "[opt:<key>] ..."
+// marked node in the template (see workflow.bypass_optimisation_nodes). `key` is the
+// wire/marker name — mirrored server-side as VIDEO_OPTIMIZATIONS in config.py — and
+// `stateKey` is its flag on currentVideoSettings. All default ON: that is the fast
+// preview mode, traded against quality. Declared here rather than in state.js because
+// state.js imports from this module.
+export const VIDEO_OPTIMIZATIONS = [
+  { key: 'turbo',    stateKey: 'optTurbo',    label: 'Turbo 4-step LoRA', hint: 'sets Steps to 4' },
+  { key: 'cache',    stateKey: 'optCache',    label: 'H3 FirstBlockCache' },
+  { key: 'sage',     stateKey: 'optSage',     label: 'Sage attention' },
+  { key: 'sol',      stateKey: 'optSol',      label: 'Sol attention' },
+  { key: 'spectrum', stateKey: 'optSpectrum', label: 'H3 Spectrum' },
+];
+// Sampler steps the Turbo LoRA needs, and the step count the templates bake in for
+// running without it. The /video-settings panel moves the steps override between the
+// two as Turbo is ticked and unticked.
+export const TURBO_STEPS = 4;
+export const BASE_VIDEO_STEPS = 20;
+
+export const DEFAULT_VIDEO_SETTINGS = {
+  duration: 5, frames: 125, fps: 25, audio: true, width: 1280, height: 720,
+  optTurbo: true, optCache: true, optSage: true, optSol: true, optSpectrum: true,
+};
+
+// Build the video_opts wire object. Every flag is sent explicitly: the server reads an
+// absent video_opts as "bypass nothing", so omitting an off flag would silently mean on.
+export function videoOptsPayload(vs) {
+  const out = {};
+  // Absent reads as on, so an old saved session keeps today's behaviour.
+  VIDEO_OPTIMIZATIONS.forEach(({ key, stateKey }) => { out[key] = (vs || {})[stateKey] !== false; });
+  return out;
+}
 export const VIDEO_LIMITS = {
   duration: { min: 0.1, max: 60 },
   frames:   { min: 1,   max: 1000 },

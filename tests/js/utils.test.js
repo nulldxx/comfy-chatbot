@@ -1,6 +1,7 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement, deriveFaceDetailPrompt, isVideoUrl,
          fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList,
-         formatFscheckResult, computeDiffBox, clampMenuPosition } from '../../static/js/utils.js';
+         formatFscheckResult, computeDiffBox, clampMenuPosition,
+         videoOptsPayload, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -727,5 +728,44 @@ describe('clampMenuPosition', () => {
 
   test('the margin is configurable', () => {
     expect(clampMenuPosition(0, 0, W, H, VW, VH, 20)).toEqual({ left: 20, top: 20 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// videoOptsPayload — the /video-settings optimisation toggles on the wire
+// ---------------------------------------------------------------------------
+
+describe('videoOptsPayload', () => {
+  test('every optimisation key is present, never just the off ones', () => {
+    // The server reads an absent key as "on", so an omitted off flag would invert.
+    const out = videoOptsPayload(DEFAULT_VIDEO_SETTINGS);
+    expect(Object.keys(out).sort()).toEqual(VIDEO_OPTIMIZATIONS.map(o => o.key).sort());
+  });
+
+  test('all optimisations default to on', () => {
+    const out = videoOptsPayload(DEFAULT_VIDEO_SETTINGS);
+    expect(Object.values(out).every(Boolean)).toBe(true);
+  });
+
+  test('an off flag is reported as false', () => {
+    const out = videoOptsPayload({ ...DEFAULT_VIDEO_SETTINGS, optTurbo: false, optSol: false });
+    expect(out).toEqual({ turbo: false, cache: true, sage: true, sol: false, spectrum: true });
+  });
+
+  test('a pre-upgrade settings object reads as all on', () => {
+    // Old saved sessions and snapshots carry none of these keys; absent means on.
+    expect(Object.values(videoOptsPayload({ duration: 5 })).every(Boolean)).toBe(true);
+    expect(Object.values(videoOptsPayload(undefined)).every(Boolean)).toBe(true);
+  });
+
+  test('DEFAULT_VIDEO_SETTINGS carries a flag for every declared optimisation', () => {
+    VIDEO_OPTIMIZATIONS.forEach(({ stateKey }) => {
+      expect(DEFAULT_VIDEO_SETTINGS[stateKey]).toBe(true);
+    });
+  });
+
+  test('turbo is the only optimisation that carries a step count', () => {
+    expect(VIDEO_OPTIMIZATIONS.filter(o => o.hint).map(o => o.key)).toEqual(['turbo']);
+    expect(TURBO_STEPS).toBeLessThan(BASE_VIDEO_STEPS);
   });
 });

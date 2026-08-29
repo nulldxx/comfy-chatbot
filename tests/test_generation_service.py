@@ -714,6 +714,64 @@ class ReferenceImageMappingTests(unittest.TestCase):
         for gone_key in ("image_3", "ref_audio"):
             self.assertNotIn(gone_key, mm_inputs)
 
+    # ---- Optimisation bypasses ----------------------------------------------
+    # The consolidated H3 templates chain every optimisation between the UNETLoader
+    # and the guider; /video-settings switches them off per run.
+
+    OPT_TEMPLATE = json.dumps({
+        "unet":  {"inputs": {"unet_name": "h3.safetensors"}, "class_type": "UNETLoader"},
+        "turbo": {"inputs": {"lora_name": "turbo.safetensors", "model": ["unet", 0]},
+                  "class_type": "LoraLoaderModelOnly",
+                  "_meta": {"title": "[opt:turbo] Load LoRA"}},
+        "cache": {"inputs": {"model": ["turbo", 0]},
+                  "class_type": "ApplyMiniMaxH3FirstBlockCache",
+                  "_meta": {"title": "[opt:cache] MiniMax H3 FirstBlockCache"}},
+        "guide": {"inputs": {"model": ["cache", 0], "prompt": "<PROMPT>"},
+                  "class_type": "BasicGuider"},
+    })
+
+    def _run_opts(self, disabled):
+        """Run the core over OPT_TEMPLATE with ``disabled`` bypassed; return the graph."""
+        from ComfyServer import JobCancelled
+
+        captured = {}
+        server = MagicMock()
+
+        def _submit(workflow):
+            captured["workflow"] = workflow
+            raise JobCancelled()
+        server.submit_workflow.side_effect = _submit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "wf.json").write_text(self.OPT_TEMPLATE)
+            job_id = self._make_job()
+            job = gs.jobs[job_id]
+            with patch.object(gs, "ComfyServer", return_value=server):
+                with self.assertRaises(JobCancelled):
+                    gs._run_generation_core(
+                        job_id, job["channel"], job["cancel"], "p", [],
+                        "http://s", "linux", "wf", workflow_dir=Path(tmp),
+                        duration=2, frames=48, fps=24,
+                        video_width=1280, video_height=720,
+                        disabled_optimizations=disabled,
+                    )
+        return captured["workflow"]
+
+    def test_disabled_optimisation_is_removed_and_rewired(self):
+        wf = self._run_opts({"cache"})
+        self.assertNotIn("cache", wf)
+        self.assertEqual(wf["guide"]["inputs"]["model"], ["turbo", 0])
+
+    def test_all_optimisations_disabled_collapses_to_the_unet(self):
+        wf = self._run_opts({"turbo", "cache"})
+        self.assertEqual(wf["guide"]["inputs"]["model"], ["unet", 0])
+        self.assertEqual(sorted(wf), ["guide", "unet"])
+
+    def test_no_bypasses_leaves_the_chain_whole(self):
+        wf = self._run_opts(set())
+        self.assertEqual(wf["guide"]["inputs"]["model"], ["cache", 0])
+        self.assertEqual(wf["turbo"]["inputs"]["model"], ["unet", 0])
+
     # ---- Single-node video tracks -------------------------------------------
     # The documented convention: ONE VHS loader holds <REFERENCE_VIDEO_n> and drives
     # both an IMAGE and an AUDIO consumer input. Unticking a track box must disconnect

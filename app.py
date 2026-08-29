@@ -36,6 +36,7 @@ from config import (
     COMFY_REMOVAL_DIR, COMFY_REMOVAL_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS,
     COMFY_TEXT2VIDEO_DIR, COMFY_TEXT2VIDEO_WORKFLOW, COMFY_UPSCALER_DIR,
+    VIDEO_OPTIMIZATIONS,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     FSCK_TIMEOUT, IDLE_TIMEOUT_SECONDS,
     AUDIO_EXTS, IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT,
@@ -1066,6 +1067,31 @@ def _parse_video_settings(data):
     }, None
 
 
+def _parse_video_opts(data):
+    """Extract the per-run optimisation toggles from a JSON request dict.
+
+    The client (/video-settings) sends "video_opts" as {key: bool} over the keys in
+    VIDEO_OPTIMIZATIONS. We return the set of keys that are switched OFF, because that
+    is what the workflow layer acts on (bypass_optimisation_nodes removes those nodes).
+
+    An absent "video_opts" therefore disables nothing and the template runs exactly as
+    authored — which is what an older client, or a non-video job, should get.
+
+    Returns (disabled_set, None) on success, or (None, error_response) on failure.
+    """
+    raw = data.get("video_opts")
+    if raw is None:
+        return set(), None
+    if not isinstance(raw, dict):
+        return None, (jsonify({"error": "video_opts must be an object"}), 400)
+    unknown = sorted(set(raw) - set(VIDEO_OPTIMIZATIONS))
+    if unknown:
+        return None, (jsonify({
+            "error": f"unknown video optimisation(s): {', '.join(unknown)}"
+        }), 400)
+    return {key for key, on in raw.items() if not on}, None
+
+
 @app.route("/api/face-detail", methods=["POST"])
 @login_required
 def api_face_detail():
@@ -1366,6 +1392,12 @@ def api_image2video():
     if err:
         return err
 
+    # Per-run optimisation bypasses (also from /video-settings). Empty = run the
+    # template's model chain as authored; see workflow.bypass_optimisation_nodes.
+    disabled_opts, err = _parse_video_opts(data)
+    if err:
+        return err
+
     seed, err = _parse_seed(data)
     if err:
         return err
@@ -1384,6 +1416,7 @@ def api_image2video():
         steps=steps, seed=seed, track_seed=True,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
+        disabled_optimizations=disabled_opts,
         **ref_kwargs,
     )
     return jsonify({"job_id": job_id})
@@ -1433,6 +1466,10 @@ def api_text2video():
     if err:
         return err
 
+    disabled_opts, err = _parse_video_opts(data)
+    if err:
+        return err
+
     seed, err = _parse_seed(data)
     if err:
         return err
@@ -1447,6 +1484,7 @@ def api_text2video():
         steps=steps, seed=seed, track_seed=True,
         duration=vs["duration"], frames=vs["frames"], fps=vs["fps"],
         video_width=vs["video_width"], video_height=vs["video_height"],
+        disabled_optimizations=disabled_opts,
         **ref_kwargs,
     )
     return jsonify({"job_id": job_id})
