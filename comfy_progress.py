@@ -265,7 +265,17 @@ class ProgressListener:
                     self._done.add(str(node))
             elif mtype == "executing":
                 node = data.get("node")
-                if self._current is not None:
+                node_id = None if node is None else str(node)
+                # Retire the previous node only if this message names a *different*
+                # one. ComfyUI announces a node as running in `progress_state`
+                # BEFORE sending its `executing`, so `_current` is usually already
+                # this very node — and crediting it here marked every node finished
+                # the instant it started. Harmless while all nodes weighed the same;
+                # with weighting it handed the sampler its whole 85% up front and
+                # then froze the bar, since _recompute skips the step fraction of a
+                # node already in _done. The `progress` branch below has always had
+                # this guard.
+                if self._current is not None and self._current != node_id:
                     self._done.add(self._current)
                 if node is None:
                     # End of prompt: everything ran.
@@ -275,7 +285,7 @@ class ProgressListener:
                     self._step = self._steps = 0
                     self._percent = 100.0
                     return
-                self._current = str(node)
+                self._current = node_id
                 self._current_frac = 0.0
                 self._phase = self._title(node)
                 self._step = self._steps = 0

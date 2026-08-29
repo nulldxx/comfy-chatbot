@@ -390,5 +390,67 @@ class TestWeightedAccounting(unittest.TestCase):
         self.assertEqual(lis.latest()["percent"], 100.0)
 
 
+class TestRealComfyMessageOrder(unittest.TestCase):
+    """Replays the message order captured from a live ComfyUI 0.34.2 render.
+
+    The order is the whole point: ComfyUI announces a node as *running* in a
+    `progress_state` BEFORE it sends that node's `executing` message. Treating
+    `executing` as "the previous node finished" therefore retired the node the
+    message names, crediting its weight before it had run and freezing the bar
+    for the whole sampler.
+    """
+
+    def _state(self, lis, finished=(), running=None, value=0.0, maximum=1.0):
+        nodes = {n: {"value": 1.0, "max": 1.0, "state": "finished", "node_id": n,
+                     "display_node_id": n, "parent_node_id": None,
+                     "real_node_id": n} for n in finished}
+        if running is not None:
+            nodes[running] = {"value": value, "max": maximum, "state": "running",
+                              "node_id": running, "display_node_id": running,
+                              "parent_node_id": None, "real_node_id": running}
+        lis._handle(_msg("progress_state", nodes=nodes, prompt_id="p1"))
+
+    def _sampler_listener(self):
+        wf = _sampler_graph()                       # 5 nodes, sampler "4" owns 85%
+        lis = ProgressListener("host:1", "cid", node_titles_for(wf), len(wf),
+                               node_weights_for(wf))
+        lis.bind("p1")
+        return lis
+
+    def test_sampler_is_not_finished_the_moment_it_starts(self):
+        lis = self._sampler_listener()
+        cheap = ["1", "2", "3", "5"]
+        for i, node in enumerate(cheap):
+            self._state(lis, finished=cheap[:i], running=node)
+            lis._handle(_msg("executing", node=node, prompt_id="p1"))
+        # Sampler announced running, then its executing message.
+        self._state(lis, finished=cheap, running="4")
+        lis._handle(_msg("executing", node="4", prompt_id="p1"))
+        at_start = lis.latest()["percent"]
+        self.assertLess(at_start, 100.0 * (1 - SAMPLER_SHARE) + 1.0)
+
+    def test_the_bar_advances_with_the_sampler_steps(self):
+        lis = self._sampler_listener()
+        cheap = ["1", "2", "3", "5"]
+        self._state(lis, finished=cheap, running="4")
+        lis._handle(_msg("executing", node="4", prompt_id="p1"))
+        seen = [lis.latest()["percent"]]
+        for step in range(1, 9):
+            lis._handle(_msg("progress", node="4", value=step, max=8, prompt_id="p1"))
+            seen.append(lis.latest()["percent"])
+        self.assertEqual(seen, sorted(seen))            # never goes backwards
+        self.assertLess(seen[0], 20.0)                  # starts near the slice's foot
+        self.assertGreater(seen[-1], 90.0)              # and reaches its head
+        self.assertGreater(len(set(seen)), 5)           # actually moved, step by step
+
+    def test_executing_still_retires_a_different_node(self):
+        # An older ComfyUI that sends no progress_state at all must still work:
+        # there, `executing B` is the only signal that A has finished.
+        lis = _listener(total=4)
+        lis._handle(_msg("executing", node="1", prompt_id="p1"))
+        lis._handle(_msg("executing", node="2", prompt_id="p1"))
+        self.assertEqual(lis.latest()["percent"], 25.0)
+
+
 if __name__ == "__main__":
     unittest.main()

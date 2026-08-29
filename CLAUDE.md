@@ -345,6 +345,11 @@ it to a snapshot the job thread reads. See `ADR/generation-progress-bars.md`.
   sampler falls back to the old uniform accounting. The shares are estimates, not measured
   timings, so the caption (`Sampling — step 12/20 · node 7/23`) still carries the honest
   number.
+- **`progress_state` arrives before `executing` for the same node**, so `executing` may
+  only retire the *previous* node when it names a different one. Retiring the node it
+  names marked every node finished the instant it started — invisible under uniform
+  weighting, but it gave the sampler its whole 85% before step 1 and then froze the bar,
+  since `_recompute` skips the step fraction of a node already counted as done.
 - **`progress_state` is not the whole graph.** Against ComfyUI 0.34.2 it lists only nodes
   it holds progress records for — one that arrived via `execution_cached` never appears.
   Its finished nodes are **unioned** into the known set; replacing it made progress drop

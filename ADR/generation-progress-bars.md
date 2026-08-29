@@ -63,6 +63,16 @@ concerns so the whole message vocabulary is testable without a server.
   therefore **unioned** into what is already known; replacing the set made
   progress drop back on every such message (visible only as a frozen bar, since
   the monotonic clamp swallowed the regression).
+- **`progress_state` precedes `executing` for the same node.** Observed on a
+  live 0.34.2 render: a node is announced as `running` in a `progress_state`
+  *before* its own `executing` message arrives. So `executing` must **not** be
+  read as "the previous node finished" without checking that it names a
+  different node — doing so retired the node the message named, crediting its
+  weight before it had run. With uniform weights that was an invisible one-node
+  lookahead; once samplers were weighted it handed the sampler its whole 85% up
+  front and then froze the bar for the entire render, because `_recompute` skips
+  the step fraction of a node already in `_done`. The `progress` branch always
+  had the guard; `executing` didn't.
 - **`_started` flag.** Distinguishes "0% and running" from "nothing heard yet",
   so a message we understood but that carried no state — or a malformed one —
   can't publish a phantom 0% and flip the client's bar to determinate-and-empty.
