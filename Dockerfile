@@ -32,6 +32,7 @@ COPY app.py .
 COPY agent_client.py .
 COPY auth_store.py .
 COPY catalogue.py .
+COPY comfy_progress.py .
 COPY ComfyServer.py .
 COPY config.py .
 COPY crypto_key.py .
