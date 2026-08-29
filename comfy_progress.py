@@ -17,6 +17,7 @@ indeterminate marquee.
 """
 
 import json
+import re
 import threading
 
 try:                                                  # pragma: no cover - trivial
@@ -34,6 +35,41 @@ RECV_TIMEOUT = 1.0
 CONNECT_TIMEOUT = 5.0
 
 
+# -- node cost weighting ----------------------------------------------------
+#
+# A node's slice of the bar is a static estimate of what it costs, not 1/N. The
+# numbers below are judgement, not measurement: sampling dominates the wall
+# clock of every workflow here, decoding a 121-frame video latent is the next
+# biggest thing, and the rest of a graph — loaders, resizes, conditioning — is
+# rounding error by comparison.
+
+# Share of the whole bar the sampler nodes own between them.
+SAMPLER_SHARE = 0.85
+
+# Second tier: still much cheaper than sampling, but far from free on video.
+HEAVY_WEIGHT = 5.0
+
+# A node is a sampler iff its class_type says so AND it consumes a latent. The
+# latent test is what makes a substring match safe: KSamplerSelect and
+# SamplerEulerAncestral merely *name* a sampler (they pick one) and cost
+# nothing, while KSampler/KSamplerAdvanced/SamplerCustom/SamplerCustomAdvanced —
+# the nodes that actually denoise — all take a latent. Substring rather than an
+# allowlist because the templates are authored outside this repo and pull in
+# custom node packs, so an allowlist would go stale silently.
+SAMPLER_CLASS_RE = re.compile(r"sampler", re.I)
+HEAVY_CLASS_RE = re.compile(r"vaedecode|vaeencode|createvideo|savevideo|saveanimated", re.I)
+LATENT_INPUTS = ("latent_image", "latent", "samples")
+
+# Used when a sampler's step count can't be read off the graph at all.
+DEFAULT_STEPS = 20
+MAX_STEPS = 1000
+
+# How far upstream of a sampler to look for the scheduler holding its step
+# count. SamplerCustomAdvanced -> BasicScheduler is one hop; a SplitSigmas in
+# between makes it two.
+STEPS_SEARCH_DEPTH = 3
+
+
 class ProgressListener:
     """Reads one ComfyUI /ws feed and maintains a normalised progress snapshot.
 
@@ -43,11 +79,23 @@ class ProgressListener:
     own ``clientId`` socket is ours anyway.
     """
 
-    def __init__(self, server, client_id, node_titles=None, total_nodes=0):
+    def __init__(self, server, client_id, node_titles=None, total_nodes=0,
+                 node_weights=None):
         self.server = server
         self.client_id = client_id
         self.node_titles = node_titles or {}
         self.total_nodes = max(int(total_nodes or 0), 0)
+        # Per-node cost estimates from node_weights_for(). None means uniform,
+        # which is exactly the behaviour this class had before weighting
+        # existed — so a caller that can't produce weights loses nothing.
+        self.node_weights = node_weights or {}
+        self._total_weight = (sum(self.node_weights.values())
+                              or float(self.total_nodes))
+        # For a node id we have no weight for (a display id from a subgraph, a
+        # graph edited under us): the average node. It must advance the bar —
+        # falling back to zero would stall it instead.
+        self._default_weight = (self._total_weight / self.total_nodes
+                                if self.total_nodes else 1.0)
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -176,6 +224,9 @@ class ProgressListener:
     def _title(self, node_id):
         return self.node_titles.get(str(node_id)) or f"Node {node_id}"
 
+    def _weight(self, node_id):
+        return self.node_weights.get(str(node_id), self._default_weight)
+
     def _handle(self, msg):
         """Fold one decoded message into the snapshot.
 
@@ -285,17 +336,18 @@ class ProgressListener:
     def _recompute(self):
         """Update the percentage. Caller holds the lock.
 
-        Every node counts the same, with the running node's step fraction
-        interpolated into its slice. Clamped non-decreasing: ComfyUI revisits
-        nodes and multi-pass graphs re-run samplers, and a bar that goes
-        backwards is worse than no bar at all.
+        Each node contributes its own weight (see node_weights_for), with the
+        running node's step fraction interpolated into its slice, so the bar
+        tracks the wall clock rather than the node count. Clamped
+        non-decreasing: ComfyUI revisits nodes and multi-pass graphs re-run
+        samplers, and a bar that goes backwards is worse than no bar at all.
         """
-        if not self.total_nodes or not self._started:
+        if not self.total_nodes or not self._started or not self._total_weight:
             return
-        done = len(self._done)
+        done = sum(self._weight(n) for n in self._done)
         if self._current is not None and self._current not in self._done:
-            done += min(max(self._current_frac, 0.0), 1.0)
-        pct = min(100.0 * done / self.total_nodes, 100.0)
+            done += self._weight(self._current) * min(max(self._current_frac, 0.0), 1.0)
+        pct = min(100.0 * done / self._total_weight, 100.0)
         if self._percent is None or pct > self._percent:
             self._percent = pct
 
@@ -328,3 +380,105 @@ def node_titles_for(workflow):
         if title:
             titles[str(node_id)] = str(title)
     return titles
+
+
+def node_weights_for(workflow):
+    """Map node id -> cost weight for an API-format workflow.
+
+    Not every node costs the same: a KSampler owns most of a render's wall
+    clock while the loaders, resizes and conditioning nodes around it cost
+    milliseconds. Weighting the bar by these estimates instead of by node count
+    is what stops it racing to ~70% and then crawling through one slice.
+
+    Three tiers — samplers (``SAMPLER_SHARE`` of the bar between them, split in
+    proportion to their step counts), the heavy decode/encode nodes
+    (``HEAVY_WEIGHT``), and everything else (``1.0``). Returns raw weights, not
+    fractions; the listener divides by their sum.
+
+    Estimates, not measurements. A graph with no recognisable sampler simply
+    keeps the tiers it can see, which is essentially the old uniform behaviour.
+    """
+    nodes = {str(node_id): node
+             for node_id, node in (workflow or {}).items()
+             if isinstance(node, dict)}
+    if not nodes:
+        return {}
+
+    weights, samplers = {}, {}
+    for node_id, node in nodes.items():
+        class_type = str(node.get("class_type") or "")
+        if _is_sampler(node, class_type):
+            samplers[node_id] = _steps_hint(nodes, node_id)
+        elif HEAVY_CLASS_RE.search(class_type):
+            weights[node_id] = HEAVY_WEIGHT
+        else:
+            weights[node_id] = 1.0
+
+    total_steps = sum(samplers.values())
+    if not samplers or not total_steps:
+        return weights
+    base = sum(weights.values())
+    if not base:
+        # Nothing to balance the samplers against; the shares are all that's
+        # left to say, and SAMPLER_SHARE of everything is everything.
+        return dict(samplers)
+
+    # Solve budget / (base + budget) == SAMPLER_SHARE.
+    budget = base * SAMPLER_SHARE / (1.0 - SAMPLER_SHARE)
+    for node_id, steps in samplers.items():
+        weights[node_id] = budget * steps / total_steps
+    return weights
+
+
+def _is_sampler(node, class_type):
+    """True for the nodes that actually denoise — see SAMPLER_CLASS_RE."""
+    if not SAMPLER_CLASS_RE.search(class_type):
+        return False
+    inputs = node.get("inputs")
+    if not isinstance(inputs, dict):
+        return False
+    return any(name in inputs for name in LATENT_INPUTS)
+
+
+def _steps_hint(nodes, node_id):
+    """Step count for one sampler: its own ``steps``, else its scheduler's.
+
+    KSampler carries ``steps`` directly. SamplerCustomAdvanced does not — it
+    takes SIGMAS from a BasicScheduler/LTXVScheduler, so the count is a short
+    walk upstream. Breadth-first, so the nearest scheduler wins, and bounded so
+    a densely linked graph can't turn this into a crawl of the whole thing.
+    """
+    seen, frontier = {node_id}, [node_id]
+    for _ in range(STEPS_SEARCH_DEPTH + 1):
+        upstream = []
+        for nid in frontier:
+            inputs = (nodes.get(nid) or {}).get("inputs")
+            if not isinstance(inputs, dict):
+                continue
+            steps = _as_steps(inputs.get("steps"))
+            if steps:
+                return steps
+            for value in inputs.values():
+                # An API-format link is ["<node_id>", output_index]; anything
+                # else is a literal widget value.
+                if not (isinstance(value, list) and value):
+                    continue
+                source = str(value[0])
+                if source in nodes and source not in seen:
+                    seen.add(source)
+                    upstream.append(source)
+        if not upstream:
+            break
+        frontier = upstream
+    return DEFAULT_STEPS
+
+
+def _as_steps(value):
+    """A positive, sanely bounded int step count, or 0 for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    try:
+        steps = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return min(steps, MAX_STEPS) if steps > 0 else 0

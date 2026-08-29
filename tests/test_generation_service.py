@@ -1010,9 +1010,11 @@ class ProgressTickTests(CoreSeedRecordingTests):
     class StubListener:
         instances = []
 
-        def __init__(self, server, client_id, node_titles, total_nodes):
+        def __init__(self, server, client_id, node_titles, total_nodes,
+                     node_weights=None):
             self.server, self.client_id = server, client_id
             self.node_titles, self.total_nodes = node_titles, total_nodes
+            self.node_weights = node_weights
             self.bound, self.stopped = None, False
             self.snapshot = {"percent": 42.5, "phase": "Sampling",
                              "step": 8, "steps": 20,
@@ -1067,6 +1069,14 @@ class ProgressTickTests(CoreSeedRecordingTests):
         lis = self.StubListener.instances[0]
         self.assertEqual(lis.total_nodes, len(self.submitted["workflow"]))
         self.assertEqual(set(lis.node_titles), set(self.submitted["workflow"]))
+
+    def test_listener_is_weighted_by_the_submitted_graph(self):
+        # The weights must describe the graph as *submitted* — after placeholder
+        # substitution and the LoRA/optimisation/reference node surgery — since
+        # that is what ComfyUI will actually run.
+        self._run()
+        lis = self.StubListener.instances[0]
+        self.assertEqual(set(lis.node_weights), set(self.submitted["workflow"]))
 
     def test_listener_is_stopped_even_when_the_job_fails(self):
         # Otherwise a cancel, retry or timeout leaks the reader thread.

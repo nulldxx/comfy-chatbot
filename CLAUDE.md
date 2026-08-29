@@ -330,11 +330,21 @@ it to a snapshot the job thread reads. See `ADR/generation-progress-bars.md`.
   connected with the same `clientId`. The listener is started **before** the submit —
   ComfyUI buffers nothing, so a socket opened afterwards misses the opening messages —
   and `bind(prompt_id)` supplies the filter once the submit returns.
-- **Percent** = `(finished nodes + running node's step fraction) / total nodes`, clamped
-  **non-decreasing** (multi-pass graphs re-run their samplers). Every node weighs the
-  same, so the bar is **front-loaded**: it races to ~70% then crawls through the one
-  sampler that owns the wall clock. The caption (`Sampling — step 12/20 · node 7/23`)
-  carries the honest number, which is why it exists.
+- **Percent is weighted by node cost**, not by node count: `(finished weight + running
+  node's step fraction × its weight) / total weight`, clamped **non-decreasing**
+  (multi-pass graphs re-run their samplers). `node_weights_for()` splits the submitted
+  graph into three tiers — the **samplers own 85%** (`SAMPLER_SHARE`) of the bar between
+  them, divided in proportion to their step counts; VAE decode / video encode /
+  save-video are **5×** (`HEAVY_WEIGHT`) an ordinary node; everything else is 1. A node
+  counts as a sampler iff its `class_type` matches `/sampler/i` **and** it takes a latent
+  — that second test is what keeps `KSamplerSelect`, which merely picks a sampler, out of
+  the 85%. Steps come from the sampler's own `steps` input, else a bounded walk upstream
+  to the `BasicScheduler`/`LTXVScheduler` feeding its `sigmas`, else 20; because the
+  weights are read off the **submitted** graph, the `/video-settings` steps override and
+  the accelerator LoRAs' 4/8 steps are already baked in. A graph with no recognised
+  sampler falls back to the old uniform accounting. The shares are estimates, not measured
+  timings, so the caption (`Sampling — step 12/20 · node 7/23`) still carries the honest
+  number.
 - **`progress_state` is not the whole graph.** Against ComfyUI 0.34.2 it lists only nodes
   it holds progress records for — one that arrived via `execution_cached` never appears.
   Its finished nodes are **unioned** into the known set; replacing it made progress drop

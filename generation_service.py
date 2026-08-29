@@ -13,7 +13,7 @@ from werkzeug.utils import secure_filename
 from config import (COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS,
                     COMFY_WS_PROGRESS)
 from ComfyServer import ComfyServer, JobCancelled, JobRetry
-from comfy_progress import ProgressListener, node_titles_for
+from comfy_progress import ProgressListener, node_titles_for, node_weights_for
 from catalogue import parse_loras_from_prompt, resolve_workflow_path
 from persistence import append_session_image, append_session_note, rename_session
 from seed_store import record_seeds
@@ -623,7 +623,8 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
         if COMFY_WS_PROGRESS:
             try:
                 listener = ProgressListener(server_address, server.client_id,
-                                            node_titles_for(workflow), len(workflow))
+                                            node_titles_for(workflow), len(workflow),
+                                            node_weights_for(workflow))
                 listener.start()
             except Exception as e:                    # never cost the user an image
                 print(f"[comfy-progress] listener unavailable: {e}")

@@ -4,7 +4,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from comfy_progress import ProgressListener, node_titles_for
+from comfy_progress import (ProgressListener, SAMPLER_SHARE,
+                            node_titles_for, node_weights_for)
 
 
 def _listener(total=4, titles=None, prompt_id="p1"):
@@ -242,6 +243,151 @@ class TestDegradation(unittest.TestCase):
         lis.start()
         self.assertTrue(lis._dead)
         self.assertIsNone(lis.latest())
+
+
+def _sampler_graph(sampler_steps=8, extras=None):
+    """A minimal SamplerCustomAdvanced graph: scheduler holds the step count."""
+    wf = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m"}},
+        "2": {"class_type": "BasicScheduler",
+              "inputs": {"steps": sampler_steps, "model": ["1", 0]}},
+        "3": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "4": {"class_type": "SamplerCustomAdvanced",
+              "inputs": {"sigmas": ["2", 0], "sampler": ["3", 0],
+                         "latent_image": ["5", 0]}},
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 512}},
+    }
+    wf.update(extras or {})
+    return wf
+
+
+class TestNodeWeights(unittest.TestCase):
+    def _share(self, weights, *node_ids):
+        total = sum(weights.values())
+        return sum(weights[n] for n in node_ids) / total
+
+    def test_samplers_own_the_agreed_share_of_the_bar(self):
+        w = node_weights_for(_sampler_graph())
+        self.assertAlmostEqual(self._share(w, "4"), SAMPLER_SHARE)
+
+    def test_a_sampler_naming_node_is_not_a_sampler(self):
+        # KSamplerSelect matches the class regex but takes no latent: it picks a
+        # sampler, it doesn't run one, and giving it a sampler's share of the bar
+        # would make the bar leap 40% when it completes instantly.
+        w = node_weights_for(_sampler_graph())
+        self.assertEqual(w["3"], 1.0)
+        self.assertEqual(w["1"], 1.0)
+
+    def test_steps_are_read_off_the_sampler_itself(self):
+        wf = {"1": {"class_type": "KSampler",
+                    "inputs": {"steps": 20, "latent_image": ["2", 0]}},
+              "2": {"class_type": "EmptyLatentImage", "inputs": {"width": 512}}}
+        w = node_weights_for(wf)
+        self.assertAlmostEqual(self._share(w, "1"), SAMPLER_SHARE)
+
+    def test_two_samplers_split_the_budget_by_their_steps(self):
+        # A Wan high-noise/low-noise pair, or an LTX two-pass graph: the passes
+        # divide the budget the way they divide the work.
+        wf = _sampler_graph(sampler_steps=6, extras={
+            "6": {"class_type": "BasicScheduler",
+                  "inputs": {"steps": 2, "model": ["1", 0]}},
+            "7": {"class_type": "SamplerCustomAdvanced",
+                  "inputs": {"sigmas": ["6", 0], "latent_image": ["4", 0]}},
+        })
+        w = node_weights_for(wf)
+        self.assertAlmostEqual(self._share(w, "4", "7"), SAMPLER_SHARE)
+        self.assertAlmostEqual(w["4"] / w["7"], 3.0)      # 6 steps vs 2
+
+    def test_steps_found_through_an_intermediate_node(self):
+        # SplitSigmas between the scheduler and the sampler is still in range.
+        wf = _sampler_graph()
+        wf["4"]["inputs"]["sigmas"] = ["6", 0]
+        wf["6"] = {"class_type": "SplitSigmas", "inputs": {"sigmas": ["2", 0]}}
+        wf["8"] = {"class_type": "SamplerCustomAdvanced",
+                   "inputs": {"sigmas": ["2", 0], "latent_image": ["5", 0]}}
+        w = node_weights_for(wf)
+        self.assertAlmostEqual(w["4"], w["8"])            # both found steps=8
+
+    def test_unknown_steps_fall_back_without_breaking_the_share(self):
+        wf = _sampler_graph()
+        del wf["2"]["inputs"]["steps"]
+        w = node_weights_for(wf)
+        self.assertAlmostEqual(self._share(w, "4"), SAMPLER_SHARE)
+
+    def test_decode_and_encode_outrank_an_ordinary_node(self):
+        # Decoding a 121-frame video latent is not free; without this the bar
+        # parks just past the sampler and looks stuck at the very end.
+        w = node_weights_for(_sampler_graph(extras={
+            "6": {"class_type": "VAEDecode", "inputs": {"samples": ["4", 0]}},
+            "7": {"class_type": "SaveVideo", "inputs": {"video": ["6", 0]}},
+        }))
+        self.assertEqual(w["6"], 5.0)
+        self.assertEqual(w["7"], 5.0)
+        self.assertGreater(w["4"], w["6"])
+
+    def test_a_graph_with_no_sampler_stays_uniform(self):
+        # The old behaviour, which is the right thing to degrade to.
+        wf = {"1": {"class_type": "LoadImage", "inputs": {}},
+              "2": {"class_type": "ImageScale", "inputs": {"image": ["1", 0]}}}
+        self.assertEqual(node_weights_for(wf), {"1": 1.0, "2": 1.0})
+
+    def test_tolerates_junk(self):
+        self.assertEqual(node_weights_for(None), {})
+        self.assertEqual(node_weights_for({"3": "not a dict"}), {})
+        self.assertEqual(node_weights_for({"4": {}}), {"4": 1.0})
+        wf = {"1": {"class_type": "KSampler",
+                    "inputs": {"steps": "twenty", "latent_image": ["2", 0]}},
+              "2": {"class_type": "EmptyLatentImage", "inputs": None}}
+        self.assertAlmostEqual(self._share(node_weights_for(wf), "1"),
+                               SAMPLER_SHARE)
+
+
+class TestWeightedAccounting(unittest.TestCase):
+    """The listener side: a weight map changes where the bar sits, nothing else."""
+
+    def _weighted(self, wf):
+        weights = node_weights_for(wf)
+        lis = ProgressListener("host:1", "cid", {}, len(wf), weights)
+        lis.bind("p1")
+        return lis
+
+    def test_a_half_done_sampler_sits_near_the_middle(self):
+        # Unweighted this graph would read 4/5 nodes done -> ~90%. The sampler
+        # owning 85% of the bar is the whole point of the weighting.
+        lis = self._weighted(_sampler_graph())
+        lis._handle(_msg("execution_cached", nodes=["1", "2", "3", "5"], prompt_id="p1"))
+        lis._handle(_msg("executing", node="4", prompt_id="p1"))
+        lis._handle(_msg("progress", node="4", value=4, max=8, prompt_id="p1"))
+        self.assertAlmostEqual(lis.latest()["percent"], 57.5, places=1)
+
+    def test_cheap_nodes_barely_move_the_bar(self):
+        # Three of the four cheap nodes done: unweighted that reads 60%, and the
+        # render hasn't started. They share what the sampler doesn't own.
+        lis = self._weighted(_sampler_graph())
+        lis._handle(_msg("execution_cached", nodes=["1", "2", "3"], prompt_id="p1"))
+        self.assertAlmostEqual(lis.latest()["percent"],
+                               100.0 * (1 - SAMPLER_SHARE) * 3 / 4, places=1)
+
+    def test_completion_still_reaches_a_hundred(self):
+        lis = self._weighted(_sampler_graph())
+        lis._handle(_msg("executing", node="4", prompt_id="p1"))
+        lis._handle(_msg("executing", node=None, prompt_id="p1"))
+        self.assertEqual(lis.latest()["percent"], 100.0)
+
+    def test_node_caption_still_counts_nodes_not_weights(self):
+        lis = self._weighted(_sampler_graph())
+        lis._handle(_msg("execution_cached", nodes=["1", "2"], prompt_id="p1"))
+        lis._handle(_msg("executing", node="3", prompt_id="p1"))
+        snap = lis.latest()
+        self.assertEqual((snap["node_index"], snap["node_total"]), (3, 5))
+
+    def test_unknown_node_id_still_advances_the_bar(self):
+        lis = self._weighted(_sampler_graph())
+        before = lis.latest()
+        lis._handle(_msg("executing", node="999", prompt_id="p1"))
+        lis._handle(_msg("executing", node=None, prompt_id="p1"))
+        self.assertIsNone(before)
+        self.assertEqual(lis.latest()["percent"], 100.0)
 
 
 if __name__ == "__main__":
