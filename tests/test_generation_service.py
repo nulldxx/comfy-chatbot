@@ -106,13 +106,19 @@ class CoreSeedRecordingTests(unittest.TestCase):
 
         class FakeServer:
             def __init__(self, address):
-                pass
+                # Real ComfyServer generates one per instance; the progress
+                # listener subscribes to ComfyUI's /ws feed with it.
+                self.client_id = "client-id-1234"
 
             def submit_workflow(self, workflow):
                 outer.submitted["workflow"] = workflow
                 return "prompt-id-1234"
 
-            def poll_status(self, *a, **k):
+            def poll_status(self, prompt_id, timeout=None, callback=None, **k):
+                # The real poll loop emits a "." heartbeat every 2s, which is
+                # what carries the progress snapshot to the client.
+                if callback:
+                    callback(".")
                 return {"outputs": {}}
 
             def get_output_images(self, prompt_data):
@@ -128,6 +134,10 @@ class CoreSeedRecordingTests(unittest.TestCase):
 
         self._patchers = [
             patch.object(gs, "ComfyServer", FakeServer),
+            # Off by default: otherwise every generation test would open a real
+            # socket at the fake server address. ProgressTickTests turns it back
+            # on with a stub listener.
+            patch.object(gs, "COMFY_WS_PROGRESS", False),
             patch.object(gs, "IMAGES_DIR", self.images_dir),
             patch.object(gs, "purge_generation_started", lambda *a, **k: None),
             patch.object(gs, "purge_generation_finished", lambda *a, **k: None),
@@ -987,6 +997,105 @@ class ReferenceImageMappingTests(unittest.TestCase):
         self.assertNotIn("img2", wf)
         self.assertNotIn("image_2", wf["mm"]["inputs"])
         self.assertEqual(wf["mm"]["inputs"]["image_1"], ["img1", 0])
+
+
+class ProgressTickTests(CoreSeedRecordingTests):
+    """The poll loop's 2s heartbeat carries ComfyUI's progress snapshot.
+
+    Reuses the core fixture (FakeServer's poll_status fires callback(".")) and
+    re-enables the listener with a stub, so the payload is asserted without a
+    socket.
+    """
+
+    class StubListener:
+        instances = []
+
+        def __init__(self, server, client_id, node_titles, total_nodes):
+            self.server, self.client_id = server, client_id
+            self.node_titles, self.total_nodes = node_titles, total_nodes
+            self.bound, self.stopped = None, False
+            self.snapshot = {"percent": 42.5, "phase": "Sampling",
+                             "step": 8, "steps": 20,
+                             "node_index": 2, "node_total": 4}
+            ProgressTickTests.StubListener.instances.append(self)
+
+        def start(self):
+            pass
+
+        def bind(self, prompt_id):
+            self.bound = prompt_id
+
+        def latest(self):
+            return self.snapshot
+
+        def stop(self):
+            self.stopped = True
+
+    def setUp(self):
+        super().setUp()
+        self.StubListener.instances = []
+        self._ws = [patch.object(gs, "COMFY_WS_PROGRESS", True),
+                    patch.object(gs, "ProgressListener", self.StubListener)]
+        for p in self._ws:
+            p.start()
+
+    def tearDown(self):
+        for p in self._ws:
+            p.stop()
+        super().tearDown()
+
+    def _ticks(self):
+        return [m for m in _drain(self.channel) if m["type"] == "tick"]
+
+    def test_tick_carries_the_snapshot(self):
+        self._run()
+        self.assertEqual(self._ticks(), [{
+            "type": "tick", "percent": 42.5, "phase": "Sampling",
+            "step": 8, "steps": 20, "node_index": 2, "node_total": 4,
+        }])
+
+    def test_listener_is_bound_to_the_prompt_and_stopped(self):
+        self._run()
+        lis = self.StubListener.instances[0]
+        self.assertEqual(lis.bound, "prompt-id-1234")
+        self.assertTrue(lis.stopped)
+        self.assertEqual(lis.server, "127.0.0.1:8188")
+        self.assertEqual(lis.client_id, "client-id-1234")
+
+    def test_listener_sees_the_submitted_graph(self):
+        self._run()
+        lis = self.StubListener.instances[0]
+        self.assertEqual(lis.total_nodes, len(self.submitted["workflow"]))
+        self.assertEqual(set(lis.node_titles), set(self.submitted["workflow"]))
+
+    def test_listener_is_stopped_even_when_the_job_fails(self):
+        # Otherwise a cancel, retry or timeout leaks the reader thread.
+        with patch.object(gs.ComfyServer, "get_output_images",
+                          lambda self, data: []):
+            with self.assertRaises(ValueError):
+                self._run()
+        self.assertTrue(self.StubListener.instances[0].stopped)
+
+    def test_no_snapshot_yields_a_bare_tick(self):
+        # A ComfyUI whose feed never connected must look exactly like it did
+        # before this existed, so the client keeps its indeterminate marquee.
+        with patch.object(self.StubListener, "latest", lambda self: None):
+            self._run()
+        self.assertEqual(self._ticks(), [{"type": "tick"}])
+
+    def test_disabled_by_config_yields_a_bare_tick(self):
+        with patch.object(gs, "COMFY_WS_PROGRESS", False):
+            self._run()
+        self.assertEqual(self._ticks(), [{"type": "tick"}])
+        self.assertEqual(self.StubListener.instances, [])
+
+    def test_a_broken_listener_never_fails_the_job(self):
+        def boom(*a, **k):
+            raise RuntimeError("no websocket module")
+        with patch.object(gs, "ProgressListener", boom):
+            urls = self._run()
+        self.assertEqual(len(urls), 1)
+        self.assertEqual(self._ticks(), [{"type": "tick"}])
 
 
 if __name__ == "__main__":

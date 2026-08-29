@@ -1037,6 +1037,21 @@ header a:hover { color: #a78bfa; }
   100% { width: 0%;  margin-left: 100%; }
 }
 
+/* Determinate mode: set once a tick carries a real percentage from ComfyUI's
+   progress feed. Kills the indeterminate marquee and drives width instead. The
+   transition matches the 2s tick cadence closely enough to read as continuous
+   without lagging behind it. */
+.progress-bar-wrap.determinate .progress-bar {
+  animation: none;
+  margin-left: 0;
+  transition: width 0.3s linear;
+}
+.progress-caption {
+  font-size: 11px; color: #94a3b8; margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.progress-caption:empty { display: none; }
+
 /* Slideshow widget */
 .slideshow { min-width: 160px; }
 .ss-img-wrap {

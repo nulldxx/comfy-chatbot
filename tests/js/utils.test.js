@@ -3,7 +3,7 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          formatFscheckResult, computeDiffBox, clampMenuPosition,
          videoOptsPayload, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
          splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
-         WORKFLOW_VARIANT_SEP } from '../../static/js/utils.js';
+         WORKFLOW_VARIANT_SEP, progressPercent, progressCaption } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -824,5 +824,67 @@ describe('workflowLabelHtml', () => {
     // Both go through escapeHtml, which covers the markup-significant characters.
     expect(workflowLabelHtml('a<b@c>d')).toBe(
       'a&lt;b <span style="color:#64748b;font-size:0.85em">@ c&gt;d</span>');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// progressPercent / progressCaption — the {type:"tick"} progress payload
+// ---------------------------------------------------------------------------
+
+describe('progressPercent', () => {
+  test('reads a percentage', () => {
+    expect(progressPercent({ type: 'tick', percent: 42.5 })).toBe(42.5);
+  });
+
+  test('a bare tick has none, so the marquee stays', () => {
+    // What a run whose ComfyUI feed never connected sends.
+    expect(progressPercent({ type: 'tick' })).toBeNull();
+    expect(progressPercent(null)).toBeNull();
+    expect(progressPercent({ percent: '80' })).toBeNull();
+    expect(progressPercent({ percent: NaN })).toBeNull();
+  });
+
+  test('clamps out-of-range values', () => {
+    expect(progressPercent({ percent: -5 })).toBe(0);
+    expect(progressPercent({ percent: 150 })).toBe(100);
+  });
+
+  test('zero is a percentage, not an absence', () => {
+    expect(progressPercent({ percent: 0 })).toBe(0);
+  });
+});
+
+describe('progressCaption', () => {
+  test('names the phase and the step within it', () => {
+    expect(progressCaption({ phase: 'Sampling', step: 8, steps: 20,
+                             node_index: 2, node_total: 4 }))
+      .toBe('Sampling — step 8/20 · node 2/4');
+  });
+
+  test('a single-step node shows no step counter', () => {
+    expect(progressCaption({ phase: 'VAE Decode', step: 1, steps: 1,
+                             node_index: 3, node_total: 4 }))
+      .toBe('VAE Decode · node 3/4');
+  });
+
+  test('node position alone is still useful', () => {
+    expect(progressCaption({ node_index: 3, node_total: 9 })).toBe('node 3/9');
+  });
+
+  test('node index never exceeds the total', () => {
+    expect(progressCaption({ node_index: 5, node_total: 4 })).toBe('node 4/4');
+  });
+
+  test('falls back to the queue depth before execution starts', () => {
+    expect(progressCaption({ queue: 2 })).toBe('Waiting — 2 ahead in queue');
+  });
+
+  test('an empty queue is not worth saying', () => {
+    expect(progressCaption({ queue: 0 })).toBeNull();
+  });
+
+  test('a bare tick captions nothing', () => {
+    expect(progressCaption({ type: 'tick' })).toBeNull();
+    expect(progressCaption(null)).toBeNull();
   });
 });

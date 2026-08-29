@@ -1814,7 +1814,26 @@ def api_progress(job_id):
         # the original SSE, phone lost signal, etc.) gets the full history
         # including the terminal done/error/cancelled event and its asset URLs.
         cached = channel.snapshot()
-        for msg in cached:
+        # Ticks are volatile progress state, not history: a long render emits one
+        # every 2s, so replaying them all would send thousands of superseded
+        # events (and, now that a tick carries a percentage the client draws,
+        # thousands of pointless DOM writes). Only the newest one still means
+        # anything.
+        # (The cheap substring test gates the parse, so a prompt that happens to
+        # contain the literal text still gets classified correctly.)
+        def _is_tick(m):
+            if '"type": "tick"' not in m:
+                return False
+            try:
+                return json.loads(m).get("type") == "tick"
+            except ValueError:
+                return False
+
+        ticks = [i for i, m in enumerate(cached) if _is_tick(m)]
+        stale = set(ticks[:-1])
+        for i, msg in enumerate(cached):
+            if i in stale:
+                continue
             yield f"data: {msg}\n\n"
         idx = len(cached)
 

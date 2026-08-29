@@ -312,6 +312,46 @@ ever offer the *most recent* seed, which is rarely the image you are looking at.
   fire `contextmenu`, iOS Safari does not, and a synthetic touch-hold would collide with
   the pinch/swipe handlers in `lightbox.js` and the drag-sort in `grids.js`.
 
+### Generation progress bars (`comfy_progress.py`)
+
+The generation bubble used to show an indeterminate marquee for the whole render.
+ComfyUI publishes step counts **only** on its WebSocket (`ws://<host>/ws?clientId=…`) —
+`GET /history/<prompt_id>`, which `poll_status` polls, stays empty until the prompt
+finishes — so `ProgressListener` reads that feed on a per-job daemon thread and reduces
+it to a snapshot the job thread reads. See `ADR/generation-progress-bars.md`.
+
+- **It rides the existing tick.** `_run_generation_core` already emitted
+  `{"type":"tick"}` every ~2s from `poll_status`'s `"."` heartbeat, and nothing consumed
+  it; the snapshot is merged into that event, so **the bar adds no SSE events** and
+  `poll_status` is untouched. A bare `{"type":"tick"}` is exactly what a run with no
+  listener sends, so nothing regresses when the feed is unavailable.
+- **`client_id` was already on the wire.** `ComfyServer` generates one and sends it with
+  every `POST /prompt`; ComfyUI routes that prompt's messages to the socket that
+  connected with the same `clientId`. The listener is started **before** the submit —
+  ComfyUI buffers nothing, so a socket opened afterwards misses the opening messages —
+  and `bind(prompt_id)` supplies the filter once the submit returns.
+- **Percent** = `(finished nodes + running node's step fraction) / total nodes`, clamped
+  **non-decreasing** (multi-pass graphs re-run their samplers). Every node weighs the
+  same, so the bar is **front-loaded**: it races to ~70% then crawls through the one
+  sampler that owns the wall clock. The caption (`Sampling — step 12/20 · node 7/23`)
+  carries the honest number, which is why it exists.
+- **`progress_state` is not the whole graph.** Against ComfyUI 0.34.2 it lists only nodes
+  it holds progress records for — one that arrived via `execution_cached` never appears.
+  Its finished nodes are **unioned** into the known set; replacing it made progress drop
+  back on every such message, visible only as a frozen bar because the monotonic clamp
+  swallowed the regression.
+- **Telemetry, never a dependency.** No `websocket` module, a refused upgrade, a read
+  error — `latest()` returns `None` and the UI keeps the marquee; the construction is
+  `try/except`-wrapped at the call site too. `COMFY_WS_PROGRESS=0` disables it.
+- **Replay collapses stale ticks** (`api_progress`): a tick is volatile state, not
+  history, so a reattaching client gets only the newest one instead of thousands.
+- **Scope**: every ComfyUI kind, since they all funnel through `_run_generation_core` —
+  t2i, i2v, t2v, face-detail, upscale, i2i, inpaint, remove, and each sequence-run shot
+  (`openShell` gained the bar it never had). `/fscheck` and `/api/archive` have no step
+  data and keep the marquee; `/jobs` still shows only a status label.
+- Client helpers `progressPercent`/`progressCaption` are pure and live in `utils.js`
+  (unit-tested); `.determinate` on `.progress-bar-wrap` is what kills the CSS animation.
+
 ## Known Pitfalls
 
 ### Curly/smart quote corruption in JS files

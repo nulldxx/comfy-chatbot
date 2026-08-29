@@ -349,3 +349,31 @@ export function computeDiffBox(a, b, w, h, { threshold = 40, pad = 0.15, minFrac
   const y1 = Math.min(h, maxY + 1 + py);
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
+
+// --- Generation progress (the {type:"tick"} SSE payload) --------------------
+// ComfyUI's WebSocket feed is folded server-side (comfy_progress.py) into a
+// snapshot that rides the 2s tick already being sent. Both helpers take that
+// raw tick object and are total: a tick from a run whose listener never
+// connected carries no fields at all, and both answer null so the caller leaves
+// the indeterminate marquee alone.
+
+// Overall completion as a 0..100 number, or null when the tick carries none.
+export function progressPercent(tick) {
+  if (!tick || typeof tick.percent !== 'number' || !isFinite(tick.percent)) return null;
+  return Math.max(0, Math.min(100, tick.percent));
+}
+
+// The line under the bar: which node is running and how far through it is.
+// Falls back to the queue depth, which is all that's known before execution
+// starts, and to null when even that is absent.
+export function progressCaption(tick) {
+  if (!tick) return null;
+  const parts = [];
+  if (tick.phase) {
+    parts.push(tick.steps > 1 ? `${tick.phase} — step ${tick.step}/${tick.steps}` : tick.phase);
+  }
+  if (tick.node_total) parts.push(`node ${Math.min(tick.node_index, tick.node_total)}/${tick.node_total}`);
+  if (parts.length) return parts.join(' · ');
+  if (tick.queue > 0) return `Waiting — ${tick.queue} ahead in queue`;
+  return null;
+}

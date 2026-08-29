@@ -37,7 +37,14 @@ try:
 except ImportError as e:
     print(f"❌ Gunicorn import failed: {e}")
 
+try:
+    import websocket
+    print(f"✅ websocket-client import successful (version: {websocket.__version__})")
+except ImportError as e:
+    print(f"❌ websocket-client import failed: {e}")
+
 print("\n🔍 Summary:")
 print("All imports should work for both local development and Docker deployment")
 print("requests is required for Docker health checks")
 print("gunicorn is used for production deployment")
+print("websocket-client reads ComfyUI progress for the UI progress bar")

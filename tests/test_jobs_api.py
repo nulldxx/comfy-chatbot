@@ -153,6 +153,45 @@ class ProgressReplayTests(_JobsFixture):
         self.assertIn('"type": "caught_up"', body)
         self.assertLess(body.index('"type": "progress"'), body.index('"type": "caught_up"'))
 
+    def test_replay_collapses_stale_ticks(self):
+        # A tick is volatile progress state, not history: a long render emits one
+        # every 2s, so replaying them all would send thousands of superseded
+        # events. Only the newest still means anything.
+        rec = _make_record(status="done", finished_at=time.time())
+        rec["channel"].send(json.dumps({"type": "progress", "message": "Queued"}))
+        for pct in (10.0, 55.0, 90.0):
+            rec["channel"].send(json.dumps({"type": "tick", "percent": pct}))
+        rec["channel"].send(json.dumps({"type": "done", "images": []}))
+        rec["channel"].close()
+        gs.jobs["ticky"] = rec
+
+        body = self.client.get("/api/progress/ticky").get_data(as_text=True)
+        self.assertEqual(body.count('"type": "tick"'), 1)
+        self.assertIn('"percent": 90.0', body)
+        self.assertNotIn('"percent": 10.0', body)
+        # Everything that is history still replays, in order.
+        self.assertIn('"type": "progress"', body)
+        self.assertLess(body.index('"type": "tick"'), body.index('"type": "done"'))
+
+    def test_replay_keeps_a_lone_tick(self):
+        rec = _make_record(status="done", finished_at=time.time())
+        rec["channel"].send(json.dumps({"type": "tick", "percent": 25.0}))
+        rec["channel"].close()
+        gs.jobs["one-tick"] = rec
+        body = self.client.get("/api/progress/one-tick").get_data(as_text=True)
+        self.assertIn('"percent": 25.0', body)
+
+    def test_a_prompt_quoting_a_tick_is_not_mistaken_for_one(self):
+        # The cheap substring test that gates the parse must not swallow history.
+        rec = _make_record(status="done", finished_at=time.time())
+        rec["channel"].send(json.dumps(
+            {"type": "progress", "message": 'a sign reading "type": "tick"'}))
+        rec["channel"].send(json.dumps({"type": "tick", "percent": 5.0}))
+        rec["channel"].close()
+        gs.jobs["quoter"] = rec
+        body = self.client.get("/api/progress/quoter").get_data(as_text=True)
+        self.assertIn("a sign reading", body)
+
     def test_unknown_job_returns_404(self):
         resp = self.client.get("/api/progress/no-such-job")
         self.assertEqual(resp.status_code, 404)

@@ -2,6 +2,7 @@ import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
   buildVideoPrompt, i2vTooltip, COMFY_URL_DND_TYPE, videoOptsPayload,
+  progressPercent, progressCaption,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
 import {
@@ -1586,6 +1587,41 @@ function sendMessage() {
 }
 
 // ---------------------------------------------------------------------------
+// Generation progress bar
+// ---------------------------------------------------------------------------
+// The server folds ComfyUI's WebSocket feed into the {type:"tick"} SSE event it
+// was already sending every 2s (comfy_progress.py). Both the main generation
+// bubble and each sequence-run shot shell carry a .progress-bar-wrap and a
+// .progress-caption, so both drive them through these two.
+
+// Switch a bar out of its indeterminate marquee and set it to a real width.
+// .determinate is what kills the CSS animation. A run whose ComfyUI feed never
+// connected sends bare ticks with no percentage, so the marquee simply stays.
+function applyProgressTick(barWrap, captionEl, msg) {
+  const pct = progressPercent(msg);
+  if (barWrap && pct !== null) {
+    const bar = barWrap.querySelector('.progress-bar');
+    barWrap.classList.add('determinate');
+    if (bar) bar.style.width = pct + '%';
+  }
+  if (captionEl) {
+    const caption = progressCaption(msg);
+    if (caption) captionEl.textContent = caption;
+  }
+}
+
+// Back to the marquee: used when a shot is about to be re-run, where leaving the
+// bar parked at the failed attempt's percentage would be a lie.
+function resetProgress(barWrap, captionEl) {
+  if (barWrap) {
+    barWrap.classList.remove('determinate');
+    const bar = barWrap.querySelector('.progress-bar');
+    if (bar) bar.style.width = '';
+  }
+  if (captionEl) captionEl.textContent = '';
+}
+
+// ---------------------------------------------------------------------------
 // runSequenceRunJob — server-driven sequence run over SSE
 // ---------------------------------------------------------------------------
 // This hands the whole run to the server via /api/sequence-run: the server
@@ -1666,6 +1702,8 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     const bubble = addMessage('bot', `
       <div class="status-text">Connecting…</div>
       <div class="dots"><span></span><span></span><span></span></div>
+      <div class="progress-bar-wrap"><div class="progress-bar"></div></div>
+      <div class="progress-caption"></div>
     `);
     const shellStatusText = bubble.querySelector('.status-text');
     // Retry button (⟳) sits just left of the cancel button; appended first so
@@ -1691,6 +1729,8 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       bubble,
       statusText: shellStatusText,
       dotsEl: bubble.querySelector('.dots'),
+      barWrap: bubble.querySelector('.progress-bar-wrap'),
+      captionEl: bubble.querySelector('.progress-caption'),
       cancelBtn: cb,
       retryBtn: rb,
       startTime: Date.now(),
@@ -1699,6 +1739,8 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
 
   const finishShellWithImage = (sh, url) => {
     if (sh.dotsEl) sh.dotsEl.remove();
+    if (sh.barWrap) sh.barWrap.remove();
+    if (sh.captionEl) sh.captionEl.remove();
     if (sh.cancelBtn) sh.cancelBtn.remove();
     if (sh.retryBtn) sh.retryBtn.remove();
     const elapsed = ((Date.now() - sh.startTime) / 1000).toFixed(1);
@@ -1719,6 +1761,9 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
   // so the user can re-run once the server recovers.
   const pauseShellOnFailure = (sh, error) => {
     if (sh.dotsEl) { sh.dotsEl.remove(); sh.dotsEl = null; }
+    // The shell stays open for ⟳, so keep the bar — but a retry restarts the
+    // graph from zero, and leaving it parked at 70% would be a lie.
+    resetProgress(sh.barWrap, sh.captionEl);
     if (sh.statusText) {
       sh.statusText.innerHTML = `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(error || 'unknown error')} — press ⟳ to retry</span>`;
     }
@@ -1790,6 +1835,8 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (msg.type === 'shot') {
       shell = openShell(msg.prompt);
       scrollBottom();
+    } else if (msg.type === 'tick') {
+      if (shell) applyProgressTick(shell.barWrap, shell.captionEl, msg);
     } else if (msg.type === 'progress') {
       if (shell && shell.statusText) {
         shell.statusText.textContent = msg.message;
@@ -1977,11 +2024,13 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
     <div class="status-text" id="status-line">Connecting…${label}</div>
     <div class="dots"><span></span><span></span><span></span></div>
     <div class="progress-bar-wrap"><div class="progress-bar"></div></div>
+    <div class="progress-caption"></div>
   `);
 
   const statusLine = botBubble.querySelector('#status-line');
   const dotsEl     = botBubble.querySelector('.dots');
   const barWrap    = botBubble.querySelector('.progress-bar-wrap');
+  const captionEl  = botBubble.querySelector('.progress-caption');
 
   const startTime = Date.now();
 
@@ -2057,10 +2106,14 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         statusLine.textContent = msg.message + label;
         if (!inPlaceWrap) scrollBottom();
 
+      } else if (msg.type === 'tick') {
+        applyProgressTick(barWrap, captionEl, msg);
+
       } else if (msg.type === 'done') {
         es.close();
         dotsEl.remove();
         barWrap.remove();
+        captionEl.remove();
         cancelBtn.remove();
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         statusLine.textContent = `Done — ${msg.images.length} result(s) in ${elapsed}s${label}`;
@@ -2236,6 +2289,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         es.close();
         dotsEl.remove();
         barWrap.remove();
+        captionEl.remove();
         cancelBtn.remove();
         statusLine.textContent = 'Cancelled' + label;
         if (!inPlaceWrap) scrollBottom();
@@ -2245,6 +2299,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         es.close();
         dotsEl.remove();
         barWrap.remove();
+        captionEl.remove();
         cancelBtn.remove();
         statusLine.textContent = '';
         botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
@@ -2257,6 +2312,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       es.close();
       if (dotsEl.parentNode) dotsEl.remove();
       if (barWrap.parentNode) barWrap.remove();
+      if (captionEl.parentNode) captionEl.remove();
       cancelBtn.remove();
       botBubble.innerHTML += `<span style="color:#f87171">⚠ Connection lost — check server logs.</span>`;
       resolve(false);
@@ -2265,6 +2321,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   .catch(err => {
     if (dotsEl.parentNode) dotsEl.remove();
     if (barWrap.parentNode) barWrap.remove();
+    if (captionEl.parentNode) captionEl.remove();
     cancelBtn.remove();
     statusLine.textContent = '';
     botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;

@@ -25,6 +25,10 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'your-secret-key-change-this-in-produc
 
 COMFY_SERVER = os.environ.get('COMFY_SERVER', '192.168.1.135:8000')
 COMFY_SERVER_OS = os.environ.get('COMFY_SERVER_OS', 'unix')
+# Read ComfyUI's WebSocket progress feed (ws://<COMFY_SERVER>/ws) so the UI can show
+# a determinate progress bar. Set to '0' where a proxy in front of ComfyUI blocks
+# WebSocket upgrades: generation is unaffected, the bar just stays indeterminate.
+COMFY_WS_PROGRESS = os.environ.get('COMFY_WS_PROGRESS', '1') not in ('0', 'false', 'False', '')
 COMFY_WORKFLOW = os.environ.get('COMFY_WORKFLOW', 'z_image_turbo_api')
 COMFY_WORKFLOW_DIR = Path(os.environ.get('COMFY_WORKFLOW_DIR', '/app/workflows'))
 COMFY_LORAS_FILE = Path(os.environ.get('COMFY_LORAS_FILE', '/app/workflows/loras-new.json'))

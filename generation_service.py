@@ -10,8 +10,10 @@ from datetime import datetime
 import requests
 from werkzeug.utils import secure_filename
 
-from config import COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS
+from config import (COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS,
+                    COMFY_WS_PROGRESS)
 from ComfyServer import ComfyServer, JobCancelled, JobRetry
+from comfy_progress import ProgressListener, node_titles_for
 from catalogue import parse_loras_from_prompt, resolve_workflow_path
 from persistence import append_session_image, append_session_note, rename_session
 from seed_store import record_seeds
@@ -322,9 +324,16 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
     def send(msg_type, **kwargs):
         channel.send(json.dumps({"type": msg_type, **kwargs}))
 
+    # Set once the workflow is submitted (see below). The closure below reads it
+    # at call time, so declaring it here is enough — poll_status's 2s heartbeat
+    # becomes the emission cadence for the progress numbers, which is why this
+    # adds no SSE events beyond the ticks already being sent.
+    listener = None
+
     def progress(msg_str):
         if msg_str == ".":
-            channel.send(json.dumps({"type": "tick"}))
+            snap = listener.latest() if listener is not None else None
+            channel.send(json.dumps({"type": "tick", **(snap or {})}))
         else:
             send("progress", message=msg_str)
 
@@ -607,14 +616,35 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                 "submitted_at": time.time(),
             }
 
-        send("progress", message=f"Submitting to {server_address}...")
-        prompt_id = server.submit_workflow(workflow)
-        with jobs_lock:
-            jobs[job_id]["prompt_id"] = prompt_id
-        send("progress", message=f"Queued (ID: {prompt_id[:8]}…) — generating")
+        # Start reading ComfyUI's progress feed *before* submitting: it buffers
+        # nothing, so a socket opened after the POST misses the opening messages.
+        # Pure telemetry — a listener that can't connect just leaves the client's
+        # progress bar indeterminate, exactly as before this existed.
+        if COMFY_WS_PROGRESS:
+            try:
+                listener = ProgressListener(server_address, server.client_id,
+                                            node_titles_for(workflow), len(workflow))
+                listener.start()
+            except Exception as e:                    # never cost the user an image
+                print(f"[comfy-progress] listener unavailable: {e}")
+                listener = None
 
-        prompt_data = server.poll_status(prompt_id, COMFY_POLL_TIMEOUT_SECONDS, progress,
-                                         cancel_event=cancel_event, retry_event=retry_event)
+        try:
+            send("progress", message=f"Submitting to {server_address}...")
+            prompt_id = server.submit_workflow(workflow)
+            with jobs_lock:
+                jobs[job_id]["prompt_id"] = prompt_id
+            if listener is not None:
+                listener.bind(prompt_id)
+            send("progress", message=f"Queued (ID: {prompt_id[:8]}…) — generating")
+
+            prompt_data = server.poll_status(prompt_id, COMFY_POLL_TIMEOUT_SECONDS, progress,
+                                             cancel_event=cancel_event, retry_event=retry_event)
+        finally:
+            # Cancel, retry, timeout and success all land here, so the reader
+            # thread can't outlive the poll it was feeding.
+            if listener is not None:
+                listener.stop()
         send("progress", message="Downloading images...")
 
         images = server.get_output_images(prompt_data)
