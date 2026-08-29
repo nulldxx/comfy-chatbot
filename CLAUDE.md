@@ -592,6 +592,68 @@ adds the `LoadImage → resize → first_frame` sub-chain to T2V's graph.
   at the template's 20 steps — slower than intended, not broken. Opening the panel once
   (it pre-fills the override to 4) and pressing Apply fixes it for the session.
 
+### Alternate models in a workflow (`UNETLoader` comma lists)
+
+Templates used to be duplicated whenever the only difference was the diffusion model
+file — an int8 build and an fp16 build of the same graph. A template now declares its
+alternates **inline**, as a comma-separated model name, and `/workflows` drills down one
+more level (type → workflow → model) to pick one:
+
+```json
+"105:6": {
+  "_meta": { "title": "Load Diffusion Model" },
+  "class_type": "UNETLoader",
+  "inputs": {
+    "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors, minimax_h3_fl2va_pruned_fp16.safetensors",
+    "weight_dtype": "default"
+  }
+}
+```
+
+- **`UNETLoader.unet_name` only**, via `MODEL_VARIANT_INPUTS` (`workflow.py`) — a
+  `{class_type: input}` dict so a later `CheckpointLoaderSimple`/`VAELoader` is one line.
+  Unlike the `[opt:…]` markers this *is* keyed on `class_type`, because there is no
+  ambiguity to resolve: only a model loader has a model slot, and a node holding a single
+  name is simply not a choice.
+- **The pick rides the workflow name** as `<workflow>@<model>`
+  (`WORKFLOW_VARIANT_SEP`), where `<model>` is the filename without its extension. That
+  is the whole reason it needed no plumbing: every payload, `saveSession`/`restoreSession`,
+  the `/settings-save` stack, `newChat`, macros and the server-side `/api/sequence-run`
+  already carry a workflow name, so they carry the model too. The cost is that the suffix
+  shows in the header badge and `/jobs` summaries. `splitWorkflowVariant` (`utils.js`) and
+  `split_workflow_variant` (`workflow.py`) split on the **last** `@`; a workflow whose own
+  filename contains one still resolves, because the suffixed reading is only preferred
+  when that base file actually exists (`resolve_workflow_path`, and the exact-match-first
+  check in `resolve_workflow`).
+- **Several multi-valued loaders are index-paired.** Wan 2.2 carries a high-noise and a
+  low-noise `UNETLoader`; if both declare alternates they must declare the **same
+  number**, and variant *n* takes the n-th entry from each — one pick, a matched pair of
+  builds. A count mismatch **raises** rather than pairing the wrong files. Labels come
+  from the first node (sorted by node id, so they are stable).
+- **`select_model_variant()` always runs** (`_run_generation_core`, right after the
+  UI→API conversion), with the first alternate as the default — so a comma list can never
+  reach ComfyUI. It sits *after* the conversion, unlike the rest of the node surgery,
+  because it only rewrites an input string: nothing depends on the ordering, and running
+  it there covers UI-format templates too. An `@model` that the template doesn't offer
+  **fails the job** naming what it does offer, rather than quietly rendering a different
+  model — a stale pick is fixed by re-picking in `/workflows`.
+- **Listing needs API format.** `GET /api/workflow-variants/<kind>/<name>`
+  (`list_workflow_variants`) reads the template, runs the existing
+  `fill_placeholders_for_validation()` over it (a raw template isn't valid JSON — it still
+  holds `<PROMPT>`) and parses it. A UI-format export carries no `class_type`, so it
+  reports **no** alternates even though generation would collapse them. Every failure —
+  missing file, unparseable template, mismatched lists — answers `[]`, so the picker just
+  shows no extra level. `kind` indexes `config.WORKFLOW_KIND_DIRS`; unknown → 404.
+- **Fetched lazily, per workflow clicked**, not folded into the eight listing endpoints,
+  which would mean parsing every template on every picker open. Cached per row in the
+  `/workflows` table. Both picker surfaces have the level: the table and the shared
+  `renderWorkflowPicker` behind the eight `/<x>-workflow` commands, so a per-type command
+  can't silently drop a model the table set. The first alternate is captioned
+  `(default)` and stores the **bare** name, keeping the wire format byte-identical to
+  before for anyone who never touches it.
+- **Not covered:** `/t2i-workflow-iterate` passes bare names, so each iterated workflow
+  runs its default model. A model filename containing a comma can't be used.
+
 ### Text-to-video (`/t2v`)
 
 `/t2v` is a **mode toggle**: while it is on, a plain chat prompt is generated as a video

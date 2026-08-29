@@ -203,6 +203,42 @@ export function i2vTooltip(meta) {
 // derived value and may round by a frame at the extremes.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Workflow model variants
+// ---------------------------------------------------------------------------
+// A template can name several interchangeable models on one loader (a comma-separated
+// unet_name), so one file covers what used to be one file per model. The pick rides the
+// workflow name itself as "<workflow>@<model>", which is why it needs no field of its
+// own anywhere it travels: payloads, the saved chat session, the /settings-save stack,
+// macros and server-side sequence runs all carry the workflow name already.
+export const WORKFLOW_VARIANT_SEP = '@';
+
+// Split "workflow@model" into its parts; variant is null when there is no suffix.
+// Splits on the LAST separator, mirroring workflow.split_workflow_variant server-side.
+export function splitWorkflowVariant(name) {
+  if (!name || !name.includes(WORKFLOW_VARIANT_SEP)) return { name: name || '', variant: null };
+  const i = name.lastIndexOf(WORKFLOW_VARIANT_SEP);
+  const base = name.slice(0, i), variant = name.slice(i + 1);
+  if (!base || !variant) return { name, variant: null };
+  return { name: base, variant };
+}
+
+// Join a workflow and a model back into a wire name. A null/empty variant — and the
+// template's own default, which the server picks when unsuffixed — yields the BARE
+// name, so leaving the default alone keeps the wire format byte-identical to before.
+export function joinWorkflowVariant(name, variant) {
+  return variant ? `${name}${WORKFLOW_VARIANT_SEP}${variant}` : name;
+}
+
+// Render a possibly-suffixed workflow name: the workflow, then its model dimmed.
+export function workflowLabelHtml(name) {
+  const { name: base, variant } = splitWorkflowVariant(name);
+  const model = variant
+    ? ` <span style="color:#64748b;font-size:0.85em">${WORKFLOW_VARIANT_SEP} ${escapeHtml(variant)}</span>`
+    : '';
+  return `${escapeHtml(base)}${model}`;
+}
+
 // Bypassable optimisations in the video workflows, each matching an "[opt:<key>] ..."
 // marked node in the template (see workflow.bypass_optimisation_nodes). `key` is the
 // wire/marker name — mirrored server-side as VIDEO_OPTIMIZATIONS in config.py — and

@@ -1,6 +1,7 @@
 import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement,
   buildVideoPrompt, isVideoUrl, fmtDuration, clampVideo, recomputeVideo,
+  splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
 } from './utils.js';
@@ -9,18 +10,59 @@ import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeI
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
 
-function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, current, setMsg, onSelect }) {
+// Fetch the alternate models a workflow offers. `kind` names its directory family
+// (see WORKFLOW_KIND_DIRS server-side); a workflow with no alternates — and any failure —
+// yields [], so the caller just selects the workflow as it always did.
+function fetchWorkflowVariants(kind, wf) {
+  if (!kind) return Promise.resolve([]);
+  return fetch(`/api/workflow-variants/${encodeURIComponent(kind)}/${wf.split('/').map(encodeURIComponent).join('/')}`)
+    .then(r => r.json())
+    .then(d => (Array.isArray(d.variants) ? d.variants : []))
+    .catch(() => []);
+}
+
+// Render the model buttons for one workflow into `container`, calling back with the
+// joined "workflow@model" wire name. The first alternate is the template's own default,
+// so it is labelled as such and selects the bare name.
+function renderVariantButtons(container, wf, variants, current, onPick) {
+  const cur = splitWorkflowVariant(current || '');
+  const inner = document.createElement('div');
+  inner.className = 'sel-list';
+  inner.style.marginTop = '0';
+  variants.forEach((v, i) => {
+    const wire = joinWorkflowVariant(wf, i === 0 ? null : v);
+    // The default is stored bare, so it is current when the workflow matches and either
+    // no model is pinned or the pinned one is the first alternate.
+    const isCur = cur.name === wf && (i === 0 ? (!cur.variant || cur.variant === v) : cur.variant === v);
+    const btn = document.createElement('button');
+    btn.className = 'sel-btn' + (isCur ? ' current' : '');
+    btn.innerHTML = escapeHtml(v)
+      + (i === 0 ? ' <span style="color:#475569;font-size:0.85em">(default)</span>' : '')
+      + (isCur ? ' <span style="color:#7c3aed">\u2713</span>' : '');
+    btn.addEventListener('click', () => onPick(wire));
+    inner.appendChild(btn);
+  });
+  container.innerHTML = '';
+  container.appendChild(inner);
+}
+
+function renderWorkflowPicker({ url, kind, title, loadingText, failLabel, emptyMsg, current, setMsg, onSelect }) {
   const bubble = addMessage('bot', `<div class="status-text">${loadingText}</div>`).parentElement.querySelector('.bubble');
+  const done = wire => {
+    onSelect(wire);
+    bubble.innerHTML = `${setMsg} <strong style="color:#a78bfa">${workflowLabelHtml(wire)}</strong>`;
+  };
   fetch(url).then(r => r.json()).then(workflows => {
     if (!workflows.length && emptyMsg) {
       bubble.innerHTML = emptyMsg;
       return;
     }
+    const curName = splitWorkflowVariant(current || '').name;
     let html = `<strong>${title}</strong><div class="sel-list">`;
     workflows.forEach(wf => {
-      const isCur = wf === current;
+      const isCur = wf === curName;
       html += `<button class="sel-btn${isCur ? ' current' : ''}" data-wf="${escapeHtml(wf)}">
-                 ${escapeHtml(wf)}${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}
+                 ${escapeHtml(wf)}${isCur ? ' <span style="color:#7c3aed">\u2713</span>' : ''}
                </button>`;
     });
     html += '</div>';
@@ -28,8 +70,17 @@ function renderWorkflowPicker({ url, title, loadingText, failLabel, emptyMsg, cu
     bubble.querySelectorAll('.sel-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const wf = btn.dataset.wf;
-        onSelect(wf);
-        bubble.innerHTML = `${setMsg} <strong style="color:#a78bfa">${escapeHtml(wf)}</strong>`;
+        // A workflow offering several models drills down one more level; one that
+        // doesn't is selected immediately, as before.
+        bubble.innerHTML = '<div class="status-text">Loading models\u2026</div>';
+        fetchWorkflowVariants(kind, wf).then(variants => {
+          if (variants.length < 2) { done(wf); return; }
+          bubble.innerHTML = `<strong>Select a model for ${escapeHtml(wf)}:</strong>`;
+          const box = document.createElement('div');
+          bubble.appendChild(box);
+          renderVariantButtons(box, wf, variants, current, done);
+          scrollBottom();
+        });
       });
     });
     scrollBottom();
@@ -1137,28 +1188,28 @@ export function makeCommandHandler(deps) {
   // "type" (an operation) to its listing endpoint and the client-side selection
   // it drives. Lives inside makeCommandHandler so set() can call deps.updateHeaderStatus.
   const WORKFLOW_TYPES = [
-    { label: 'Text → image',  url: '/api/workflows',
+    { label: 'Text → image',  url: '/api/workflows', kind: 'generation',
       get: () => state.currentWorkflow,            def: () => DEFAULT_WORKFLOW,
       set: wf => { state.currentWorkflow = wf; deps.updateHeaderStatus(); } },
-    { label: 'Image → image', url: '/api/image2image-workflows',
+    { label: 'Image → image', url: '/api/image2image-workflows', kind: 'image2image',
       get: () => state.currentImage2ImageWorkflow, def: () => DEFAULT_IMAGE2IMAGE_WORKFLOW,
       set: wf => { state.currentImage2ImageWorkflow = wf; } },
-    { label: 'Image → video', url: '/api/image2video-workflows',
+    { label: 'Image → video', url: '/api/image2video-workflows', kind: 'image2video',
       get: () => state.currentImage2VideoWorkflow, def: () => DEFAULT_IMAGE2VIDEO_WORKFLOW,
       set: wf => { state.currentImage2VideoWorkflow = wf; } },
-    { label: 'Text → video',  url: '/api/text2video-workflows',
+    { label: 'Text → video',  url: '/api/text2video-workflows', kind: 'text2video',
       get: () => state.currentText2VideoWorkflow,  def: () => DEFAULT_TEXT2VIDEO_WORKFLOW,
       set: wf => { state.currentText2VideoWorkflow = wf; deps.updateHeaderStatus(); } },
-    { label: 'Face-detail',   url: '/api/facedetailer-workflows',
+    { label: 'Face-detail',   url: '/api/facedetailer-workflows', kind: 'facedetailer',
       get: () => state.currentFaceWorkflow,        def: () => DEFAULT_FACE_WORKFLOW,
       set: wf => { state.currentFaceWorkflow = wf; } },
-    { label: 'Upscale',       url: '/api/upscaler-workflows',
+    { label: 'Upscale',       url: '/api/upscaler-workflows', kind: 'upscaler',
       get: () => state.currentUpscaleWorkflow,     def: () => DEFAULT_UPSCALE_WORKFLOW,
       set: wf => { state.currentUpscaleWorkflow = wf; } },
-    { label: 'Inpaint',       url: '/api/inpainting-workflows',
+    { label: 'Inpaint',       url: '/api/inpainting-workflows', kind: 'inpainting',
       get: () => state.currentInpaintingWorkflow,  def: () => DEFAULT_INPAINTING_WORKFLOW,
       set: wf => { state.currentInpaintingWorkflow = wf; } },
-    { label: 'Removal',       url: '/api/removal-workflows',
+    { label: 'Removal',       url: '/api/removal-workflows', kind: 'removal',
       get: () => state.currentRemovalWorkflow,     def: () => DEFAULT_REMOVAL_WORKFLOW,
       set: wf => { state.currentRemovalWorkflow = wf; } },
   ];
@@ -1182,12 +1233,35 @@ export function makeCommandHandler(deps) {
       const active = cur || t.def();
       if (!active) return '<span style="color:#475569">not set</span>';
       const suffix = cur ? '' : ' <span style="color:#475569">(default)</span>';
-      return `<span style="color:#a78bfa">${escapeHtml(active)}</span>${suffix}`;
+      return `<span style="color:#a78bfa">${workflowLabelHtml(active)}</span>${suffix}`;
     }
 
     function collapse(row) {
       row.choices.style.display = 'none';
       row.caret.textContent = '▸';
+    }
+
+    function pick(row, wire) {
+      row.type.set(wire);
+      row.valueEl.innerHTML = valueHtml(row.type);
+      collapse(row);
+    }
+
+    // Level 3: the models one workflow offers. Reached only when it declares more than
+    // one; a "‹ back" button returns to the workflow list without changing the pick.
+    function renderVariants(row, wf, variants) {
+      row.choices.innerHTML = '';
+      const back = document.createElement('button');
+      back.className = 'sel-btn';
+      back.innerHTML = '<span style="color:#64748b">‹ back</span> '
+        + `<strong style="color:#cbd5e1">${escapeHtml(wf)}</strong>`;
+      back.addEventListener('click', () => renderChoices(row, row.workflows));
+      row.choices.appendChild(back);
+      const box = document.createElement('div');
+      row.choices.appendChild(box);
+      renderVariantButtons(box, wf, variants, row.type.get() || row.type.def(),
+                           wire => pick(row, wire));
+      scrollBottom();
     }
 
     function renderChoices(row, workflows) {
@@ -1196,7 +1270,7 @@ export function makeCommandHandler(deps) {
         row.choices.innerHTML = '<span style="color:#94a3b8;font-size:0.85rem">No workflows available — add one to the matching workflows folder.</span>';
         return;
       }
-      const cur = t.get() || t.def();
+      const cur = splitWorkflowVariant(t.get() || t.def() || '').name;
       row.choices.innerHTML = '';
       const inner = document.createElement('div');
       inner.className = 'sel-list';
@@ -1207,9 +1281,21 @@ export function makeCommandHandler(deps) {
         btn.className = 'sel-btn' + (isCur ? ' current' : '');
         btn.innerHTML = escapeHtml(wf) + (isCur ? ' <span style="color:#7c3aed">✓</span>' : '');
         btn.addEventListener('click', () => {
-          t.set(wf);
-          row.valueEl.innerHTML = valueHtml(t);
-          collapse(row);
+          // A workflow offering alternate models drills down one more level; one that
+          // doesn't is picked outright, as before. Variants are cached per workflow
+          // alongside row.workflows so re-opening the row costs no extra fetch.
+          const cached = row.variants[wf];
+          if (cached) {
+            if (cached.length < 2) pick(row, wf);
+            else renderVariants(row, wf, cached);
+            return;
+          }
+          btn.innerHTML = escapeHtml(wf) + ' <span style="color:#64748b">…</span>';
+          fetchWorkflowVariants(t.kind, wf).then(variants => {
+            row.variants[wf] = variants;
+            if (variants.length < 2) pick(row, wf);
+            else renderVariants(row, wf, variants);
+          });
         });
         inner.appendChild(btn);
       });
@@ -1241,7 +1327,7 @@ export function makeCommandHandler(deps) {
       choices.style.display = 'none';
       choices.style.margin = '2px 0 6px 1.4em';
 
-      const row = { type: t, header, caret, valueEl, choices, workflows: null };
+      const row = { type: t, header, caret, valueEl, choices, workflows: null, variants: {} };
       rows.push(row);
 
       header.addEventListener('click', () => {
@@ -1670,7 +1756,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       renderWorkflowPicker({
-        url: '/api/image2image-workflows',
+        url: '/api/image2image-workflows', kind: 'image2image',
         title: 'Select an image2image workflow:',
         loadingText: 'Loading image2image workflows…',
         failLabel: 'image2image workflows',
@@ -1781,7 +1867,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       renderWorkflowPicker({
-        url: '/api/image2video-workflows',
+        url: '/api/image2video-workflows', kind: 'image2video',
         title: 'Select an image2video workflow:',
         loadingText: 'Loading image2video workflows…',
         failLabel: 'image2video workflows',
@@ -1824,7 +1910,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       renderWorkflowPicker({
-        url: '/api/text2video-workflows',
+        url: '/api/text2video-workflows', kind: 'text2video',
         title: 'Select a text2video workflow:',
         loadingText: 'Loading text2video workflows…',
         failLabel: 'text2video workflows',
@@ -1896,7 +1982,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       renderWorkflowPicker({
-        url: '/api/inpainting-workflows',
+        url: '/api/inpainting-workflows', kind: 'inpainting',
         title: 'Select an inpainting workflow:',
         loadingText: 'Loading inpainting workflows…',
         failLabel: 'inpainting workflows',
@@ -1950,7 +2036,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       renderWorkflowPicker({
-        url: '/api/removal-workflows',
+        url: '/api/removal-workflows', kind: 'removal',
         title: 'Select a removal workflow:',
         loadingText: 'Loading removal workflows…',
         failLabel: 'removal workflows',
@@ -1978,7 +2064,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       renderWorkflowPicker({
-        url: '/api/upscaler-workflows',
+        url: '/api/upscaler-workflows', kind: 'upscaler',
         title: 'Select an upscaler workflow:',
         loadingText: 'Loading upscaler workflows…',
         failLabel: 'upscaler workflows',
@@ -2409,7 +2495,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       renderWorkflowPicker({
-        url: '/api/workflows',
+        url: '/api/workflows', kind: 'generation',
         title: 'Select a workflow:',
         loadingText: 'Loading workflows…',
         failLabel: 'workflows',
@@ -2437,7 +2523,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       renderWorkflowPicker({
-        url: '/api/facedetailer-workflows',
+        url: '/api/facedetailer-workflows', kind: 'facedetailer',
         title: 'Select a face-detailer workflow:',
         loadingText: 'Loading face-detailer workflows…',
         failLabel: 'face-detailer workflows',

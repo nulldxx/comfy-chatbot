@@ -1,7 +1,9 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement, deriveFaceDetailPrompt, isVideoUrl,
          fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList,
          formatFscheckResult, computeDiffBox, clampMenuPosition,
-         videoOptsPayload, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS } from '../../static/js/utils.js';
+         videoOptsPayload, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
+         splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
+         WORKFLOW_VARIANT_SEP } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -767,5 +769,60 @@ describe('videoOptsPayload', () => {
   test('turbo is the only optimisation that carries a step count', () => {
     expect(VIDEO_OPTIMIZATIONS.filter(o => o.hint).map(o => o.key)).toEqual(['turbo']);
     expect(TURBO_STEPS).toBeLessThan(BASE_VIDEO_STEPS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workflow model variants — the "<workflow>@<model>" wire name
+// ---------------------------------------------------------------------------
+
+describe('splitWorkflowVariant / joinWorkflowVariant', () => {
+  test('splits a suffixed name into workflow and model', () => {
+    expect(splitWorkflowVariant('h3/minimax@fp16')).toEqual({ name: 'h3/minimax', variant: 'fp16' });
+  });
+
+  test('an unsuffixed name has no variant', () => {
+    expect(splitWorkflowVariant('h3/minimax')).toEqual({ name: 'h3/minimax', variant: null });
+  });
+
+  test('splits on the last separator, so a name containing one survives', () => {
+    expect(splitWorkflowVariant('odd@name@fp16')).toEqual({ name: 'odd@name', variant: 'fp16' });
+  });
+
+  test('an empty half is not a variant', () => {
+    expect(splitWorkflowVariant('a@')).toEqual({ name: 'a@', variant: null });
+    expect(splitWorkflowVariant('@b')).toEqual({ name: '@b', variant: null });
+    expect(splitWorkflowVariant('')).toEqual({ name: '', variant: null });
+    expect(splitWorkflowVariant(null)).toEqual({ name: '', variant: null });
+  });
+
+  test('the default variant joins to the BARE name, keeping the old wire format', () => {
+    expect(joinWorkflowVariant('wf', null)).toBe('wf');
+    expect(joinWorkflowVariant('wf', '')).toBe('wf');
+  });
+
+  test('round-trips a picked model', () => {
+    const wire = joinWorkflowVariant('h3/minimax', 'fp16');
+    expect(wire).toBe(`h3/minimax${WORKFLOW_VARIANT_SEP}fp16`);
+    expect(splitWorkflowVariant(wire)).toEqual({ name: 'h3/minimax', variant: 'fp16' });
+  });
+});
+
+describe('workflowLabelHtml', () => {
+  test('renders a bare name with no model half', () => {
+    expect(workflowLabelHtml('h3/minimax')).toBe('h3/minimax');
+  });
+
+  test('renders the model dimmed after the workflow', () => {
+    const html = workflowLabelHtml('h3/minimax@fp16');
+    expect(html).toContain('h3/minimax');
+    expect(html).toContain('fp16');
+    expect(html).toContain('color:#64748b');
+  });
+
+  test('escapes both halves', () => {
+    // Both go through escapeHtml, which covers the markup-significant characters.
+    expect(workflowLabelHtml('a<b@c>d')).toBe(
+      'a&lt;b <span style="color:#64748b;font-size:0.85em">@ c&gt;d</span>');
   });
 });

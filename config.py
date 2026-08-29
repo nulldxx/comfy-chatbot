@@ -102,6 +102,21 @@ COMFY_TEXT2VIDEO_DIR = COMFY_WORKFLOW_DIR / 'text2video'
 # Default text2video workflow, normalised to match list_text2video_workflows().
 COMFY_TEXT2VIDEO_WORKFLOW = _norm_workflow_default(os.environ.get('COMFY_TEXT2VIDEO_WORKFLOW'))
 
+# Workflow directories by "kind" — the operation a workflow family serves. Keyed by the
+# same names the /api/<kind>-workflows listing endpoints use, so one generic endpoint
+# (/api/workflow-variants/<kind>/<name>) can reach any family without eight more routes.
+WORKFLOW_KIND_DIRS = {
+    "generation": COMFY_GENERATION_DIR,
+    "facedetailer": COMFY_FACEDETAILER_DIR,
+    "upscaler": COMFY_UPSCALER_DIR,
+    "image2image": COMFY_IMAGE2IMAGE_DIR,
+    "inpainting": COMFY_INPAINTING_DIR,
+    "image2video": COMFY_IMAGE2VIDEO_DIR,
+    "text2video": COMFY_TEXT2VIDEO_DIR,
+    "removal": COMFY_REMOVAL_DIR,
+}
+
+
 def _best_effort_mkdir(p):
     """mkdir -p that never raises. These dirs live on the encrypted output volume,
     which — once a login password is set — is deferred and NOT mounted at process

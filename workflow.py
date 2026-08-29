@@ -14,6 +14,19 @@ LORA_TAG_RE = re.compile(r'<lora:([^:>\s]+)(?::([0-9.]+))?>', re.IGNORECASE)
 # re-export, so the marking is not lost when a template is edited in the editor.
 OPT_TITLE_RE = re.compile(r"^\s*\[opt:([a-z0-9_]+)\]")
 
+# A model-loader input may name several interchangeable checkpoints as a comma-separated
+# list (e.g. an int8 and an fp16 build of the same model), so one template file covers
+# what used to be one file per model. The list is collapsed to a single name by
+# select_model_variant before submission — ComfyUI never sees a comma. Keyed by
+# class_type -> the input holding the filename, so adding CheckpointLoaderSimple or
+# VAELoader later is a one-line change.
+MODEL_VARIANT_INPUTS = {"UNETLoader": "unet_name"}
+# Separator between a workflow name and the model variant picked for it, as carried on
+# the wire ("minimax-h3-i2v@minimax_h3_fl2va_pruned_fp16"). Riding the existing workflow
+# name means the choice needs no new field anywhere it travels — payloads, the chat
+# session, the /settings-save stack, macros and server-side sequence runs.
+WORKFLOW_VARIANT_SEP = "@"
+
 
 def reference_sentinel(token):
     """Sentinel filename substituted for an unfilled optional reference placeholder.
@@ -211,6 +224,107 @@ def optimisation_nodes(workflow):
         if m:
             found.setdefault(m.group(1), []).append(nid)
     return found
+
+
+def _variant_label(filename):
+    """Short display name for a model file: basename without its extension."""
+    name = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    return name.rsplit(".", 1)[0] if "." in name else name
+
+
+def model_variant_nodes(workflow):
+    """[(node_id, input_key, [filename, ...]), ...] for loaders declaring alternates.
+
+    A loader in MODEL_VARIANT_INPUTS whose model input holds a comma-separated list is
+    offering interchangeable models. Nodes holding a single name are NOT returned —
+    there is nothing to choose. Sorted by node id so the "first" node, and therefore the
+    variant labels, are stable across runs.
+    """
+    found = []
+    for nid in sorted(workflow):
+        node = workflow[nid]
+        key = MODEL_VARIANT_INPUTS.get(node.get("class_type"))
+        if not key:
+            continue
+        value = node.get("inputs", {}).get(key)
+        if not isinstance(value, str) or "," not in value:
+            continue
+        names = [part.strip() for part in value.split(",") if part.strip()]
+        if len(names) > 1:
+            found.append((nid, key, names))
+    return found
+
+
+def model_variant_labels(workflow):
+    """Selectable model labels for a workflow, or [] when it declares no alternates.
+
+    A graph may hold several multi-valued loaders (Wan 2.2 has a high-noise and a
+    low-noise UNET), in which case they are index-PAIRED: variant n takes the n-th entry
+    from every one of them, so a matched pair of builds is chosen with one pick. That
+    only makes sense if they agree on how many alternates there are, so a mismatch raises
+    rather than silently pairing the wrong files. Labels come from the first node.
+    """
+    nodes = model_variant_nodes(workflow)
+    if not nodes:
+        return []
+    first_id, _, first_names = nodes[0]
+    for nid, _, names in nodes[1:]:
+        if len(names) != len(first_names):
+            raise ValueError(
+                f"Model-alternate lists disagree: node {first_id} declares "
+                f"{len(first_names)} model(s) but node {nid} declares {len(names)}. "
+                f"Index-paired loaders must list the same number of alternates."
+            )
+    return [_variant_label(n) for n in first_names]
+
+
+def select_model_variant(workflow, variant=None):
+    """Collapse every multi-valued model loader to the one chosen model.
+
+    Always call this before submitting: with ``variant`` None the FIRST alternate is
+    used, so a comma-separated list can never reach ComfyUI. ``variant`` is a label as
+    returned by model_variant_labels (the filename without its extension).
+
+    Returns (label, index) for the chosen model, or None when the workflow declares no
+    alternates. Raises ValueError if ``variant`` names a model this workflow doesn't
+    offer — a stale pick should say so rather than quietly render a different model.
+    """
+    labels = model_variant_labels(workflow)
+    if not labels:
+        if variant:
+            raise ValueError(
+                f"Workflow declares no model alternates, so it can't be run with "
+                f"model '{variant}'"
+            )
+        return None
+    if variant:
+        if variant not in labels:
+            raise ValueError(
+                f"Unknown model '{variant}' for this workflow. Available: "
+                f"{', '.join(labels)}"
+            )
+        index = labels.index(variant)
+    else:
+        index = 0
+    for nid, key, names in model_variant_nodes(workflow):
+        workflow[nid]["inputs"][key] = names[index]
+    return labels[index], index
+
+
+def split_workflow_variant(name):
+    """Split "workflow@model" into (workflow, model); (name, None) when unsuffixed.
+
+    Splits on the LAST separator, so a workflow whose own filename contains one keeps
+    everything up to the final "@" as its name. Callers holding an allowlist (see
+    catalogue.resolve_workflow) should prefer an exact match on the whole string before
+    splitting; those that don't fall back to whichever file actually exists.
+    """
+    if not name or WORKFLOW_VARIANT_SEP not in name:
+        return name, None
+    base, variant = name.rsplit(WORKFLOW_VARIANT_SEP, 1)
+    if not base or not variant:
+        return name, None
+    return base, variant
 
 
 def bypass_optimisation_nodes(workflow, disabled):

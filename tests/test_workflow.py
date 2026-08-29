@@ -27,6 +27,10 @@ from workflow import (
     optimisation_nodes,
     bypass_optimisation_nodes,
     LORA_NAME_SENTINEL,
+    model_variant_nodes,
+    model_variant_labels,
+    select_model_variant,
+    split_workflow_variant,
 )
 
 
@@ -620,6 +624,101 @@ class TestFillPlaceholdersForValidation(unittest.TestCase):
         self.assertEqual(parsed["prompt"], "placeholder")
         self.assertAlmostEqual(parsed["denoise"], 1.0)
         self.assertAlmostEqual(parsed["strength"], 1.0)
+
+
+class TestModelVariants(unittest.TestCase):
+    def _workflow(self, high="hi_int8.safetensors, hi_fp16.safetensors",
+                  low="lo_int8.safetensors, lo_fp16.safetensors"):
+        # Two index-paired UNETLoaders (Wan 2.2's high/low noise pair) plus a same-shaped
+        # LoRA node that must never be treated as a model alternate.
+        return {
+            "low":   {"class_type": "UNETLoader", "inputs": {"unet_name": low}},
+            "high":  {"class_type": "UNETLoader", "inputs": {"unet_name": high}},
+            "lora":  {"class_type": "LoraLoaderModelOnly",
+                      "inputs": {"lora_name": "a.safetensors, b.safetensors"}},
+        }
+
+    def test_finds_multi_valued_loaders_sorted_by_id(self):
+        found = model_variant_nodes(self._workflow())
+        self.assertEqual([nid for nid, _, _ in found], ["high", "low"])
+        self.assertEqual(found[0][1], "unet_name")
+        self.assertEqual(found[0][2], ["hi_int8.safetensors", "hi_fp16.safetensors"])
+
+    def test_ignores_single_valued_and_other_classes(self):
+        wf = self._workflow(high="only.safetensors", low="also_only.safetensors")
+        self.assertEqual(model_variant_nodes(wf), [])
+        self.assertEqual(model_variant_labels(wf), [])
+
+    def test_labels_strip_directory_and_extension(self):
+        wf = {"u": {"class_type": "UNETLoader",
+                    "inputs": {"unet_name": "sub/a.safetensors,b.ckpt"}}}
+        self.assertEqual(model_variant_labels(wf), ["a", "b"])
+
+    def test_whitespace_and_blank_entries_are_tolerated(self):
+        wf = {"u": {"class_type": "UNETLoader",
+                    "inputs": {"unet_name": "  a.safetensors ,, b.safetensors  "}}}
+        self.assertEqual(model_variant_labels(wf), ["a", "b"])
+
+    def test_mismatched_lists_raise(self):
+        wf = self._workflow(low="lo_int8.safetensors, lo_fp16.safetensors, lo_bf16.safetensors")
+        with self.assertRaises(ValueError) as cm:
+            model_variant_labels(wf)
+        self.assertIn("same number", str(cm.exception))
+
+
+class TestSelectModelVariant(unittest.TestCase):
+    def _workflow(self):
+        return {
+            "low":  {"class_type": "UNETLoader",
+                     "inputs": {"unet_name": "lo_int8.safetensors, lo_fp16.safetensors"}},
+            "high": {"class_type": "UNETLoader",
+                     "inputs": {"unet_name": "hi_int8.safetensors, hi_fp16.safetensors"}},
+        }
+
+    def test_no_variant_collapses_to_the_first_entry(self):
+        # Always collapsed: a comma-separated list must never reach ComfyUI.
+        wf = self._workflow()
+        self.assertEqual(select_model_variant(wf), ("hi_int8", 0))
+        self.assertEqual(wf["high"]["inputs"]["unet_name"], "hi_int8.safetensors")
+        self.assertEqual(wf["low"]["inputs"]["unet_name"], "lo_int8.safetensors")
+
+    def test_pick_is_index_paired_across_loaders(self):
+        wf = self._workflow()
+        self.assertEqual(select_model_variant(wf, "hi_fp16"), ("hi_fp16", 1))
+        self.assertEqual(wf["high"]["inputs"]["unet_name"], "hi_fp16.safetensors")
+        self.assertEqual(wf["low"]["inputs"]["unet_name"], "lo_fp16.safetensors")
+
+    def test_unknown_variant_raises_and_lists_the_alternatives(self):
+        with self.assertRaises(ValueError) as cm:
+            select_model_variant(self._workflow(), "nope")
+        self.assertIn("hi_int8", str(cm.exception))
+        self.assertIn("hi_fp16", str(cm.exception))
+
+    def test_variant_on_a_workflow_with_none_raises(self):
+        wf = {"u": {"class_type": "UNETLoader", "inputs": {"unet_name": "only.safetensors"}}}
+        with self.assertRaises(ValueError):
+            select_model_variant(wf, "only")
+
+    def test_workflow_without_alternates_is_untouched(self):
+        wf = {"u": {"class_type": "UNETLoader", "inputs": {"unet_name": "only.safetensors"}},
+              "k": {"class_type": "KSampler", "inputs": {"steps": 20}}}
+        before = json.loads(json.dumps(wf))
+        self.assertIsNone(select_model_variant(wf))
+        self.assertEqual(wf, before)
+
+
+class TestSplitWorkflowVariant(unittest.TestCase):
+    def test_splits_on_the_last_separator(self):
+        self.assertEqual(split_workflow_variant("h3/minimax@fp16"), ("h3/minimax", "fp16"))
+        self.assertEqual(split_workflow_variant("a@b@c"), ("a@b", "c"))
+
+    def test_unsuffixed_name_is_returned_whole(self):
+        self.assertEqual(split_workflow_variant("h3/minimax"), ("h3/minimax", None))
+
+    def test_empty_half_is_not_a_variant(self):
+        self.assertEqual(split_workflow_variant("a@"), ("a@", None))
+        self.assertEqual(split_workflow_variant("@b"), ("@b", None))
+        self.assertEqual(split_workflow_variant(""), ("", None))
 
 
 if __name__ == "__main__":

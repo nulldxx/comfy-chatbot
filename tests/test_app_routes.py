@@ -137,6 +137,29 @@ class TestCatalogueEndpoints(_AppFixture):
         self.assertEqual(resp.status_code, 200)
         self.assertIsInstance(resp.get_json(), list)
 
+    def test_api_workflow_variants_lists_a_templates_alternates(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "wf.json").write_text(json.dumps({
+                "1": {"class_type": "UNETLoader",
+                      "inputs": {"unet_name": "a_int8.safetensors, a_fp16.safetensors"}},
+            }))
+            with patch.dict(app_module.WORKFLOW_KIND_DIRS, {"image2video": base}):
+                resp = self.client.get("/api/workflow-variants/image2video/wf")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["variants"], ["a_int8", "a_fp16"])
+
+    def test_api_workflow_variants_unknown_kind_returns_404(self):
+        resp = self.client.get("/api/workflow-variants/nope/wf")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_api_workflow_variants_unknown_workflow_returns_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.dict(app_module.WORKFLOW_KIND_DIRS, {"image2video": Path(d)}):
+                resp = self.client.get("/api/workflow-variants/image2video/missing")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["variants"], [])
+
 
 class TestLastSeed(_AppFixture):
     def test_null_before_any_generation(self):

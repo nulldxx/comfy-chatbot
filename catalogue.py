@@ -7,7 +7,10 @@ from config import (
     COMFY_UPSCALER_DIR, COMFY_IMAGE2IMAGE_DIR, COMFY_INPAINTING_DIR,
     COMFY_IMAGE2VIDEO_DIR, COMFY_TEXT2VIDEO_DIR, COMFY_REMOVAL_DIR,
 )
-from workflow import LORA_TAG_RE
+from workflow import (
+    LORA_TAG_RE, WORKFLOW_VARIANT_SEP,
+    fill_placeholders_for_validation, model_variant_labels, split_workflow_variant,
+)
 
 
 def load_server_catalogue():
@@ -148,13 +151,74 @@ def list_removal_workflows():
     return list_workflow_names(COMFY_REMOVAL_DIR)
 
 
+def resolve_workflow_path(base_dir, workflow_name):
+    """Resolve a workflow name to its template file, confined to ``base_dir``.
+
+    ``workflow_name`` is client-supplied and may name a subfolder, so a "../" must not be
+    allowed to escape the directory. Any ``@model`` variant suffix is stripped first (see
+    split_workflow_variant): the model is a choice WITHIN a template, not part of its
+    path. A name whose own filename contains an "@" still resolves, because the suffixed
+    form is only preferred when that file actually exists.
+
+    Raises FileNotFoundError if there is no such template under base_dir.
+    """
+    base_dir = base_dir.resolve()
+
+    def _candidate(name):
+        with_ext = name if name.endswith(".json") else f"{name}.json"
+        path = (base_dir / with_ext).resolve()
+        if path.is_relative_to(base_dir) and path.is_file():
+            return path
+        return None
+
+    base, variant = split_workflow_variant(workflow_name)
+    if variant is not None:
+        path = _candidate(base)
+        if path is not None:
+            return path, variant
+    path = _candidate(workflow_name)
+    if path is None:
+        raise FileNotFoundError(f"Workflow template not found: {workflow_name}")
+    return path, None
+
+
+def list_workflow_variants(base_dir, workflow_name):
+    """Selectable model labels declared by a workflow, or [] if it declares none.
+
+    Backs the third level of the /workflows drill-down. A raw template is not valid JSON
+    (it still holds <PROMPT> and friends), so it is run through the same dummy-value
+    substitution startup validation uses before parsing. Anything that goes wrong —
+    missing file, unparseable template, a UI-format export whose nodes carry no
+    class_type, mismatched alternate lists — yields [], so the picker simply shows no
+    extra level rather than erroring on a template it can't introspect.
+    """
+    try:
+        path, _ = resolve_workflow_path(base_dir, workflow_name)
+        graph = json.loads(fill_placeholders_for_validation(path.read_text()))
+        if not isinstance(graph, dict):
+            return []
+        return model_variant_labels(graph)
+    except Exception:
+        return []
+
+
 def resolve_workflow(workflow_name, available, kind):
-    """Return (resolved_name, None) or (None, error_tuple) after validating against an allowlist."""
+    """Return (resolved_name, None) or (None, error_tuple) after validating against an allowlist.
+
+    A resolved name keeps any ``@model`` variant suffix: only the workflow part is
+    checked against the allowlist, and the model itself is validated later against the
+    parsed graph (see workflow.select_model_variant), which is the only place that knows
+    what the template offers.
+    """
     from flask import jsonify
     if workflow_name:
         name = workflow_name[:-5] if workflow_name.endswith(".json") else workflow_name
         if name not in available:
-            return None, (jsonify({"error": f"Unknown {kind} workflow: {workflow_name}"}), 400)
+            # Not a literal filename — try it as "workflow@model" before rejecting it.
+            base, variant = split_workflow_variant(name)
+            if variant is None or base not in available:
+                return None, (jsonify({"error": f"Unknown {kind} workflow: {workflow_name}"}), 400)
+            return f"{base}{WORKFLOW_VARIANT_SEP}{variant}", None
         return name, None
     elif available:
         return available[0], None

@@ -23,6 +23,7 @@ from catalogue import (
     list_image2video_workflows, list_inpainting_workflows,
     list_removal_workflows, list_text2video_workflows,
     list_upscaler_workflows, list_workflow_names,
+    list_workflow_variants,
     load_loras_result, load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
 )
 from ComfyServer import ComfyServer
@@ -36,7 +37,7 @@ from config import (
     COMFY_REMOVAL_DIR, COMFY_REMOVAL_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS,
     COMFY_TEXT2VIDEO_DIR, COMFY_TEXT2VIDEO_WORKFLOW, COMFY_UPSCALER_DIR,
-    VIDEO_OPTIMIZATIONS,
+    VIDEO_OPTIMIZATIONS, WORKFLOW_KIND_DIRS,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     FSCK_TIMEOUT, IDLE_TIMEOUT_SECONDS,
     AUDIO_EXTS, IMAGE_EXTS, IMAGES_DIR, MEDIA_EXTS, OUTPUT_FSCHECK_RESULT,
@@ -494,6 +495,21 @@ def api_text2video_workflows():
 @login_required
 def api_removal_workflows():
     return jsonify(list_removal_workflows())
+
+
+@app.route("/api/workflow-variants/<kind>/<path:name>")
+@login_required
+def api_workflow_variants(kind, name):
+    """Alternate models a single workflow offers, for the third level of the picker.
+
+    Fetched lazily when a workflow is clicked rather than folded into the listing
+    endpoints, which would mean parsing every template on every picker open. A workflow
+    that declares none answers [] and the picker just selects it, exactly as before.
+    """
+    base_dir = WORKFLOW_KIND_DIRS.get(kind)
+    if base_dir is None:
+        return jsonify({"error": f"Unknown workflow kind: {kind}"}), 404
+    return jsonify({"variants": list_workflow_variants(base_dir, name)})
 
 
 # ---------------------------------------------------------------------------

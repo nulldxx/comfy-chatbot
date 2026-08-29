@@ -12,7 +12,7 @@ from werkzeug.utils import secure_filename
 
 from config import COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS
 from ComfyServer import ComfyServer, JobCancelled, JobRetry
-from catalogue import parse_loras_from_prompt
+from catalogue import parse_loras_from_prompt, resolve_workflow_path
 from persistence import append_session_image, append_session_note, rename_session
 from seed_store import record_seeds
 from grok import GrokError, generate_prompt_sequence, generate_video_prompt_sequence
@@ -26,6 +26,7 @@ from workflow import (
     reference_sentinel, strip_reference_nodes,
     reference_marker, find_marked_node, drop_node_output_links,
     node_link_output_indices,
+    select_model_variant,
 )
 
 # In-memory job tracking. Each job record carries:
@@ -329,13 +330,12 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
 
     purge_generation_started(server_address)
     try:
-        base_dir = (workflow_dir or COMFY_GENERATION_DIR).resolve()
-        name_with_ext = workflow_name if workflow_name.endswith(".json") else f"{workflow_name}.json"
-        # Resolve and confine to base_dir: workflow_name is client-supplied (and
-        # may name a subfolder), so a "../" can't be allowed to escape the dir.
-        workflow_path = (base_dir / name_with_ext).resolve()
-        if not workflow_path.is_relative_to(base_dir) or not workflow_path.is_file():
-            raise FileNotFoundError(f"Workflow template not found: {workflow_name}")
+        # Resolve and confine to the workflow dir: workflow_name is client-supplied (and
+        # may name a subfolder), so a "../" can't be allowed to escape it. It may also
+        # carry an "@model" suffix naming one of the template's alternate models, which
+        # is split off here and applied to the parsed graph further down.
+        base_dir = workflow_dir or COMFY_GENERATION_DIR
+        workflow_path, model_variant = resolve_workflow_path(base_dir, workflow_name)
 
         send("progress", message=f"Loading workflow: {workflow_path.name}")
         template = workflow_path.read_text()
@@ -559,6 +559,16 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
         if "nodes" in workflow:
             send("progress", message="Converting UI-format workflow to API format...")
             workflow = server.convert_ui_to_api_format(workflow)
+
+        # Alternate models: a loader may name several interchangeable checkpoints as a
+        # comma-separated list, one of which the "@model" suffix picked. Run
+        # unconditionally so the list is always collapsed to a single name — ComfyUI
+        # would choke on the comma. Deliberately AFTER the UI->API conversion, unlike the
+        # node surgery above: this only rewrites an input string, so nothing depends on
+        # the ordering, and running it here means it works for UI-format templates too.
+        chosen = select_model_variant(workflow, model_variant)
+        if chosen and model_variant:
+            send("progress", message=f"Model: {chosen[0]}")
 
         if width and height:
             apply_resolution(workflow, width, height)

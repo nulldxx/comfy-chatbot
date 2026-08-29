@@ -348,6 +348,122 @@ class TestResolveWorkflow(unittest.TestCase):
         self.assertEqual(name, "flux")
         self.assertIsNone(err)
 
+    def test_model_variant_suffix_is_validated_on_the_base_and_kept(self):
+        from app import app
+        with app.app_context():
+            name, err = catalogue.resolve_workflow("flux@fp16", ["flux", "sd"], "generation")
+        self.assertEqual(name, "flux@fp16")
+        self.assertIsNone(err)
+
+    def test_unknown_base_with_a_suffix_still_returns_error(self):
+        from app import app
+        with app.app_context():
+            name, err = catalogue.resolve_workflow("bad@fp16", ["flux"], "generation")
+        self.assertIsNone(name)
+        self.assertEqual(err[1], 400)
+
+    def test_a_literal_name_containing_the_separator_wins(self):
+        from app import app
+        with app.app_context():
+            name, err = catalogue.resolve_workflow("odd@name", ["odd@name"], "generation")
+        self.assertEqual(name, "odd@name")
+        self.assertIsNone(err)
+
+
+class TestResolveWorkflowPath(unittest.TestCase):
+    def _base(self, d):
+        base = Path(d)
+        (base / "sub").mkdir()
+        (base / "wf.json").write_text("{}")
+        (base / "sub" / "nested.json").write_text("{}")
+        return base
+
+    def test_resolves_plain_and_nested_names(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self._base(d)
+            path, variant = catalogue.resolve_workflow_path(base, "wf")
+            self.assertEqual(path, base / "wf.json")
+            self.assertIsNone(variant)
+            path, _ = catalogue.resolve_workflow_path(base, "sub/nested")
+            self.assertEqual(path, base / "sub" / "nested.json")
+
+    def test_splits_the_model_variant_suffix(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self._base(d)
+            path, variant = catalogue.resolve_workflow_path(base, "wf@fp16")
+            self.assertEqual(path, base / "wf.json")
+            self.assertEqual(variant, "fp16")
+
+    def test_a_filename_containing_the_separator_still_resolves(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "odd@name.json").write_text("{}")
+            path, variant = catalogue.resolve_workflow_path(base, "odd@name")
+            self.assertEqual(path, base / "odd@name.json")
+            self.assertIsNone(variant)
+
+    def test_traversal_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self._base(d)
+            (base.parent / "outside.json").write_text("{}")
+            with self.assertRaises(FileNotFoundError):
+                catalogue.resolve_workflow_path(base, "../outside")
+
+    def test_missing_file_raises(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(FileNotFoundError):
+                catalogue.resolve_workflow_path(Path(d), "nope")
+
+
+class TestListWorkflowVariants(unittest.TestCase):
+    TEMPLATE = json.dumps({
+        "1": {"class_type": "UNETLoader",
+              "inputs": {"unet_name": "a_int8.safetensors, a_fp16.safetensors"}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "<PROMPT>"}},
+        "3": {"class_type": "KSampler", "inputs": {"denoise": "<DENOISE>"}},
+    }).replace('"<DENOISE>"', "<DENOISE>")
+
+    def test_lists_the_alternates_of_a_template_with_placeholders(self):
+        # The raw template is not valid JSON on its own — the dummy-value substitution
+        # is what makes it parseable, exactly as at startup validation.
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "wf.json").write_text(self.TEMPLATE)
+            self.assertEqual(catalogue.list_workflow_variants(base, "wf"),
+                             ["a_int8", "a_fp16"])
+
+    def test_template_without_alternates_returns_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "wf.json").write_text(
+                '{"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "only.safetensors"}}}')
+            self.assertEqual(catalogue.list_workflow_variants(base, "wf"), [])
+
+    def test_ui_format_export_returns_empty(self):
+        # UI-format graphs carry no class_type, so nothing is introspectable — the
+        # picker just shows no extra level rather than erroring.
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "wf.json").write_text('{"nodes": [{"type": "UNETLoader"}], "links": []}')
+            self.assertEqual(catalogue.list_workflow_variants(base, "wf"), [])
+
+    def test_unparseable_missing_and_escaping_names_return_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "broken.json").write_text("{not json")
+            self.assertEqual(catalogue.list_workflow_variants(base, "broken"), [])
+            self.assertEqual(catalogue.list_workflow_variants(base, "missing"), [])
+            self.assertEqual(catalogue.list_workflow_variants(base, "../outside"), [])
+
+    def test_mismatched_alternate_lists_return_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "wf.json").write_text(json.dumps({
+                "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "a.safetensors, b.safetensors"}},
+                "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "c.safetensors, d.safetensors, e.safetensors"}},
+            }))
+            self.assertEqual(catalogue.list_workflow_variants(base, "wf"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

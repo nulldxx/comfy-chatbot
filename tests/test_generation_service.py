@@ -772,6 +772,58 @@ class ReferenceImageMappingTests(unittest.TestCase):
         self.assertEqual(wf["guide"]["inputs"]["model"], ["cache", 0])
         self.assertEqual(wf["turbo"]["inputs"]["model"], ["unet", 0])
 
+    # ---- Alternate models ----------------------------------------------------
+    # A loader may name several interchangeable models as a comma-separated list; the
+    # "@model" suffix on the workflow name picks one. The list must never be submitted.
+
+    VARIANT_TEMPLATE = json.dumps({
+        "high": {"inputs": {"unet_name": "hi_int8.safetensors, hi_fp16.safetensors"},
+                 "class_type": "UNETLoader"},
+        "low":  {"inputs": {"unet_name": "lo_int8.safetensors, lo_fp16.safetensors"},
+                 "class_type": "UNETLoader"},
+        "guide": {"inputs": {"model": ["high", 0], "prompt": "<PROMPT>"},
+                  "class_type": "BasicGuider"},
+    })
+
+    def _run_variant(self, workflow_name):
+        """Run the core over VARIANT_TEMPLATE under ``workflow_name``; return the graph."""
+        from ComfyServer import JobCancelled
+
+        captured = {}
+        server = MagicMock()
+
+        def _submit(workflow):
+            captured["workflow"] = workflow
+            raise JobCancelled()
+        server.submit_workflow.side_effect = _submit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "wf.json").write_text(self.VARIANT_TEMPLATE)
+            job_id = self._make_job()
+            job = gs.jobs[job_id]
+            with patch.object(gs, "ComfyServer", return_value=server):
+                with self.assertRaises(JobCancelled):
+                    gs._run_generation_core(
+                        job_id, job["channel"], job["cancel"], "p", [],
+                        "http://s", "linux", workflow_name, workflow_dir=Path(tmp),
+                    )
+        return captured["workflow"]
+
+    def test_unsuffixed_name_submits_the_first_alternate(self):
+        wf = self._run_variant("wf")
+        self.assertEqual(wf["high"]["inputs"]["unet_name"], "hi_int8.safetensors")
+        self.assertEqual(wf["low"]["inputs"]["unet_name"], "lo_int8.safetensors")
+
+    def test_suffix_picks_the_model_index_paired_across_loaders(self):
+        wf = self._run_variant("wf@hi_fp16")
+        self.assertEqual(wf["high"]["inputs"]["unet_name"], "hi_fp16.safetensors")
+        self.assertEqual(wf["low"]["inputs"]["unet_name"], "lo_fp16.safetensors")
+
+    def test_unknown_model_fails_the_job_with_a_readable_error(self):
+        with self.assertRaises(ValueError) as cm:
+            self._run_variant("wf@nope")
+        self.assertIn("hi_fp16", str(cm.exception))
+
     # ---- Single-node video tracks -------------------------------------------
     # The documented convention: ONE VHS loader holds <REFERENCE_VIDEO_n> and drives
     # both an IMAGE and an AUDIO consumer input. Unticking a track box must disconnect
