@@ -588,10 +588,11 @@ pairing it by array index was only ever a convention nothing enforced.
 
 ### Video optimisation toggles (`/video-settings`)
 
-The MiniMax H3 workflows carry seven speed-for-quality optimisations — **4-step turbo
+The MiniMax H3 workflows carry eight speed-for-quality optimisations — **4-step turbo
 LoRA**, **8-step accel LoRA (fl2va)**, **8-step accel LoRA (ref2va)**, **H3
-FirstBlockCache**, **Sage attention**, **Sol attention**, **H3 Spectrum** — each a
-`MODEL → MODEL` passthrough chained between the `UNETLoader` and the guider/scheduler.
+FirstBlockCache**, **Sage attention**, **Sol attention**, **Comfy Kitchen attention**,
+**H3 Spectrum** — each a `MODEL → MODEL` passthrough chained between the `UNETLoader`
+and the guider/scheduler.
 They used to be baked in, which meant one template file per combination (eight of them,
 differing in nothing else). They are now **one chain in one template per kind**,
 bypassed per run from checkboxes in `/video-settings`.
@@ -659,7 +660,18 @@ adds the `LoadImage → resize → first_frame` sub-chain to T2V's graph.
   LoRA it actually chose, and it renders exactly as before. `videoOptsPayload` forces the
   losing group to `false` on the wire, the panel collapses `work` the same way on open,
   and the `/settings` summary reads through the payload so all three agree.
-- **Default is the 8-step accel plus the four non-LoRA optimisations**; turbo is off.
+- **Comfy Kitchen attention is ComfyUI's own `ModelAttentionBackend`**
+  (`comfy_extras.nodes_model_advanced`), not a node pack — the only optimisation here that
+  ships with ComfyUI. It is pinned to `attention: "comfy kitchen attention"` (the node also
+  offers `"pytorch attention"`, which the toggle does not expose: off already means the
+  stock backend). It sits **first in the chain, straight off the `UNETLoader`**, ahead of
+  the accelerator LoRAs, matching the reference graph it came from. It is an *independent*
+  checkbox — not exclusive with Sage/Sol, which are also attention patches — and the only
+  optimisation that **defaults off**, because a third attention patch stacked on those two
+  has never been rendered. Consequence: `/video-settings` Apply now normally reports
+  `Optimisations bypassed: Comfy Kitchen attention` rather than "all on".
+- **Default is the 8-step accel plus the four non-LoRA optimisations**; turbo and Comfy
+  Kitchen attention are off.
   ⚠ That stack has **never been rendered** — Spectrum previously appeared only in a
   32-step HQ t2v file where it *replaced* FirstBlockCache, and its forecast params
   (warmup 1, window 2, max_history 8) have little to work with across 8 steps.

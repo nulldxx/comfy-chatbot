@@ -322,9 +322,11 @@ class TestBypassOptimisationNodes(unittest.TestCase):
         self.assertEqual(bypass_optimisation_nodes(wf, set())[1], [])
         self.assertEqual(wf, before)
 
-    # The optimisation chain in template order: the accelerator LoRAs sit at the head,
-    # ahead of the attention patches. Taken from config so the two cannot drift.
-    CHAIN = ("turbo", "accel8fl", "accel8ref", "sage", "sol", "cache", "spectrum")
+    # The optimisation chain in template order: the attention-backend patch sits
+    # straight off the UNETLoader, then the accelerator LoRAs, then the rest of the
+    # attention patches. Taken from config so the two cannot drift.
+    CHAIN = ("kitchen", "turbo", "accel8fl", "accel8ref", "sage", "sol", "cache",
+             "spectrum")
 
     def test_chain_covers_every_declared_optimisation(self):
         from config import VIDEO_OPTIMIZATIONS

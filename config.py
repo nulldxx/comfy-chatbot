@@ -233,7 +233,8 @@ REFERENCE_MAX_FILES = 12
 # nothing. Mirrored client-side as VIDEO_OPTIMIZATIONS in static/js/utils.js, which
 # also decides which of them are mutually-exclusive accelerator LoRAs — the server
 # takes the client's word for that and only validates the key names.
-VIDEO_OPTIMIZATIONS = ("turbo", "accel8fl", "accel8ref", "cache", "sage", "sol", "spectrum")
+VIDEO_OPTIMIZATIONS = ("turbo", "accel8fl", "accel8ref", "cache", "sage", "sol",
+                       "kitchen", "spectrum")
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
 
 # Idle session lock: after this many seconds with no authenticated request and no

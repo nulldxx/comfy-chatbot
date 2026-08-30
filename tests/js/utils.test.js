@@ -744,10 +744,11 @@ describe('videoOptsPayload', () => {
     expect(Object.keys(out).sort()).toEqual(VIDEO_OPTIMIZATIONS.map(o => o.key).sort());
   });
 
-  test('every non-accelerator optimisation defaults to on', () => {
+  test('every non-accelerator optimisation mirrors its default flag', () => {
+    // Not "all on": a new optimisation may ship off until it has been rendered.
     const out = videoOptsPayload(DEFAULT_VIDEO_SETTINGS);
-    VIDEO_OPTIMIZATIONS.filter(o => !o.steps).forEach(({ key }) => {
-      expect(out[key]).toBe(true);
+    VIDEO_OPTIMIZATIONS.filter(o => !o.steps).forEach(({ key, stateKey }) => {
+      expect(out[key]).toBe(DEFAULT_VIDEO_SETTINGS[stateKey] !== false);
     });
   });
 
@@ -760,13 +761,15 @@ describe('videoOptsPayload', () => {
     const out = videoOptsPayload({ ...DEFAULT_VIDEO_SETTINGS, optSol: false });
     expect(out).toEqual({
       turbo: false, accel8fl: true, accel8ref: true,
-      cache: true, sage: true, sol: false, spectrum: true,
+      cache: true, sage: true, sol: false, kitchen: false, spectrum: true,
     });
   });
 
   test('a pre-upgrade settings object resolves to the turbo LoRA it chose', () => {
     // Old saved sessions carry an explicit optTurbo:true and no 8-step keys at all;
     // absent reads as on, so all three accelerators would otherwise stack.
+    // Every non-accelerator key is absent from that object, and absent reads as on
+    // — including ones that ship off by default, which is the documented behaviour.
     const out = videoOptsPayload({ duration: 5, optTurbo: true });
     expect(out).toMatchObject({ turbo: true, accel8fl: false, accel8ref: false });
     VIDEO_OPTIMIZATIONS.filter(o => !o.steps).forEach(({ key }) => {

@@ -235,3 +235,35 @@ workflows, which is why the coupling lives in the panel.
 **Still outstanding:** test-render the new default stack (8-step accel + cache + sage +
 sol + spectrum) in the ComfyUI editor, and deploy the three templates to
 `~/comfy-workflows/{image2video,text2video}/` on `$PROD_SERVER`.
+
+## Addendum — the eighth key: `kitchen` (Comfy Kitchen attention)
+
+ComfyUI gained a built-in `ModelAttentionBackend` node
+(`comfy_extras.nodes_model_advanced`, category `model/patch`), a plain `MODEL → MODEL`
+passthrough taking `attention ∈ {"pytorch attention", "comfy kitchen attention"}`. It is
+the same shape as everything else in this chain, so it was added as the eighth toggle
+rather than as a new mechanism — which is the point of the consolidation: the change is
+one descriptor in `static/js/utils.js`, one key in `config.VIDEO_OPTIMIZATIONS`, and one
+`[opt:kitchen]`-titled node per template. No wire-format, session, `/settings-save`,
+macro or `newChat` change was needed.
+
+- **Chain position: first, straight off the `UNETLoader`** — ahead of the accelerator
+  LoRAs — matching the reference graph it was taken from. New node ids: `105:130` in
+  `minimax-h3-t2v.json` / `minimax-h3-i2v.json`, `171` in `minimax-h3-r2v.json`; each
+  template's `[opt:turbo]` LoRA was re-pointed from the `UNETLoader` onto it.
+  `select_model_variant` rewrites only the loader's `unet_name` string, so inserting a
+  consumer downstream of it is safe.
+- **Pinned to `"comfy kitchen attention"`.** The toggle is on/off like every other one;
+  `"pytorch attention"` is not exposed, since bypassing the node already yields the stock
+  backend.
+- **Independent, not exclusive with Sage/Sol.** They are attention patches too and the
+  reference graph carries neither, but stacking is left to the operator — exactly as
+  Sage + Sol already are.
+- **The first optimisation to default off** (`optKitchen: false`). Untested against the
+  current default stack, so a fresh session renders exactly as it did before. This broke
+  one JS test's assumption that every non-accelerator defaults on; it now asserts the
+  payload mirrors `DEFAULT_VIDEO_SETTINGS` instead. The "pre-upgrade session" test still
+  passes unchanged — `kitchen` is absent there, and absent reads as *on*, which is the
+  documented back-compat behaviour and not the same thing as the shipped default.
+- **Still outstanding:** test-render the box ticked, in the ComfyUI editor, alongside
+  Sage + Sol + FirstBlockCache + Spectrum.

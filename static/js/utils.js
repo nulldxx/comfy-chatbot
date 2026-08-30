@@ -259,6 +259,7 @@ export const VIDEO_OPTIMIZATIONS = [
   { key: 'cache',    stateKey: 'optCache',    label: 'H3 FirstBlockCache' },
   { key: 'sage',     stateKey: 'optSage',     label: 'Sage attention' },
   { key: 'sol',      stateKey: 'optSol',      label: 'Sol attention' },
+  { key: 'kitchen',  stateKey: 'optKitchen',  label: 'Comfy Kitchen attention' },
   { key: 'spectrum', stateKey: 'optSpectrum', label: 'H3 Spectrum' },
 ];
 // Sampler steps the Turbo LoRA needs, and the step count the templates bake in for
@@ -271,6 +272,8 @@ export const DEFAULT_VIDEO_SETTINGS = {
   duration: 5, frames: 125, fps: 25, audio: true, width: 1280, height: 720,
   optTurbo: false, optAccel8Fl: true, optAccel8Ref: true,
   optCache: true, optSage: true, optSol: true, optSpectrum: true,
+  // Off: a third attention patch on top of Sage + Sol has never been rendered here.
+  optKitchen: false,
 };
 
 // The accelerator actually in force, or null if none is on.
