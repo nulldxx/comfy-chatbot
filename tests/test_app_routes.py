@@ -1212,6 +1212,30 @@ class TestSequenceRunRoute(_AppFixture):
         gen_settings = self._job.call_args[0][5]
         self.assertIsNone(gen_settings["extraPrompt"])
 
+    def test_profanity_in_master_prompt_returns_400(self):
+        # The master prompt is posted verbatim to Grok, so PROFANITY_FILTER guards it.
+        app_module.profanity.configure("damn,blast")
+        try:
+            resp = self.client.post("/api/sequence-run", json={
+                "prompt": "a damn cat", "recordingName": "r",
+            })
+        finally:
+            app_module.profanity.configure("")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("damn", resp.get_json()["error"])
+        self._job.assert_not_called()
+
+    def test_clean_prompt_passes_the_filter(self):
+        app_module.profanity.configure("damn,blast")
+        try:
+            resp = self.client.post("/api/sequence-run", json={
+                "prompt": "a cat", "recordingName": "r",
+            })
+        finally:
+            app_module.profanity.configure("")
+        self.assertEqual(resp.status_code, 200)
+        self._job.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Session endpoints

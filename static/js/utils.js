@@ -242,9 +242,10 @@ export function workflowLabelHtml(name) {
 // Bypassable optimisations in the video workflows, each matching an "[opt:<key>] ..."
 // marked node in the template (see workflow.bypass_optimisation_nodes). `key` is the
 // wire/marker name — mirrored server-side as VIDEO_OPTIMIZATIONS in config.py — and
-// `stateKey` is its flag on currentVideoSettings. Most default ON: that is the fast
-// preview mode, traded against quality. Declared here rather than in state.js because
-// state.js imports from this module.
+// `stateKey` is its flag on currentVideoSettings. Which ones default on is decided in
+// DEFAULT_VIDEO_SETTINGS below — an optimisation ships off until the stack including it
+// has actually been rendered. Declared here rather than in state.js because state.js
+// imports from this module.
 //
 // A descriptor carrying `steps` is an *accelerator* — a distillation LoRA that only
 // makes sense at that sampler step count. Chaining two of different step counts gives
@@ -269,11 +270,14 @@ export const TURBO_STEPS = 4;
 export const BASE_VIDEO_STEPS = 20;
 
 export const DEFAULT_VIDEO_SETTINGS = {
-  duration: 5, frames: 125, fps: 25, audio: true, width: 1280, height: 720,
-  optTurbo: false, optAccel8Fl: true, optAccel8Ref: true,
-  optCache: true, optSage: true, optSol: true, optSpectrum: true,
-  // Off: a third attention patch on top of Sage + Sol has never been rendered here.
-  optKitchen: false,
+  duration: 5, frames: 125, fps: 25, audio: true, width: 960, height: 540,
+  // The rendered-and-trusted stack: the 8-step fl2va accelerator (the i2v/t2v UNET),
+  // FirstBlockCache and Comfy Kitchen attention. Everything else ships off — turbo
+  // loses to the 8-step LoRA, accel8ref belongs to the r2v UNET (tick it when running
+  // that workflow), and Sage/Sol/Spectrum are left for the panel to opt into.
+  optTurbo: false, optAccel8Fl: true, optAccel8Ref: false,
+  optCache: true, optSage: false, optSol: false, optSpectrum: false,
+  optKitchen: true,
 };
 
 // The accelerator actually in force, or null if none is on.

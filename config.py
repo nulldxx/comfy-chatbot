@@ -235,6 +235,12 @@ REFERENCE_MAX_FILES = 12
 # takes the client's word for that and only validates the key names.
 VIDEO_OPTIMIZATIONS = ("turbo", "accel8fl", "accel8ref", "cache", "sage", "sol",
                        "kitchen", "spectrum")
+# Optional profanity filter: a comma-separated list of banned words. Unset or
+# empty (the default) disables it. Only the master prompt of /sequence and
+# /video-sequence is checked — the two commands that send a user's words off the
+# appliance to a third-party LLM. Parsing and matching live in profanity.py.
+PROFANITY_FILTER = os.environ.get('PROFANITY_FILTER', '')
+
 AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
 
 # Idle session lock: after this many seconds with no authenticated request and no

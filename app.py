@@ -66,6 +66,7 @@ from persistence import (
 import seed_store
 import auth_store
 import idle_lock
+import profanity
 from auth_store import save_password_hash, verify_password
 from crypto_key import derive_passphrase, effective_passphrase as _effective_passphrase
 app = Flask(__name__)
@@ -1631,6 +1632,12 @@ def _parse_sequence_request(data):
     master = (data.get("prompt") or "").strip()
     if not master:
         raise ValueError("A master prompt is required")
+
+    # The master prompt is the one thing here that leaves the box — it's posted
+    # verbatim to Grok — so it's what the optional profanity filter guards.
+    blocked = profanity.check(master)
+    if blocked:
+        raise ValueError(blocked)
 
     try:
         count = int(data.get("count", 15))

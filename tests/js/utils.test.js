@@ -752,16 +752,17 @@ describe('videoOptsPayload', () => {
     });
   });
 
-  test('the 8-step accelerators are the default, not turbo', () => {
+  test('the fl2va 8-step accelerator is the default, not turbo', () => {
+    // accel8ref belongs to the r2v UNET and is opted into from the panel.
     const out = videoOptsPayload(DEFAULT_VIDEO_SETTINGS);
-    expect(out).toMatchObject({ turbo: false, accel8fl: true, accel8ref: true });
+    expect(out).toMatchObject({ turbo: false, accel8fl: true, accel8ref: false });
   });
 
   test('an off flag is reported as false', () => {
-    const out = videoOptsPayload({ ...DEFAULT_VIDEO_SETTINGS, optSol: false });
+    const out = videoOptsPayload({ ...DEFAULT_VIDEO_SETTINGS, optCache: false });
     expect(out).toEqual({
-      turbo: false, accel8fl: true, accel8ref: true,
-      cache: true, sage: true, sol: false, kitchen: false, spectrum: true,
+      turbo: false, accel8fl: true, accel8ref: false,
+      cache: false, sage: false, sol: false, kitchen: true, spectrum: false,
     });
   });
 
@@ -821,9 +822,9 @@ describe('activeAccelerator', () => {
   });
 
   test('either 8-step variant alone resolves to 8 steps', () => {
-    const base = { ...DEFAULT_VIDEO_SETTINGS, optAccel8Ref: false };
-    expect(activeAccelerator(base).key).toBe('accel8fl');
-    expect(activeAccelerator({ ...DEFAULT_VIDEO_SETTINGS, optAccel8Fl: false }).key).toBe('accel8ref');
+    expect(activeAccelerator(DEFAULT_VIDEO_SETTINGS).key).toBe('accel8fl');
+    const ref = { ...DEFAULT_VIDEO_SETTINGS, optAccel8Fl: false, optAccel8Ref: true };
+    expect(activeAccelerator(ref).key).toBe('accel8ref');
   });
 });
 
