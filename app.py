@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -2550,6 +2551,27 @@ _HOST_MOUNT_BUSY = ("archive volume is mounted for host access; "
                     "run `m -u` on the host first")
 
 
+def _next_archive_index(dest_dir: Path, prefix: str) -> int:
+    """First free sequence number for <prefix>NNN.<ext> files in dest_dir.
+
+    Session archives are renumbered from 001, but the staging folder is named after
+    the (slugified) session name, so archiving a second batch under the same name
+    lands in the same folder. Originals are deleted after copying, so continuing the
+    numbering rather than restarting it is what keeps that from destroying the first
+    batch."""
+    pattern = re.compile(re.escape(prefix) + r"(\d+)$")
+    highest = 0
+    try:
+        entries = list(dest_dir.iterdir())
+    except OSError:
+        return 1
+    for entry in entries:
+        match = pattern.fullmatch(entry.stem)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
 @app.route("/api/archive", methods=["POST"])
 @login_required
 def api_archive():
@@ -2601,11 +2623,15 @@ def api_archive():
             dest_dir = ARCHIVE_MOUNT_DIR / "staging" / folder
             dest_dir.mkdir(parents=True, exist_ok=True)
             # Copy + verify every file before deleting any original (move semantics).
-            # Session archives are prefixed 001_, 002_, … to lock in the user's
-            # drag-sorted order on disk; other scopes keep original names.
+            # Session archives are renamed <folder>001.<ext>, <folder>002.<ext>, … to
+            # lock in the user's drag-sorted order on disk; other scopes keep original
+            # names. Numbering continues past anything already staged under this name,
+            # so archiving twice into the same folder can't overwrite the first batch.
+            start = _next_archive_index(dest_dir, folder) if scope == "session" else 0
             copied = []
             for i, src in enumerate(files):
-                fname = f"{i + 1:03d}_{src.name}" if scope == "session" else src.name
+                fname = (f"{folder}{start + i:03d}{src.suffix.lower()}"
+                         if scope == "session" else src.name)
                 dest = dest_dir / fname
                 # copyfile (data only) rather than copy2: exFAT can't store
                 # POSIX permissions, so copystat's chmod raises EPERM there.

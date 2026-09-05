@@ -194,11 +194,12 @@ class TestArchive(unittest.TestCase):
         self._auth()
         self._make_image("clip.mp4")
         resp = self.client.post(
-            "/api/archive", json={"scope": "session", "filenames": ["clip.mp4"]}
+            "/api/archive",
+            json={"scope": "session", "filenames": ["clip.mp4"], "name": "Beach Day"},
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["archived"], 1)
-        self.assertEqual(self._staged_files(), ["001_clip.mp4"])
+        self.assertEqual(self._staged_files(), ["beach-day001.mp4"])
 
     def test_archive_today_only(self):
         self._auth()
@@ -217,13 +218,46 @@ class TestArchive(unittest.TestCase):
         self._make_image("s1.png")
         self._make_image("s2.png")
         resp = self.client.post(
-            "/api/archive", json={"scope": "session", "filenames": ["s2.png", "s1.png"]}
+            "/api/archive",
+            json={"scope": "session", "filenames": ["s2.png", "s1.png"],
+                  "name": "Man walking on Beach"},
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["archived"], 2)
-        # Session files are prefixed in the caller's order so they sort correctly on disk.
-        self.assertEqual(self._staged_files(), ["001_s2.png", "002_s1.png"])
+        # Session files are renamed <folder>NNN.<ext> in the caller's order, so they
+        # sort on disk exactly as they were arranged in the session.
+        self.assertEqual(
+            self._staged_files(),
+            ["man-walking-on-beach001.png", "man-walking-on-beach002.png"],
+        )
         self.assertIn("keep.png", os.listdir(self.images_dir))
+
+    def test_archive_session_unnamed_uses_folder_guid(self):
+        # With no name the staging folder is a guid; the files take the same stem so
+        # a file always says which batch it came from.
+        self._auth()
+        self._make_image("s1.png")
+        resp = self.client.post(
+            "/api/archive", json={"scope": "session", "filenames": ["s1.png"]}
+        )
+        self.assertEqual(resp.status_code, 200)
+        folder = resp.get_json()["folder"]
+        self.assertEqual(self._staged_files(), [f"{folder}001.png"])
+
+    def test_archive_session_twice_continues_numbering(self):
+        # Re-archiving under the same name reuses the staging folder, so numbering
+        # must continue rather than overwrite the first batch (originals are deleted).
+        self._auth()
+        self._make_image("s1.png")
+        self._make_image("s2.png")
+        for name in ("s1.png", "s2.png"):
+            resp = self.client.post(
+                "/api/archive",
+                json={"scope": "session", "filenames": [name], "name": "Beach"},
+            )
+            self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._staging_dirs(), ["beach"])
+        self.assertEqual(self._staged_files(), ["beach001.png", "beach002.png"])
 
     def test_archive_session_rejects_bad_filename(self):
         self._auth()
