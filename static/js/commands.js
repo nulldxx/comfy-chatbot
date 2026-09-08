@@ -10,6 +10,7 @@ import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, n
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
+import { renderArchiveBrowser } from './archive.js';
 
 // Fetch the alternate models a workflow offers. `kind` names its directory family
 // (see WORKFLOW_KIND_DIRS server-side); a workflow with no alternates — and any failure —
@@ -2310,6 +2311,7 @@ export function makeCommandHandler(deps) {
         { sig: '/alias-create <word> <expansion>', desc: 'create or update a text alias; typing the word in a prompt and pressing space expands it immediately', notes: 'e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code> &nbsp;·&nbsp; quotes are optional' },
         { sig: '/alias-list', desc: 'list all defined aliases' },
         { sig: '/archive-all [name]', desc: 'archive every image and video in the output folder into the encrypted volume (asks y/n first; optional folder name)', notes: 'needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server' },
+        { sig: '/archive-explore', desc: 'browse the encrypted archive in the chat — click a folder to open it, &#9654; Slideshow plays every image and video in it (and below), &#128465; deletes one', notes: 'needs the <code>archive-agent</code> running on the host &nbsp;&middot;&nbsp; the volume is mounted while you browse and closes itself when idle; <em>Close archive</em> does it now (<code>/fscheck</code> needs it closed) &nbsp;&middot;&nbsp; deletes are permanent — the archive is the last copy' },
         { sig: '/archive-session [name]', desc: 'copy this session\'s images and videos into the encrypted volume, then remove the originals (optional folder name, e.g. <code>/archive-session man walking on beach</code>) — files are renumbered <code>man-walking-on-beach001.png</code>, <code>…002.png</code> in session order' },
         { sig: '/archive-today [name]', desc: 'archive images and videos generated today into the encrypted volume (optional folder name)' },
         { sig: '/clear', desc: 'clear the visible chat while keeping settings, prompt history (up-arrow recall) and session images (<code>/review-session</code>)' },
@@ -2922,6 +2924,11 @@ export function makeCommandHandler(deps) {
           bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
+      return;
+    }
+
+    if (cmd === '/archive-explore') {
+      renderArchiveBrowser(addMessage('bot', ''));
       return;
     }
 

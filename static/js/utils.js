@@ -413,3 +413,49 @@ export function progressCaption(tick) {
   if (tick.queue > 0) return `Waiting — ${tick.queue} ahead in queue`;
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Archive browser paths (/archive-explore)
+// ---------------------------------------------------------------------------
+// The archive is a tree ("staging/<folder>/<file>"), unlike the flat gallery, so
+// the browser needs to walk paths client-side. These are the pure parts, kept
+// here so they can be unit-tested — everything in archive.js is DOM and, by the
+// precedent of this codebase's node-environment Jest setup, untestable.
+// The server validates every path again with safe_join; these helpers are for
+// building sane URLs and a breadcrumb, not for security.
+
+// Strip leading/trailing slashes and collapse empty segments, so "" and "/" and
+// "staging/" all normalise to the same thing.
+function archiveSegments(path) {
+  return String(path || '').split('/').filter(Boolean);
+}
+
+// The path one level up: '' at the root's children, null at the root itself
+// (nothing to climb to). Mirrors the `parent` the server returns.
+export function archiveParentPath(path) {
+  const parts = archiveSegments(path);
+  if (!parts.length) return null;
+  return parts.slice(0, -1).join('/');
+}
+
+// The breadcrumb trail, root first: [{name, path}, …]. The root is always
+// present, so a browser at "" still renders one clickable crumb.
+export function archiveBreadcrumb(path, rootName = 'archive') {
+  const parts = archiveSegments(path);
+  const crumbs = [{ name: rootName, path: '' }];
+  parts.forEach((name, i) => {
+    crumbs.push({ name, path: parts.slice(0, i + 1).join('/') });
+  });
+  return crumbs;
+}
+
+// Append a child name to a folder path. Returns null for anything that would
+// escape the folder — '..', an absolute path, or an embedded traversal — so a
+// malformed listing can't produce a URL that walks out of the archive.
+export function joinArchivePath(base, name) {
+  const child = String(name || '');
+  if (!child || child.startsWith('/') || archiveSegments(child).includes('..')) return null;
+  const parts = archiveSegments(base);
+  if (parts.includes('..')) return null;
+  return parts.concat(archiveSegments(child)).join('/');
+}

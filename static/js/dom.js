@@ -74,6 +74,17 @@ export function deleteImageFile(url) {
     }));
 }
 
+// The archive's equivalent, for media served from /archive-file/. The whole
+// relative path is the identity here (the archive is a tree, not a flat folder),
+// so it goes in a query parameter rather than the URL path.
+export function deleteArchiveFile(url) {
+  const rel = url.replace(/^\/archive-file\//, '');
+  return fetch('/api/archive-browse?path=' + encodeURIComponent(rel), { method: 'DELETE' })
+    .then(r => r.json().then(data => {
+      if (!r.ok && r.status !== 404) throw new Error(data.error || 'Delete failed');
+    }));
+}
+
 export function removeImageFromChat(url) {
   messagesEl.querySelectorAll('.img-wrap img, .img-wrap video').forEach(media => {
     if (media.getAttribute('src') === url) media.closest('.img-wrap').remove();

@@ -1234,6 +1234,35 @@ header a:hover { color: #a78bfa; }
   background: rgba(167,139,250,0.12);
 }
 
+/* ---------- /archive-explore browser ---------- */
+/* Folder rows reuse .sel-list/.sel-btn and the file grid reuses the /review
+   grid (.review-frame/.review-grid/.review-thumb/.review-del) wholesale; only the
+   breadcrumb and the toolbar are new. */
+.arch-crumbs {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: #475569;
+  padding-right: 24px;       /* clear the bubble's ✕ */
+}
+.arch-crumb {
+  background: none; border: none; padding: 0;
+  font-family: inherit; font-size: inherit;
+  color: #a78bfa; cursor: pointer;
+}
+.arch-crumb:hover { color: #c4b5fd; text-decoration: underline; }
+.arch-crumb-here { color: #cbd5e1; }
+.arch-bar {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-top: 8px;
+}
+.arch-action {
+  flex: 0 0 auto;            /* .sel-btn is flex:1; these size to their label */
+  padding: 5px 10px;
+  font-size: 0.8rem;
+}
+.arch-action:disabled { cursor: default; opacity: 0.5; }
+.arch-status { margin: 6px 0 0; min-height: 1em; }
+
 /* ---------- /jobs grid ---------- */
 .jobs-grid {
   display: grid;

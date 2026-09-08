@@ -851,6 +851,43 @@ the mtime (`api_archive`'s mount→copy→unmount ends in `handle_unmount`). Tog
 size+mtime backup (plain `rsync`, tar `--newer-mtime`) will never re-copy it — use a
 content-aware backup (`rsync -c`, `restic`, `borg`) if the archive must be backed up.
 
+## Browsing the archive (`/archive-explore`)
+
+Archiving is one-way: `/archive-session` & friends copy media to the encrypted archive
+volume under `staging/<folder>/` and **delete the gallery originals**. `/archive-explore`
+is the read path back — a folder browser in a chat bubble, with a **▶ Slideshow** button
+that plays every image and video in the current folder **and below** through the existing
+`createSlideshow()` reel, plus per-file delete. See `ADR/archive-explore.md`.
+
+- **The volume is held on a lease, not mounted per request** (`archive_browse.py`, a
+  watchdog modelled on `idle_lock.py` — same lazy post-fork start, same no-import-of-app
+  rule). A listing, every thumbnail and every slide is a separate request; mounting per
+  request would mean a `zuluCrypt-cli` open/close per image. Holding `archive_lock` for
+  the session was rejected outright: `_lock_down()` acquires it **non-blocking** and gives
+  up, so a browse session holding it would defer the idle lockdown forever.
+  `ARCHIVE_BROWSE_TIMEOUT_SECONDS` (default 600, `0` = never) closes it when idle.
+- **`_archive_browse_open()` has a fast path** — lease live *and* marker visible means
+  just renew, no agent round-trip. Without it every thumbnail costs two socket calls
+  serialised on `archive_lock`. The marker is what makes it safe: if anything unmounted
+  without telling the lease, it vanishes and the slow path re-mounts.
+- **It never passes `create`.** `api_archive` self-provisions on first archive because it
+  is about to write; browsing must not conjure an empty 20G volume.
+- **Refuses while the host has the volume** (`m`/samba), exactly as archive and fsck do —
+  the lease's auto-close issues `unmount`, which would pop the bind samba serves from.
+- **Every existing unmount site calls `archive_browse.note_closed()`** — `api_archive`'s
+  `finally`, the fsck job, `api_host_mount`, `_lock_down()`. Otherwise the watchdog
+  unmounts a second time later. The client re-opens on its next request, so a lockdown or
+  an archive op under an open browser is invisible apart from a stopped slideshow.
+- **The slideshow gained one seam:** `createSlideshow(bubble, images, { deleteMedia })`,
+  defaulted to `deleteImageFile` so no existing caller changed. The lightbox instead gets
+  a **guard** — its delete bails on any URL not under `/images/`, rather than threading a
+  deleter through every `openLightbox` call site.
+- **Accepted limitation:** `send_from_directory` streams after `archive_lock` is released,
+  so an archive op starting mid-stream can truncate an in-flight video. The busy fs makes
+  that unmount fail and it self-heals; the file reloads fine.
+- **Not covered:** no restore-to-gallery, no folder delete, no rename/move. Archived media
+  loses its `seed_store` entry (keyed on gallery filenames).
+
 ## Host access to the archive volume (`m` → `/api/host-mount`)
 
 The container is the **sole owner** of the encrypted archive volume. External host

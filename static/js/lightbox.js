@@ -92,6 +92,15 @@ export function deleteCurrentLightboxImage() {
   const url = lbCollection[lbIndex];
   if (!url || isVideoUrl(url)) return;
 
+  // The lightbox only ever deletes from the gallery (/api/images). It is also
+  // reachable from an /archive-explore slideshow, whose slides are /archive-file/
+  // URLs — deleting one of those here would post a basename to the wrong endpoint.
+  // Archive media is deleted from the browser's thumbnail ✕ or the slideshow's 🗑.
+  if (!/^\/images\//.test(url)) {
+    lbSetStatus('Delete is not available here.');
+    return;
+  }
+
   lbDeleting = true;
   lbSetStatus('Deleting…');
   deleteImageFile(url).then(() => {

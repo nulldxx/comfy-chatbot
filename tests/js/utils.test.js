@@ -3,7 +3,8 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          formatFscheckResult, computeDiffBox, clampMenuPosition,
          videoOptsPayload, activeAccelerator, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
          splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
-         WORKFLOW_VARIANT_SEP, progressPercent, progressCaption } from '../../static/js/utils.js';
+         WORKFLOW_VARIANT_SEP, progressPercent, progressCaption,
+         archiveParentPath, archiveBreadcrumb, joinArchivePath } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -942,5 +943,68 @@ describe('progressCaption', () => {
   test('a bare tick captions nothing', () => {
     expect(progressCaption({ type: 'tick' })).toBeNull();
     expect(progressCaption(null)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Archive browser paths (/archive-explore)
+// ---------------------------------------------------------------------------
+
+describe('archiveParentPath', () => {
+  test('the root has no parent', () => {
+    expect(archiveParentPath('')).toBeNull();
+    expect(archiveParentPath(null)).toBeNull();
+    expect(archiveParentPath('/')).toBeNull();
+  });
+
+  test('one level down climbs to the root', () => {
+    expect(archiveParentPath('staging')).toBe('');
+  });
+
+  test('deeper paths drop one segment', () => {
+    expect(archiveParentPath('staging/beach')).toBe('staging');
+    expect(archiveParentPath('staging/beach/deeper')).toBe('staging/beach');
+  });
+
+  test('stray slashes normalise away', () => {
+    expect(archiveParentPath('/staging/beach/')).toBe('staging');
+  });
+});
+
+describe('archiveBreadcrumb', () => {
+  test('the root is always a crumb', () => {
+    expect(archiveBreadcrumb('')).toEqual([{ name: 'archive', path: '' }]);
+  });
+
+  test('each segment accumulates its full path', () => {
+    expect(archiveBreadcrumb('staging/beach')).toEqual([
+      { name: 'archive', path: '' },
+      { name: 'staging', path: 'staging' },
+      { name: 'beach',   path: 'staging/beach' },
+    ]);
+  });
+
+  test('the root label is overridable', () => {
+    expect(archiveBreadcrumb('', 'Archive')[0].name).toBe('Archive');
+  });
+});
+
+describe('joinArchivePath', () => {
+  test('appends a child to a folder', () => {
+    expect(joinArchivePath('', 'staging')).toBe('staging');
+    expect(joinArchivePath('staging', 'beach')).toBe('staging/beach');
+    expect(joinArchivePath('staging/beach', 'a.png')).toBe('staging/beach/a.png');
+  });
+
+  test('refuses anything that would escape the folder', () => {
+    expect(joinArchivePath('staging', '..')).toBeNull();
+    expect(joinArchivePath('staging', '../../etc')).toBeNull();
+    expect(joinArchivePath('staging', '/etc/passwd')).toBeNull();
+    expect(joinArchivePath('staging/..', 'beach')).toBeNull();
+  });
+
+  test('refuses an empty child', () => {
+    expect(joinArchivePath('staging', '')).toBeNull();
+    expect(joinArchivePath('staging', null)).toBeNull();
   });
 });

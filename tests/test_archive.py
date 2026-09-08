@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as app_module
+import archive_browse
 import image_store as image_store_module
 from app import app
 
@@ -391,6 +392,288 @@ class TestArchive(unittest.TestCase):
         self.assertIn("m -u", body)
         # No fsck was sent to the agent (only the status guard).
         self.assertNotIn("fsck", [r["action"] for r in self.agent.requests])
+
+
+class TestArchiveExplore(unittest.TestCase):
+    """The /archive-explore browse endpoints.
+
+    Reuses FakeAgent, so the mount/unmount handshake (and the marker it drops) is
+    exercised for real over the Unix socket; only zuluCrypt is faked. The lease is
+    disarmed in tearDown because it is process-global module state — a test that
+    left it armed would leak into the next one."""
+
+    def setUp(self):
+        app.testing = True
+        self.client = app.test_client()
+        self.tmp = tempfile.mkdtemp()
+
+        self.mount_dir = os.path.join(self.tmp, "mnt")
+        self.images_dir = os.path.join(self.tmp, "output")
+        os.makedirs(self.mount_dir)
+        os.makedirs(self.images_dir)
+
+        self.sock_path = os.path.join(self.tmp, "agent.sock")
+        self.agent = FakeAgent(self.sock_path, mount_dir=self.mount_dir)
+        self.agent.start()
+
+        from pathlib import Path
+        self._orig = {
+            "ARCHIVE_VOLUME": app_module.ARCHIVE_VOLUME,
+            "SECRET_KEY": app_module.SECRET_KEY,
+            "ARCHIVE_AGENT_SOCKET": app_module.ARCHIVE_AGENT_SOCKET,
+            "ARCHIVE_MOUNT_DIR": app_module.ARCHIVE_MOUNT_DIR,
+            "IMAGES_DIR": app_module.IMAGES_DIR,
+        }
+        self._orig_image_store_images_dir = image_store_module.IMAGES_DIR
+        app_module.ARCHIVE_VOLUME = "/host/archive.img"
+        app_module.SECRET_KEY = "s3cret"
+        app_module.ARCHIVE_AGENT_SOCKET = self.sock_path
+        app_module.ARCHIVE_MOUNT_DIR = Path(self.mount_dir)
+        app_module.IMAGES_DIR = Path(self.images_dir)
+        image_store_module.IMAGES_DIR = Path(self.images_dir)
+
+    def tearDown(self):
+        for k, v in self._orig.items():
+            setattr(app_module, k, v)
+        image_store_module.IMAGES_DIR = self._orig_image_store_images_dir
+        archive_browse.note_closed()
+        self.agent.stop()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _auth(self):
+        with self.client.session_transaction() as sess:
+            sess["authenticated"] = True
+
+    def _stage(self, rel, data=b"\x89PNG"):
+        """Create a file at `rel` under the fake mounted volume."""
+        path = os.path.join(self.mount_dir, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    # -- the two house-convention cases -------------------------------------
+
+    def test_requires_auth(self):
+        resp = self.client.get("/api/archive-browse")
+        self.assertEqual(resp.status_code, 302)
+
+    def test_not_configured(self):
+        self._auth()
+        app_module.ARCHIVE_VOLUME = ""
+        resp = self.client.get("/api/archive-browse")
+        self.assertEqual(resp.status_code, 503)
+
+    # -- listing -------------------------------------------------------------
+
+    def test_lists_root_and_mounts(self):
+        self._auth()
+        self._stage("staging/beach/beach001.png")
+        resp = self.client.get("/api/archive-browse")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["path"], "")
+        self.assertIsNone(data["parent"])
+        self.assertEqual([d["name"] for d in data["dirs"]], ["staging"])
+        # The volume was mounted for the browse and deliberately NOT unmounted:
+        # the lease holds it open for the requests that follow.
+        self.assertEqual([r["action"] for r in self.agent.requests],
+                         ["status", "mount"])
+        self.assertTrue(archive_browse.is_open())
+
+    def test_lists_nested_folder(self):
+        self._auth()
+        self._stage("staging/beach/beach001.png")
+        self._stage("staging/beach/beach002.mp4")
+        self._stage("staging/beach/notes.txt")
+        resp = self.client.get("/api/archive-browse?path=staging/beach")
+        data = resp.get_json()
+        self.assertEqual(data["path"], "staging/beach")
+        self.assertEqual(data["parent"], "staging")
+        # Non-media (notes.txt) is not listed; the video is flagged as one.
+        self.assertEqual([f["name"] for f in data["files"]],
+                         ["beach001.png", "beach002.mp4"])
+        self.assertEqual([f["is_video"] for f in data["files"]], [False, True])
+        self.assertEqual(data["files"][0]["url"],
+                         "/archive-file/staging/beach/beach001.png")
+
+    def test_parent_is_root_one_level_down(self):
+        self._auth()
+        self._stage("staging/beach/beach001.png")
+        data = self.client.get("/api/archive-browse?path=staging").get_json()
+        self.assertEqual(data["parent"], "")
+
+    def test_folder_count_is_recursive(self):
+        self._auth()
+        self._stage("staging/beach/a.png")
+        self._stage("staging/beach/deeper/b.png")
+        data = self.client.get("/api/archive-browse?path=staging").get_json()
+        self.assertEqual(data["dirs"][0]["count"], 2)
+
+    def test_marker_and_lost_found_hidden(self):
+        self._auth()
+        self._stage("staging/beach/a.png")
+        os.makedirs(os.path.join(self.mount_dir, "lost+found"))
+        data = self.client.get("/api/archive-browse").get_json()
+        names = [d["name"] for d in data["dirs"]] + [f["name"] for f in data["files"]]
+        self.assertNotIn("lost+found", names)
+        self.assertNotIn(".comfy-archive", names)
+
+    # -- path containment ----------------------------------------------------
+
+    def test_traversal_rejected(self):
+        self._auth()
+        for bad in ("../etc", "staging/../../etc", "/etc/passwd", ".comfy-archive"):
+            resp = self.client.get("/api/archive-browse?path=" + bad)
+            self.assertIn(resp.status_code, (400, 404), bad)
+
+    def test_missing_folder_404(self):
+        self._auth()
+        resp = self.client.get("/api/archive-browse?path=nope")
+        self.assertEqual(resp.status_code, 404)
+
+    # -- safety guards -------------------------------------------------------
+
+    def test_refuses_without_marker(self):
+        # No marker => the encrypted volume did not propagate in, so anything we
+        # listed would be the container's own writable layer.
+        self._auth()
+        self.agent.skip_marker = True
+        resp = self.client.get("/api/archive-browse")
+        self.assertEqual(resp.status_code, 500)
+        self.assertIn("safety check", resp.get_json()["error"])
+
+    def test_refused_while_host_mounted(self):
+        self._auth()
+        self.agent.host_mounted = True
+        resp = self.client.get("/api/archive-browse")
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("m -u", resp.get_json()["error"])
+        # Guarded before any mount was attempted.
+        self.assertEqual([r["action"] for r in self.agent.requests], ["status"])
+
+    def test_never_creates_the_volume(self):
+        # Browsing must not self-provision a 20G volume the way archiving does.
+        self._auth()
+        self.client.get("/api/archive-browse")
+        mount = [r for r in self.agent.requests if r["action"] == "mount"][0]
+        self.assertNotIn("create", mount)
+
+    # -- slideshow media -----------------------------------------------------
+
+    def test_media_is_recursive_and_path_sorted(self):
+        self._auth()
+        self._stage("staging/beach/beach002.png")
+        self._stage("staging/beach/beach001.png")
+        self._stage("staging/beach/deeper/z.mp4")
+        self._stage("staging/alps/alps001.png")
+        urls = self.client.get("/api/archive-browse/media?path=staging").get_json()
+        self.assertEqual(urls, [
+            "/archive-file/staging/alps/alps001.png",
+            "/archive-file/staging/beach/beach001.png",
+            "/archive-file/staging/beach/beach002.png",
+            "/archive-file/staging/beach/deeper/z.mp4",
+        ])
+
+    def test_media_from_root_covers_everything(self):
+        self._auth()
+        self._stage("staging/beach/a.png")
+        urls = self.client.get("/api/archive-browse/media").get_json()
+        self.assertEqual(urls, ["/archive-file/staging/beach/a.png"])
+
+    # -- serving -------------------------------------------------------------
+
+    def test_serves_a_file(self):
+        self._auth()
+        self._stage("staging/beach/a.png", b"\x89PNGdata")
+        resp = self.client.get("/archive-file/staging/beach/a.png")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_data(), b"\x89PNGdata")
+        self.assertEqual(resp.headers["Cache-Control"], "no-store")
+
+    # -- delete --------------------------------------------------------------
+
+    def test_delete_removes_the_file(self):
+        self._auth()
+        path = self._stage("staging/beach/a.png")
+        resp = self.client.delete("/api/archive-browse?path=staging/beach/a.png")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(os.path.exists(path))
+
+    def test_delete_refuses_a_folder(self):
+        self._auth()
+        self._stage("staging/beach/a.png")
+        resp = self.client.delete("/api/archive-browse?path=staging/beach")
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(os.path.isdir(os.path.join(self.mount_dir, "staging/beach")))
+
+    def test_delete_refuses_the_root(self):
+        self._auth()
+        resp = self.client.delete("/api/archive-browse?path=")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_delete_missing_file_404(self):
+        self._auth()
+        self._stage("staging/beach/a.png")
+        resp = self.client.delete("/api/archive-browse?path=staging/beach/gone.png")
+        self.assertEqual(resp.status_code, 404)
+
+    # -- lease lifecycle -----------------------------------------------------
+
+    def test_close_unmounts_and_drops_the_lease(self):
+        self._auth()
+        self._stage("staging/beach/a.png")
+        self.client.get("/api/archive-browse")
+        self.assertTrue(archive_browse.is_open())
+        resp = self.client.post("/api/archive-browse/close")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.agent.requests[-1]["action"], "unmount")
+        self.assertFalse(archive_browse.is_open())
+
+    def test_second_request_skips_the_agent(self):
+        """The fast path. Every thumbnail and every slide comes through
+        _archive_browse_open(); re-mounting each time would mean two agent
+        round-trips per image, serialised on archive_lock."""
+        self._auth()
+        self._stage("staging/beach/a.png")
+        self.client.get("/api/archive-browse")
+        self.assertEqual([r["action"] for r in self.agent.requests],
+                         ["status", "mount"])
+        self.client.get("/archive-file/staging/beach/a.png")
+        self.client.get("/api/archive-browse?path=staging")
+        # Still just the one open handshake.
+        self.assertEqual([r["action"] for r in self.agent.requests],
+                         ["status", "mount"])
+
+    def test_remounts_if_the_volume_vanishes_underneath(self):
+        """The marker is what makes the fast path safe: something unmounting without
+        telling the lease must not leave us serving the container's own disk."""
+        self._auth()
+        self._stage("staging/beach/a.png")
+        self.client.get("/api/archive-browse")
+        os.unlink(os.path.join(self.mount_dir, ".comfy-archive"))
+        self.client.get("/api/archive-browse")
+        self.assertEqual([r["action"] for r in self.agent.requests],
+                         ["status", "mount", "status", "mount"])
+
+    def test_status_reports_without_mounting(self):
+        self._auth()
+        data = self.client.get("/api/archive-browse/status").get_json()
+        self.assertEqual(data["configured"], True)
+        self.assertFalse(data["open"])
+        self.assertNotIn("mount", [r["action"] for r in self.agent.requests])
+
+    def test_archiving_drops_the_browse_lease(self):
+        # An archive op unmounts the volume in its finally; the lease must not
+        # still believe it holds a mount afterwards.
+        self._auth()
+        with open(os.path.join(self.images_dir, "a.png"), "wb") as fh:
+            fh.write(b"\x89PNG")
+        self.client.get("/api/archive-browse")
+        self.assertTrue(archive_browse.is_open())
+        resp = self.client.post("/api/archive", json={"scope": "all"})
+        self.assertEqual(resp.get_json()["archived"], 1)
+        self.assertFalse(archive_browse.is_open())
 
 
 if __name__ == "__main__":

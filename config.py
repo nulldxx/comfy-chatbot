@@ -183,6 +183,16 @@ ARCHIVE_MOUNT_DIR = Path(os.environ.get('ARCHIVE_MOUNT_DIR', '/app/archive'))
 # sync with MARKER_NAME in packaging/agent/archive-agent.
 ARCHIVE_MARKER = '.comfy-archive'
 
+# /archive-explore browses the archive over many requests (a listing, every
+# thumbnail, every slide of a slideshow), so it holds the volume open on a lease
+# rather than mounting per request. This is how long the volume stays mounted after
+# the last browse request before archive_browse's watchdog closes it again — short
+# enough that a forgotten tab doesn't leave the archive decrypted all day, long
+# enough to sit and look at pictures. 0 disables the auto-close, leaving the volume
+# open until the Close button, an archive op or the idle lockdown shuts it.
+ARCHIVE_BROWSE_TIMEOUT_SECONDS = int(
+    os.environ.get('ARCHIVE_BROWSE_TIMEOUT_SECONDS', '600'))
+
 # Live-output encryption (opt-in). When OUTPUT_VOLUME is set, the container
 # entrypoint asks the host agent to create-if-missing + mount a LUKS volume at
 # IMAGES_DIR before serving, and to unmount it on stop — so generated images are

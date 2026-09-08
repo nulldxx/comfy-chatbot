@@ -16,6 +16,7 @@ from flask import (
     Flask, Response, jsonify, redirect, render_template,
     request, send_file, send_from_directory, session, url_for,
 )
+from werkzeug.security import safe_join
 from werkzeug.utils import secure_filename
 
 from agent_client import send as agent_send
@@ -29,8 +30,8 @@ from catalogue import (
 )
 from ComfyServer import ComfyServer
 from config import (
-    ARCHIVE_AGENT_SOCKET, ARCHIVE_MARKER, ARCHIVE_MOUNT_DIR,
-    ARCHIVE_SIZE, ARCHIVE_VOLUME,
+    ARCHIVE_AGENT_SOCKET, ARCHIVE_BROWSE_TIMEOUT_SECONDS, ARCHIVE_MARKER,
+    ARCHIVE_MOUNT_DIR, ARCHIVE_SIZE, ARCHIVE_VOLUME,
     BUILD_VERSION, COMFY_FACEDETAILER_DIR, COMFY_FACEDETAILER_WORKFLOW,
     COMFY_GENERATION_DIR, COMFY_IMAGE2IMAGE_DIR, COMFY_IMAGE2IMAGE_WORKFLOW,
     COMFY_IMAGE2VIDEO_DIR, COMFY_IMAGE2VIDEO_WORKFLOW,
@@ -67,6 +68,7 @@ from persistence import (
 import seed_store
 import auth_store
 import idle_lock
+import archive_browse
 import profanity
 from auth_store import save_password_hash, verify_password
 from crypto_key import derive_passphrase, effective_passphrase as _effective_passphrase
@@ -2447,11 +2449,13 @@ def _lock_down() -> bool:
                                            resp.get("error"))
             except RuntimeError as exc:
                 app.logger.warning("lockdown host-unmount failed: %s", exc)
-            # Belt and braces: close the archive if anything left it open.
+            # Belt and braces: close the archive if anything left it open — an
+            # /archive-explore lease is the one long-lived case besides the host bind.
             try:
                 _agent_request({"action": "unmount", "volume": ARCHIVE_VOLUME})
             except RuntimeError as exc:
                 app.logger.debug("lockdown archive unmount: %s", exc)
+            archive_browse.note_closed()
 
         if OUTPUT_VOLUME:
             if not output_mount_lock.acquire(blocking=False):
@@ -2648,6 +2652,10 @@ def api_archive():
                 _agent_request({"action": "unmount", "volume": ARCHIVE_VOLUME})
             except RuntimeError as exc:
                 app.logger.warning("archive agent unmount failed: %s", exc)
+            # Whatever happened, the volume is no longer ours to hold: drop any
+            # /archive-explore lease so its watchdog doesn't unmount a second time.
+            # The browser transparently re-mounts on its next request.
+            archive_browse.note_closed()
 
     return jsonify({"archived": len(files), "folder": folder})
 
@@ -2705,6 +2713,9 @@ def api_fscheck():
                                     "volume": ARCHIVE_VOLUME})
                 except RuntimeError:
                     pass
+                # An /archive-explore lease is exactly such a "stale" mount from
+                # e2fsck's point of view; we just closed it, so disarm it.
+                archive_browse.note_closed()
                 try:
                     result["archive"] = _agent_request({
                         "action": "fsck",
@@ -2747,6 +2758,9 @@ def api_host_mount():
             return jsonify({"error": str(exc)}), 502
         if not resp.get("ok"):
             return jsonify({"error": resp.get("error", "host-mount failed")}), 502
+        # The host now owns the one physical volume. Drop the browse lease so its
+        # watchdog can't later unmount the bind samba is serving from.
+        archive_browse.note_closed()
         return jsonify({"ok": True, "mountpoint": resp.get("mountpoint")})
     finally:
         archive_lock.release()
@@ -2791,6 +2805,299 @@ def api_host_status():
         "host_mounted": bool(resp.get("host_mounted")),
         "open": bool(resp.get("open")),
     })
+
+
+# ---------------------------------------------------------------------------
+# Archive browsing (/archive-explore)
+# ---------------------------------------------------------------------------
+#
+# Reading the archive is unlike every other archive operation: instead of one
+# mount-work-unmount cycle inside a single request, a browse session spans minutes
+# and many requests (a listing, each thumbnail, each slide of a slideshow). So the
+# volume is mounted on the first request and held on a lease that every subsequent
+# request renews; archive_browse's watchdog closes it once nobody has browsed for
+# ARCHIVE_BROWSE_TIMEOUT_SECONDS. See ADR/archive-explore.md.
+
+# Entries never shown or traversed by the browser. The marker is proof-of-mount, not
+# content, and lost+found belongs to the filesystem.
+_ARCHIVE_HIDDEN = {ARCHIVE_MARKER, "lost+found"}
+
+
+def _archive_browse_open():
+    """Mount the archive volume for browsing and renew the lease.
+
+    Returns None on success, or a Flask (body, status) tuple to return as-is.
+    Idempotent: the agent's _open_volume recovers when the volume is already open,
+    so a second call just re-establishes the bind — which is what makes every browse
+    endpoint able to call this unconditionally instead of needing an explicit open.
+
+    Deliberately does NOT pass ``create``. api_archive self-provisions the volume on
+    first archive because it is about to write to it; browsing must never conjure an
+    empty 20G volume just because someone typed /archive-explore."""
+    if not ARCHIVE_VOLUME:
+        return jsonify({"error": "Archiving is not configured on the server."}), 503
+
+    # Fast path: the lease is live and the mount is still visible here, so just renew
+    # it. This matters more than it looks — every thumbnail in a folder and every
+    # slide of a slideshow comes through here, and the slow path below costs two
+    # agent round-trips serialised on archive_lock. The marker is what makes the
+    # shortcut safe: if anything unmounted the volume without telling the lease, it
+    # disappears and we fall through and re-mount.
+    if archive_browse.is_open() and (ARCHIVE_MOUNT_DIR / ARCHIVE_MARKER).exists():
+        archive_browse.touch()
+        return None
+
+    with archive_lock:
+        # One physical volume: while the host holds it (via `m`), refuse exactly as
+        # archive and fsck do. Not merely for consistency — the lease's auto-close
+        # issues `unmount`, which would pop the bind samba is serving from.
+        if _host_mount_active():
+            return jsonify({"error": _HOST_MOUNT_BUSY}), 409
+        try:
+            resp = _agent_request({
+                "action": "mount",
+                "volume": ARCHIVE_VOLUME,
+                "password": effective_passphrase(),
+            })
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 502
+        if not resp.get("ok"):
+            return jsonify({"error": resp.get("error", "mount failed")}), 502
+
+        # Same safety contract as api_archive: without the marker we would be
+        # reading the container's own writable layer rather than the decrypted
+        # volume, and reporting an empty archive as though the files were gone.
+        if not (ARCHIVE_MOUNT_DIR / ARCHIVE_MARKER).exists():
+            return jsonify({"error": "archive volume not mounted "
+                                     "(safety check failed)"}), 500
+        archive_browse.touch()
+    return None
+
+
+def _archive_browse_close():
+    """Unmount the archive volume and drop the lease. Returns None or an error tuple."""
+    if not ARCHIVE_VOLUME:
+        return jsonify({"error": "Archiving is not configured on the server."}), 503
+    with archive_lock:
+        try:
+            _agent_request({"action": "unmount", "volume": ARCHIVE_VOLUME})
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 502
+        finally:
+            archive_browse.note_closed()
+    return None
+
+
+def _archive_path(rel):
+    """Resolve a client-supplied relative path inside the mounted archive.
+
+    Returns a Path, or None if the path escapes the volume or names a hidden entry.
+    safe_join does the traversal work (rejecting ``..`` and absolute paths); the
+    component scan on top of it keeps the proof-of-mount marker and lost+found out
+    of reach, so the browser can never list or delete them."""
+    rel = (rel or "").strip().strip("/")
+    if not rel:
+        return ARCHIVE_MOUNT_DIR
+    joined = safe_join(str(ARCHIVE_MOUNT_DIR), rel)
+    if joined is None:
+        return None
+    parts = Path(rel).parts
+    if any(p in _ARCHIVE_HIDDEN or p.startswith(".") for p in parts):
+        return None
+    return Path(joined)
+
+
+def _archive_url(path):
+    """The /archive-file/ URL for a path inside the archive."""
+    return "/archive-file/" + path.relative_to(ARCHIVE_MOUNT_DIR).as_posix()
+
+
+def _archive_visible(path):
+    """True if a directory entry should be shown by the browser."""
+    return path.name not in _ARCHIVE_HIDDEN and not path.name.startswith(".")
+
+
+def _archive_media(directory):
+    """Every media file at or below `directory`, sorted by relative path.
+
+    Sorted by path rather than mtime so subfolders stay grouped and the
+    <folder>001, <folder>002 … names api_archive assigns keep their order — the
+    order the user drag-sorted before archiving."""
+    found = []
+    for path in directory.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in MEDIA_EXTS:
+            continue
+        rel = path.relative_to(directory)
+        # Skip anything under (or named as) a hidden entry, so the marker and
+        # lost+found stay invisible however deep the walk goes.
+        if any(part in _ARCHIVE_HIDDEN or part.startswith(".") for part in rel.parts):
+            continue
+        found.append(path)
+    return sorted(found, key=lambda p: p.relative_to(directory).as_posix().lower())
+
+
+@app.route("/api/archive-browse", methods=["GET"])
+@login_required
+def api_archive_browse():
+    """List one level of the archive: its subfolders and its media files."""
+    err = _archive_browse_open()
+    if err:
+        return err
+
+    directory = _archive_path(request.args.get("path"))
+    if directory is None:
+        return jsonify({"error": "Invalid path"}), 400
+    if not directory.is_dir():
+        return jsonify({"error": "No such folder"}), 404
+
+    rel = directory.relative_to(ARCHIVE_MOUNT_DIR).as_posix()
+    rel = "" if rel == "." else rel
+
+    dirs, files = [], []
+    for entry in directory.iterdir():
+        if not _archive_visible(entry):
+            continue
+        child = f"{rel}/{entry.name}" if rel else entry.name
+        if entry.is_dir():
+            # A folder's count is what's browsable below it, so an empty-looking
+            # folder of folders still reads as populated.
+            dirs.append({"name": entry.name, "path": child,
+                         "count": len(_archive_media(entry))})
+        elif entry.suffix.lower() in MEDIA_EXTS:
+            files.append({
+                "name": entry.name,
+                "path": child,
+                "url": _archive_url(entry),
+                "size": entry.stat().st_size,
+                "is_video": entry.suffix.lower() in VIDEO_EXTS,
+            })
+
+    # parent is None at the root (nothing to climb to) and "" one level down.
+    parent = None if not rel else (rel.rsplit("/", 1)[0] if "/" in rel else "")
+
+    return jsonify({
+        "path": rel,
+        "parent": parent,
+        "dirs": sorted(dirs, key=lambda d: d["name"].lower()),
+        "files": sorted(files, key=lambda f: f["name"].lower()),
+    })
+
+
+@app.route("/api/archive-browse/media", methods=["GET"])
+@login_required
+def api_archive_browse_media():
+    """Every media URL at or below a folder, for the slideshow.
+
+    A bare array of URL strings, the same shape /api/images returns — which is
+    exactly what createSlideshow() consumes."""
+    err = _archive_browse_open()
+    if err:
+        return err
+
+    directory = _archive_path(request.args.get("path"))
+    if directory is None:
+        return jsonify({"error": "Invalid path"}), 400
+    if not directory.is_dir():
+        return jsonify({"error": "No such folder"}), 404
+    return jsonify([_archive_url(p) for p in _archive_media(directory)])
+
+
+@app.route("/api/archive-browse", methods=["DELETE"])
+@login_required
+def api_archive_browse_delete():
+    """Delete one file from the archive. Files only — never a directory."""
+    err = _archive_browse_open()
+    if err:
+        return err
+
+    target = _archive_path(request.args.get("path"))
+    if target is None or target == ARCHIVE_MOUNT_DIR:
+        return jsonify({"error": "Invalid path"}), 400
+    if target.is_dir():
+        return jsonify({"error": "Refusing to delete a folder"}), 400
+    if not target.is_file():
+        return jsonify({"error": "No such file"}), 404
+    try:
+        target.unlink()
+    except OSError as exc:
+        return jsonify({"error": f"Delete failed: {exc}"}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/archive-browse/close", methods=["POST"])
+@login_required
+def api_archive_browse_close():
+    """Close the archive now rather than waiting for the lease to lapse. This is
+    what makes /fscheck (which needs an unmounted volume) usable again straight
+    after browsing."""
+    err = _archive_browse_close()
+    if err:
+        return err
+    return jsonify({"ok": True})
+
+
+@app.route("/api/archive-browse/status", methods=["GET"])
+@login_required
+def api_archive_browse_status():
+    """Report whether the archive is configured and currently held open for browsing.
+    Unlike the other browse endpoints this never mounts anything."""
+    return jsonify({
+        "configured": bool(ARCHIVE_VOLUME),
+        "open": archive_browse.is_open(),
+        "host_mounted": _host_mount_active(),
+    })
+
+
+@app.route("/archive-file/<path:rel>")
+@login_required
+def serve_archive_file(rel):
+    """Serve one file from the mounted archive.
+
+    Mirrors serve_image/serve_reference, but with a <path:> converter since the
+    archive is a tree (staging/<folder>/<file>) rather than a flat directory.
+    Renews the lease so a long slideshow doesn't have the volume unmounted under it.
+
+    Note: send_from_directory streams *after* this handler returns and releases
+    archive_lock, so an archive op or fsck starting mid-stream can unmount beneath an
+    in-flight video. In practice the busy filesystem makes that unmount fail (logged,
+    and self-healing on the next op) and the cost is at worst one truncated file —
+    cheaper than buffering whole videos in memory or holding the lock for a download."""
+    err = _archive_browse_open()
+    if err:
+        return err
+    if _archive_path(rel) is None:
+        return jsonify({"error": "Invalid path"}), 400
+    response = send_from_directory(str(ARCHIVE_MOUNT_DIR), rel)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _archive_browse_expired():
+    """The browse lease's watchdog callback: close the archive again.
+
+    Returns False (retried on the next tick) rather than blocking when an archive op
+    or fsck holds archive_lock — the same non-blocking contract _lock_down() uses, so
+    a lapsed lease can never stall a request that is already doing volume work."""
+    if not ARCHIVE_VOLUME:
+        return True
+    if not archive_lock.acquire(blocking=False):
+        app.logger.debug("archive browse auto-close deferred: archive busy")
+        return False
+    try:
+        _agent_request({"action": "unmount", "volume": ARCHIVE_VOLUME})
+    except RuntimeError as exc:
+        app.logger.warning("archive browse auto-close unmount failed: %s", exc)
+    finally:
+        archive_lock.release()
+    app.logger.info("archive idle for %ss — closed the encrypted archive volume",
+                    ARCHIVE_BROWSE_TIMEOUT_SECONDS)
+    return True
+
+
+# Wire the browse lease. As with idle_lock the watchdog thread is not started here —
+# gunicorn preloads the app, so it must be created post-fork; archive_browse.touch()
+# does that on the first browse request.
+archive_browse.configure(ARCHIVE_BROWSE_TIMEOUT_SECONDS, _archive_browse_expired)
 
 
 # ---------------------------------------------------------------------------

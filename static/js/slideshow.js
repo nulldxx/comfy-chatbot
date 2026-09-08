@@ -1,11 +1,15 @@
 import { state } from './state.js';
-import { scrollBottom } from './dom.js';
+import { scrollBottom, deleteImageFile } from './dom.js';
 import { openLightbox, enterFauxFs, exitFauxFs } from './lightbox.js';
 import { isVideoUrl } from './utils.js';
 
 const IMAGE_HOLD_MS = 3000;
 
-export function createSlideshow(bubble, images) {
+// `deleteMedia(url)` is how the 🗑 button removes the file behind the current
+// slide. It defaults to the gallery deleter, so every existing caller is
+// unchanged; /archive-explore passes deleteArchiveFile instead, which is the only
+// thing that stopped this reel working verbatim against archive URLs.
+export function createSlideshow(bubble, images, { deleteMedia = deleteImageFile } = {}) {
   let idx = 0;
   let timer = null;
   let paused = false;
@@ -143,12 +147,8 @@ export function createSlideshow(bubble, images) {
     if (deleting || !images.length) return;
     deleting = true;
     const url = images[idx];
-    const filename = url.split('/').pop();
-    fetch('/api/images/' + encodeURIComponent(filename), { method: 'DELETE' })
-      .then(r => r.json().then(data => {
-        if (!r.ok) throw new Error(data.error || 'Delete failed');
-        forget(url);
-      }))
+    deleteMedia(url)
+      .then(() => forget(url))
       .catch(err => {
         counter.textContent = '⚠ ' + err.message;
         clearTimeout(timer);

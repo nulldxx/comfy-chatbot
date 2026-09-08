@@ -7,6 +7,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/alias-create',                 desc: 'create or update a prompt text alias  (<from> <to>)',                                args: ' ' },
   { cmd: '/alias-list',                   desc: 'list all defined prompt text aliases',                                               args: ''  },
   { cmd: '/archive-all',                  desc: 'archive every image and video to the encrypted volume (optional folder name)',      args: ' ' },
+  { cmd: '/archive-explore',              desc: 'browse the encrypted archive; slideshow or delete what is in it',                 args: ''  },
   { cmd: '/archive-session',              desc: 'archive all images and videos from this session (optional folder name)',            args: ' ' },
   { cmd: '/archive-today',                desc: 'archive images and videos generated today (optional folder name)',                   args: ' ' },
   { cmd: '/clear',                        desc: 'clear visible chat (keeps settings, prompt history & session images)',               args: ''  },
