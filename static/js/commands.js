@@ -4,7 +4,7 @@ import {
   splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, BASE_VIDEO_STEPS,
-  activeAccelerator, videoOptsPayload,
+  activeAccelerator, videoOptsPayload, normalizeVideoMeta, videoPromptOpts,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles, referenceSlotCost } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
@@ -653,8 +653,9 @@ function showChatSummary() {
   // visible without opening the dialog.
   if (state.lastVideoMeta) {
     const m = state.lastVideoMeta;
-    const parts = [m.prompt, m.action, m.audio].map(v => `<code>${escapeHtml(v || '—')}</code>`);
-    rows.push({ label: 'Last video metadata', value: `prompt ${parts[0]} · action ${parts[1]} · audio ${parts[2]}` });
+    const vm = normalizeVideoMeta(m, m.prompt);
+    const parts = [m.prompt, vm.description, vm.soundscape, vm.music].map(v => `<code>${escapeHtml(v || '—')}</code>`);
+    rows.push({ label: 'Last video metadata', value: `prompt ${parts[0]} · description ${parts[1]} · soundscape ${parts[2]} · music ${parts[3]}` });
   }
 
   if (state.faceDetailReplacements.length) {
@@ -1964,13 +1965,13 @@ export function makeCommandHandler(deps) {
           } else {
             const orig = state.imagePrompts[img];
             const meta = state.imageVideoMeta[img];
-            if (!orig && !(meta && meta.action)) {
+            if (!orig && !normalizeVideoMeta(meta).description) {
               i2vAborted = true;
               addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/i2v-set-prompt &lt;prompt&gt;</code></span>');
               return;
             }
             const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
-            prompt = buildVideoPrompt(base, meta, state.currentVideoSettings.audio);
+            prompt = buildVideoPrompt(base, meta, videoPromptOpts(state, img));
           }
           addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
           return deps.runImage2Video(prompt, img);
@@ -2389,8 +2390,8 @@ export function makeCommandHandler(deps) {
         { sig: '/upscale [N]', desc: 'run an upscaler workflow over the last N generated images (default 1, no prompt needed)' },
         { sig: '/upscale-workflow [name]', desc: 'choose which upscaler workflow the <code>/upscale</code> command and ⬆ button use (no arg = picker)' },
         { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
-        { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also returns an action &amp; audio per shot; folded into the prompt (<code>&lt;prompt&gt;. &lt;action&gt;. Audio: &lt;audio&gt;</code>) when the image is turned into a video' },
-        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio to drop <code>Audio:</code> cues for workflows without sound &nbsp;·&nbsp; the five <em>Optimisations</em> boxes bypass the matching <code>[opt:&hellip;]</code> nodes in the video workflow (all on = fast, lower-quality preview) &nbsp;·&nbsp; ticking <em>Turbo 4-step LoRA</em> sets Steps to 4, unticking it returns them to the workflow default' },
+        { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also writes a MiniMax H3 video description &amp; soundscape per shot, plus one background score for the run; turning an image into a video assembles them into an H3 prompt (<code>integrated_multimodal_description</code> / <code>overall_soundscape</code> / <code>non_diegetic_music</code>), with the first-and-last-frame instruction when a 🎞️ end frame is set' },
+        { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio for a silent clip (<code>overall_soundscape</code> &amp; <code>non_diegetic_music</code> sent as N/A) &nbsp;·&nbsp; the five <em>Optimisations</em> boxes bypass the matching <code>[opt:&hellip;]</code> nodes in the video workflow (all on = fast, lower-quality preview) &nbsp;·&nbsp; ticking <em>Turbo 4-step LoRA</em> sets Steps to 4, unticking it returns them to the workflow default' },
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
         { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
         { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
@@ -3609,7 +3610,7 @@ export function makeCommandHandler(deps) {
         return box;
       };
 
-      mkCheckbox('audio', 'Audio <span style="color:#475569">— include <code>Audio:</code> cues in video prompts</span>');
+      mkCheckbox('audio', 'Audio <span style="color:#475569">— off asks for a silent clip (soundscape &amp; music sent as N/A)</span>');
 
       const stepsRow = document.createElement('div');
       stepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;margin-top:4px';

@@ -897,6 +897,13 @@ def case_preserving_replace(text, src, dst):
 # disconnects. A connected browser watches the same job over SSE and sees each
 # image arrive through an "image" event.
 
+# The fields of one /video-sequence shot (see grok.generate_video_prompt_sequence).
+# Everything but the still prompt is the image's videoMeta, from which the client
+# assembles the MiniMax H3 image2video prompt (buildVideoPrompt in utils.js).
+VIDEO_META_KEYS = ("description", "soundscape", "music")
+VIDEO_SHOT_KEYS = ("prompt",) + VIDEO_META_KEYS
+
+
 def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
     with jobs_lock:
         channel = jobs[job_id]["channel"]
@@ -922,13 +929,9 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
             )
             out = []
             for shot in shots:
-                item = {
-                    "prompt": shot.get("prompt", ""),
-                    "action": shot.get("action", ""),
-                    "audio": shot.get("audio", ""),
-                }
+                item = {key: shot.get(key, "") for key in VIDEO_SHOT_KEYS}
                 for src, dst in replacements:
-                    for key in ("prompt", "action", "audio"):
+                    for key in VIDEO_SHOT_KEYS:
                         item[key] = case_preserving_replace(item[key], src, dst)
                 out.append(item)
         else:
@@ -952,7 +955,7 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings):
 
             if video:
                 item_prompt = item.get("prompt", "")
-                video_meta = {"action": item.get("action", ""), "audio": item.get("audio", "")}
+                video_meta = {key: item.get(key, "") for key in VIDEO_META_KEYS}
             else:
                 item_prompt = item
                 video_meta = None

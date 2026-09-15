@@ -294,13 +294,13 @@ class RunSequenceRunTests(unittest.TestCase):
 
     def test_shot_event_carries_video_meta(self):
         job_id = self._make_job()
-        shots = [{"prompt": "a cat", "action": "leaps", "audio": "meow"}]
+        shots = [{"prompt": "a cat", "description": "leaps", "soundscape": "thud", "music": "N/A"}]
         with patch.object(gs, "generate_video_prompt_sequence", return_value=shots), \
              patch.object(gs, "_run_generation_core", return_value=["/images/a.png"]), \
              patch.object(gs, "append_session_image"):
             gs.run_sequence_run(job_id, "x", 1, [], video=True, gen_settings=self._settings())
         shot = [m for m in _drain(gs.jobs[job_id]["channel"]) if m["type"] == "shot"][0]
-        self.assertEqual(shot["videoMeta"], {"action": "leaps", "audio": "meow"})
+        self.assertEqual(shot["videoMeta"], {"description": "leaps", "soundscape": "thud", "music": "N/A"})
 
     def test_per_shot_failure_pauses_then_retry_succeeds(self):
         # A failed shot no longer auto-advances: it pauses awaiting a retry (or a
@@ -350,7 +350,8 @@ class RunSequenceRunTests(unittest.TestCase):
 
     def test_video_stores_video_meta(self):
         job_id = self._make_job()
-        shots = [{"prompt": "a cat", "action": "leaps", "audio": "meow"}]
+        shots = [{"prompt": "a cat", "description": "leaps", "soundscape": "thud", "music": "Piano."}]
+        expected = {"description": "leaps", "soundscape": "thud", "music": "Piano."}
         metas = []
 
         def fake_append(name, url, prompt, video_meta=None, settings=None):
@@ -360,9 +361,21 @@ class RunSequenceRunTests(unittest.TestCase):
              patch.object(gs, "_run_generation_core", return_value=["/images/a.png"]), \
              patch.object(gs, "append_session_image", side_effect=fake_append):
             gs.run_sequence_run(job_id, "x", 1, [], video=True, gen_settings=self._settings())
-        self.assertEqual(metas, [{"action": "leaps", "audio": "meow"}])
+        self.assertEqual(metas, [expected])
         img = [m for m in _drain(gs.jobs[job_id]["channel"]) if m["type"] == "image"][0]
-        self.assertEqual(img["videoMeta"], {"action": "leaps", "audio": "meow"})
+        self.assertEqual(img["videoMeta"], expected)
+
+    def test_video_replacements_reach_every_field(self):
+        job_id = self._make_job()
+        shots = [{"prompt": "a Cat", "description": "the cat leaps", "soundscape": "CAT paws", "music": "cat piano"}]
+        with patch.object(gs, "generate_video_prompt_sequence", return_value=shots), \
+             patch.object(gs, "_run_generation_core", return_value=["/images/a.png"]), \
+             patch.object(gs, "append_session_image"):
+            gs.run_sequence_run(job_id, "x", 1, [["cat", "dog"]], video=True, gen_settings=self._settings())
+        plan = [m for m in _drain(gs.jobs[job_id]["channel"]) if m["type"] == "prompts"][0]
+        self.assertEqual(plan["prompts"], [
+            {"prompt": "a Dog", "description": "the dog leaps", "soundscape": "DOG paws", "music": "dog piano"},
+        ])
 
     def test_recording_name_reread_each_iteration(self):
         # A mid-run rename (rename_and_retarget_session) must redirect later

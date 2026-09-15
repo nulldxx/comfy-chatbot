@@ -163,35 +163,100 @@ export function deriveFaceDetailPrompt(genPrompt) {
   return `${desc} ${loraTags.join(' ')}`;
 }
 
-// Folds an image's video metadata into its base (image) prompt to form the prompt
-// sent to an image2video workflow: "<base>. <action>. Audio: <audio>". Empty
-// parts are skipped; with no/empty meta it returns `base` unchanged, preserving
-// backward compatibility with /sequence and plain generations (which carry no
-// action/audio). `meta` is { action, audio } or null/undefined.
-//
-// `includeAudio` (default true) gates the "Audio: <audio>" segment. The Audio
-// checkbox in /video-settings sets it false for workflows that don't generate
-// audio (e.g. the Wan image2video template), so audio cues aren't fed to a model
-// that ignores them. action is always kept.
-export function buildVideoPrompt(base, meta, includeAudio = true) {
-  if (!meta) return base;
-  const action = (meta.action || '').trim();
-  const audio = (meta.audio || '').trim();
-  const parts = [base];
-  if (action) parts.push(action);
-  if (includeAudio && audio) parts.push('Audio: ' + audio);
-  return parts.filter(p => p && p.trim()).join('. ');
+// ---------------------------------------------------------------------------
+// MiniMax H3 image2video prompts (VIDEO_PROMPT_WRITING_GUIDE_base_en.md)
+// ---------------------------------------------------------------------------
+
+// Reads an image's video metadata in either shape. /video-sequence used to store the
+// Wan-era { action, audio }; it now stores the H3 fields { description, soundscape,
+// music }. Old sessions aren't rewritten — every reader goes through here instead. A
+// legacy action is prefixed with `base` (the still prompt), as the old
+// "<base>. <action>" format did, and legacy audio becomes the soundscape, dialogue and
+// all. Always returns { description, soundscape, music } as trimmed strings.
+export function normalizeVideoMeta(meta, base = '') {
+  const t = v => (typeof v === 'string' ? v.trim() : '');
+  if (!meta) return { description: '', soundscape: '', music: '' };
+  if ('description' in meta || 'soundscape' in meta || 'music' in meta) {
+    return { description: t(meta.description), soundscape: t(meta.soundscape), music: t(meta.music) };
+  }
+  const action = t(meta.action);
+  return {
+    description: action ? [t(base), action].filter(Boolean).join('. ') : '',
+    soundscape: t(meta.audio),
+    music: '',
+  };
 }
 
-// Builds the tooltip for an image's image2video button. Defaults to
-// "Image to video"; when the image carries video metadata (action/audio from
-// /video-sequence) it appends them: "Image to video: <action>, <audio>" (only
-// the parts present). `meta` is { action, audio } or null/undefined.
-export function i2vTooltip(meta) {
-  const base = 'Image to video';
-  if (!meta) return base;
-  const parts = [(meta.action || '').trim(), (meta.audio || '').trim()].filter(p => p);
-  return parts.length ? `${base}: ${parts.join(', ')}` : base;
+// The first line of the prompt tells H3 where the reference pictures sit on the clip's
+// timeline. I2VA pins the source still at 0s; FL2VA (an end frame designated with 🎞️)
+// also pins the end frame at the clip's duration, to exactly two decimals.
+export const I2VA_INSTRUCTION =
+  'For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.';
+
+export function fl2vaInstruction(duration) {
+  return 'How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the ' +
+    '0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the ' +
+    `${(Number(duration) || 0).toFixed(2)}-second mark of the target video.`;
+}
+
+// Appended to an FL2VA description. Grok writes each shot knowing only its first frame,
+// so without this the text never says the clip has to land on the end frame.
+export const FL2VA_LANDING =
+  'By the end of the shot, the scene settles into the pose, framing, and composition established by Picture 2.';
+
+// Assembles the image2video prompt:
+//
+//   <instruction>
+//
+//   integrated_multimodal_description: [Shot 1] <description>
+//
+//   overall_soundscape: <soundscape>
+//
+//   non_diegetic_music: <music | N/A>
+//
+// Always one shot — each clip starts from one still. `base` is the image's still
+// prompt, used as the description when the image has no video metadata (a plain
+// generation). Options: `audio` false writes both sound fields as N/A, the guide's
+// explicit-silence form; `lastFrame` switches to the FL2VA instruction, which needs
+// `duration` in seconds. An empty soundscape is omitted rather than sent as N/A, which
+// would ask for silence; empty music is N/A, as the guide specifies.
+export function buildVideoPrompt(base, meta, { audio = true, lastFrame = false, duration = 0 } = {}) {
+  const m = normalizeVideoMeta(meta, base);
+  let description = m.description || (base || '').trim();
+  if (lastFrame) description = [description, FL2VA_LANDING].filter(Boolean).join(' ');
+  const lines = [
+    lastFrame ? fl2vaInstruction(duration) : I2VA_INSTRUCTION,
+    `integrated_multimodal_description: [Shot 1] ${description}`,
+  ];
+  if (!audio) {
+    lines.push('overall_soundscape: N/A', 'non_diegetic_music: N/A');
+  } else {
+    if (m.soundscape) lines.push(`overall_soundscape: ${m.soundscape}`);
+    lines.push(`non_diegetic_music: ${m.music || 'N/A'}`);
+  }
+  return lines.join('\n\n');
+}
+
+// The buildVideoPrompt options for an i2v run of `image`. Takes `state` as an argument
+// because state.js imports this module. The end-frame test matches runImage2Video's, so
+// the prompt names Picture 2 exactly when the payload carries one.
+export function videoPromptOpts(state, image) {
+  const vs = state.currentVideoSettings || {};
+  return {
+    audio: vs.audio !== false,
+    lastFrame: !!(state.lastFrameUrl && state.lastFrameUrl !== image),
+    duration: vs.fps ? vs.frames / vs.fps : (vs.duration || 0),
+  };
+}
+
+// Builds the tooltip for an image's image2video button: "Image to video", plus the
+// start of the image's video description (or its soundscape) when it has one.
+export function i2vTooltip(meta, max = 160) {
+  const label = 'Image to video';
+  const m = normalizeVideoMeta(meta);
+  const text = m.description || m.soundscape;
+  if (!text) return label;
+  return `${label}: ${text.length > max ? text.slice(0, max - 1).trimEnd() + '…' : text}`;
 }
 
 // ---------------------------------------------------------------------------

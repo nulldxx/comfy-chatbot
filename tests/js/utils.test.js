@@ -1,5 +1,6 @@
 import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement, deriveFaceDetailPrompt, isVideoUrl,
          fmtDuration, clampVideo, recomputeVideo, DEFAULT_VIDEO_SETTINGS, buildVideoPrompt, i2vTooltip, reorderList,
+         normalizeVideoMeta, videoPromptOpts, fl2vaInstruction, I2VA_INSTRUCTION, FL2VA_LANDING,
          formatFscheckResult, computeDiffBox, clampMenuPosition,
          videoOptsPayload, activeAccelerator, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
          splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
@@ -555,89 +556,141 @@ describe('recomputeVideo', () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildVideoPrompt
+// MiniMax H3 video prompts
 // ---------------------------------------------------------------------------
 
+describe('normalizeVideoMeta', () => {
+  test('null or undefined meta gives empty fields', () => {
+    const empty = { description: '', soundscape: '', music: '' };
+    expect(normalizeVideoMeta(null)).toEqual(empty);
+    expect(normalizeVideoMeta(undefined, 'a cat')).toEqual(empty);
+  });
+
+  test('trims the H3 fields and ignores base', () => {
+    expect(normalizeVideoMeta({ description: ' leaps ', soundscape: ' thud ', music: ' piano ' }, 'a cat'))
+      .toEqual({ description: 'leaps', soundscape: 'thud', music: 'piano' });
+  });
+
+  test('a partial H3 meta is not mistaken for legacy', () => {
+    expect(normalizeVideoMeta({ soundscape: 'thud' }, 'a cat'))
+      .toEqual({ description: '', soundscape: 'thud', music: '' });
+  });
+
+  test('legacy action is prefixed with the still prompt; audio becomes the soundscape', () => {
+    expect(normalizeVideoMeta({ action: ' it leaps down ', audio: ' a meow ' }, 'a cat on a wall'))
+      .toEqual({ description: 'a cat on a wall. it leaps down', soundscape: 'a meow', music: '' });
+  });
+
+  test('legacy audio alone leaves the description empty', () => {
+    expect(normalizeVideoMeta({ action: '', audio: 'a meow' }, 'a cat').description).toBe('');
+  });
+
+  test('non-string fields read as empty', () => {
+    expect(normalizeVideoMeta({ description: 5, soundscape: null }))
+      .toEqual({ description: '', soundscape: '', music: '' });
+  });
+});
+
 describe('buildVideoPrompt', () => {
-  test('returns base unchanged when meta is null (backward compatible)', () => {
-    expect(buildVideoPrompt('a cat on a wall', null)).toBe('a cat on a wall');
+  const meta = { description: 'Live-action, cinematic, a cat leaps.', soundscape: 'Paws thud on stone.', music: 'Soft piano.' };
+
+  test('uses the guide\'s exact I2VA instruction', () => {
+    expect(I2VA_INSTRUCTION)
+      .toBe('For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.');
   });
 
-  test('returns base unchanged when meta is undefined', () => {
-    expect(buildVideoPrompt('a cat on a wall', undefined)).toBe('a cat on a wall');
+  test('assembles the I2VA layout', () => {
+    expect(buildVideoPrompt('a cat on a wall', meta)).toBe(
+      `${I2VA_INSTRUCTION}\n\n` +
+      'integrated_multimodal_description: [Shot 1] Live-action, cinematic, a cat leaps.\n\n' +
+      'overall_soundscape: Paws thud on stone.\n\n' +
+      'non_diegetic_music: Soft piano.');
   });
 
-  test('returns base unchanged when meta has empty fields', () => {
-    expect(buildVideoPrompt('a cat', { action: '', audio: '' })).toBe('a cat');
+  test('switches to the FL2VA instruction and landing sentence with an end frame', () => {
+    const parts = buildVideoPrompt('a cat', meta, { lastFrame: true, duration: 5 }).split('\n\n');
+    expect(parts[0]).toBe(
+      'How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the ' +
+      '0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 5.00-second mark of the target video.');
+    expect(parts[1]).toBe(`integrated_multimodal_description: [Shot 1] Live-action, cinematic, a cat leaps. ${FL2VA_LANDING}`);
   });
 
-  test('folds in action and audio in the documented format', () => {
-    expect(buildVideoPrompt('a cat on a wall', { action: 'it leaps down', audio: 'a meow' }))
-      .toBe('a cat on a wall. it leaps down. Audio: a meow');
+  test('formats the FL2VA duration to two decimals', () => {
+    expect(fl2vaInstruction(125 / 24)).toContain('5.21-second mark');
+    expect(fl2vaInstruction(undefined)).toContain('Picture 2 (from Shot 1) aligns with the 0.00-second mark');
   });
 
-  test('includes action only when audio is missing', () => {
-    expect(buildVideoPrompt('a cat', { action: 'it leaps down', audio: '' }))
-      .toBe('a cat. it leaps down');
+  test('audio off sends both sound fields as N/A', () => {
+    const parts = buildVideoPrompt('a cat', meta, { audio: false }).split('\n\n');
+    expect(parts.slice(2)).toEqual(['overall_soundscape: N/A', 'non_diegetic_music: N/A']);
   });
 
-  test('includes audio only when action is missing', () => {
-    expect(buildVideoPrompt('a cat', { action: '', audio: 'a meow' }))
-      .toBe('a cat. Audio: a meow');
+  test('omits an empty soundscape and sends empty music as N/A', () => {
+    const parts = buildVideoPrompt('a cat', { description: 'leaps', soundscape: '', music: '' }).split('\n\n');
+    expect(parts).toEqual([I2VA_INSTRUCTION, 'integrated_multimodal_description: [Shot 1] leaps', 'non_diegetic_music: N/A']);
   });
 
-  test('trims whitespace around fields', () => {
-    expect(buildVideoPrompt('a cat', { action: '  it leaps  ', audio: '  a meow ' }))
-      .toBe('a cat. it leaps. Audio: a meow');
+  test('uses the still prompt as the description when there is no meta', () => {
+    expect(buildVideoPrompt('  a cat on a wall ', null)).toBe(
+      `${I2VA_INSTRUCTION}\n\nintegrated_multimodal_description: [Shot 1] a cat on a wall\n\nnon_diegetic_music: N/A`);
   });
 
-  test('drops the Audio segment when includeAudio is false', () => {
-    expect(buildVideoPrompt('a cat on a wall', { action: 'it leaps down', audio: 'a meow' }, false))
-      .toBe('a cat on a wall. it leaps down');
+  test('migrates a legacy { action, audio } meta', () => {
+    expect(buildVideoPrompt('a cat', { action: 'it leaps down', audio: 'a meow' })).toBe(
+      `${I2VA_INSTRUCTION}\n\n` +
+      'integrated_multimodal_description: [Shot 1] a cat. it leaps down\n\n' +
+      'overall_soundscape: a meow\n\n' +
+      'non_diegetic_music: N/A');
+  });
+});
+
+describe('videoPromptOpts', () => {
+  const vs = { ...DEFAULT_VIDEO_SETTINGS, frames: 125, fps: 25, audio: true };
+
+  test('no end frame designated', () => {
+    expect(videoPromptOpts({ currentVideoSettings: vs, lastFrameUrl: null }, '/images/a.png'))
+      .toEqual({ audio: true, lastFrame: false, duration: 5 });
   });
 
-  test('keeps action when audio is suppressed and base has no action', () => {
-    expect(buildVideoPrompt('a cat', { action: '', audio: 'a meow' }, false))
-      .toBe('a cat');
+  test('an end frame on another image switches to FL2VA', () => {
+    expect(videoPromptOpts({ currentVideoSettings: vs, lastFrameUrl: '/images/b.png' }, '/images/a.png').lastFrame)
+      .toBe(true);
   });
 
-  test('includes audio when includeAudio defaults to true', () => {
-    expect(buildVideoPrompt('a cat', { action: '', audio: 'a meow' }))
-      .toBe('a cat. Audio: a meow');
+  test('an end frame equal to the source image is ignored, as runImage2Video does', () => {
+    expect(videoPromptOpts({ currentVideoSettings: vs, lastFrameUrl: '/images/a.png' }, '/images/a.png').lastFrame)
+      .toBe(false);
+  });
+
+  test('audio reads the checkbox, absent meaning on', () => {
+    expect(videoPromptOpts({ currentVideoSettings: { ...vs, audio: false } }, 'x').audio).toBe(false);
+    const { audio: _omit, ...noAudio } = vs;
+    expect(videoPromptOpts({ currentVideoSettings: noAudio }, 'x').audio).toBe(true);
   });
 });
 
 describe('i2vTooltip', () => {
-  test('returns the plain label when meta is null', () => {
+  test('returns the plain label with no meta or empty fields', () => {
     expect(i2vTooltip(null)).toBe('Image to video');
-  });
-
-  test('returns the plain label when meta is undefined', () => {
     expect(i2vTooltip(undefined)).toBe('Image to video');
+    expect(i2vTooltip({ description: '', soundscape: '', music: 'Piano.' })).toBe('Image to video');
   });
 
-  test('returns the plain label when meta has empty fields', () => {
-    expect(i2vTooltip({ action: '', audio: '' })).toBe('Image to video');
+  test('appends the description', () => {
+    expect(i2vTooltip({ description: ' it leaps down ', soundscape: 'thud' })).toBe('Image to video: it leaps down');
   });
 
-  test('appends action and audio when both present', () => {
-    expect(i2vTooltip({ action: 'it leaps down', audio: 'a meow' }))
-      .toBe('Image to video: it leaps down, a meow');
+  test('falls back to the soundscape', () => {
+    expect(i2vTooltip({ description: '', soundscape: 'a meow' })).toBe('Image to video: a meow');
   });
 
-  test('appends action only when audio is missing', () => {
-    expect(i2vTooltip({ action: 'it leaps down', audio: '' }))
-      .toBe('Image to video: it leaps down');
+  test('reads a legacy action', () => {
+    expect(i2vTooltip({ action: 'it leaps down', audio: 'a meow' })).toBe('Image to video: it leaps down');
   });
 
-  test('appends audio only when action is missing', () => {
-    expect(i2vTooltip({ action: '', audio: 'a meow' }))
-      .toBe('Image to video: a meow');
-  });
-
-  test('trims whitespace around fields', () => {
-    expect(i2vTooltip({ action: '  it leaps  ', audio: '  a meow ' }))
-      .toBe('Image to video: it leaps, a meow');
+  test('truncates a long description', () => {
+    const out = i2vTooltip({ description: 'x'.repeat(300) }, 20);
+    expect(out).toBe(`Image to video: ${'x'.repeat(19)}…`);
   });
 });
 

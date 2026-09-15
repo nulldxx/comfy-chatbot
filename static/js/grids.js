@@ -1,6 +1,6 @@
 import {
   escapeHtml, isVideoUrl, applyReplacements, deriveFaceDetailPrompt,
-  buildVideoPrompt, i2vTooltip, reorderList,
+  buildVideoPrompt, i2vTooltip, reorderList, normalizeVideoMeta, videoPromptOpts,
 } from './utils.js';
 import { state } from './state.js';
 import { messagesEl, sendBtn, addMessage, scrollBottom, createMediaElement, deleteImageFile, removeImageFromChat, clearBubble } from './dom.js';
@@ -22,6 +22,9 @@ export function renderSequenceReview(bubble, seq, { runGeneration }) {
     const row = document.createElement('div');
     row.className = 'seq-review-row';
 
+    // A sequence restored from an older session still carries { action, audio }.
+    const videoMeta = seq.video ? normalizeVideoMeta(item, item.prompt) : null;
+
     const play = document.createElement('button');
     play.className = 'seq-review-play';
     play.title = 'Generate an image from this prompt';
@@ -29,9 +32,7 @@ export function renderSequenceReview(bubble, seq, { runGeneration }) {
     play.addEventListener('click', () => {
       if (play.disabled || sendBtn.disabled) return;
       play.disabled = true;
-      const opts = seq.video
-        ? { videoMeta: { action: item.action || '', audio: item.audio || '' } }
-        : {};
+      const opts = videoMeta ? { videoMeta: { ...videoMeta } } : {};
       addMessage('user', escapeHtml(item.prompt), item.prompt);
       runGeneration(item.prompt, '', null, opts).finally(() => { play.disabled = false; });
     });
@@ -44,19 +45,15 @@ export function renderSequenceReview(bubble, seq, { runGeneration }) {
     promptEl.textContent = `${idx + 1}. ${item.prompt}`;
     body.appendChild(promptEl);
 
-    if (seq.video && item.action) {
-      const a = document.createElement('div');
-      a.className = 'seq-review-meta';
-      a.innerHTML = `<span class="seq-review-label">Action:</span> `;
-      a.appendChild(document.createTextNode(item.action));
-      body.appendChild(a);
-    }
-    if (seq.video && item.audio) {
-      const a = document.createElement('div');
-      a.className = 'seq-review-meta';
-      a.innerHTML = `<span class="seq-review-label">Audio:</span> `;
-      a.appendChild(document.createTextNode(item.audio));
-      body.appendChild(a);
+    if (videoMeta) {
+      for (const [label, key] of [['Description', 'description'], ['Soundscape', 'soundscape'], ['Music', 'music']]) {
+        if (!videoMeta[key]) continue;
+        const a = document.createElement('div');
+        a.className = 'seq-review-meta';
+        a.innerHTML = `<span class="seq-review-label">${label}:</span> `;
+        a.appendChild(document.createTextNode(videoMeta[key]));
+        body.appendChild(a);
+      }
     }
 
     row.appendChild(play);
@@ -318,12 +315,12 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
       } else {
         const orig = state.imagePrompts[url];
         const meta = state.imageVideoMeta[url];
-        if (!orig && !(meta && meta.action)) {
+        if (!orig && !normalizeVideoMeta(meta).description) {
           addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
           return;
         }
         const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
-        prompt = buildVideoPrompt(base, meta, state.currentVideoSettings.audio);
+        prompt = buildVideoPrompt(base, meta, videoPromptOpts(state, url));
       }
       ri2v.disabled = true;
       addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);

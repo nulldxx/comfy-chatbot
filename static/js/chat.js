@@ -1,7 +1,7 @@
 import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
-  buildVideoPrompt, i2vTooltip, COMFY_URL_DND_TYPE, videoOptsPayload,
+  buildVideoPrompt, i2vTooltip, normalizeVideoMeta, videoPromptOpts, COMFY_URL_DND_TYPE, videoOptsPayload,
   progressPercent, progressCaption,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
@@ -479,7 +479,9 @@ function extractLastFrame(url) {
 // ---------------------------------------------------------------------------
 
 function openVideoMetaEditor(url, wrap) {
-  const meta = state.imageVideoMeta[url] || {};
+  // Normalised, so an image carrying the Wan-era { action, audio } opens with those
+  // folded into the H3 fields and is saved back in the new shape.
+  const meta = normalizeVideoMeta(state.imageVideoMeta[url], state.imagePrompts[url]);
 
   const box = document.createElement('div');
   box.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
@@ -489,7 +491,7 @@ function openVideoMetaEditor(url, wrap) {
     row.style.cssText = `display:flex;${multiline ? 'align-items:flex-start' : 'align-items:center'};gap:8px;font-size:0.85rem;color:#cbd5e1`;
     const lbl = document.createElement('span');
     lbl.textContent = label + ':';
-    lbl.style.cssText = `min-width:64px;color:#94a3b8${multiline ? ';padding-top:4px' : ''}`;
+    lbl.style.cssText = `min-width:84px;color:#94a3b8${multiline ? ';padding-top:4px' : ''}`;
     const input = document.createElement(multiline ? 'textarea' : 'input');
     if (!multiline) input.type = 'text';
     input.value = value || '';
@@ -501,8 +503,9 @@ function openVideoMetaEditor(url, wrap) {
   };
 
   const promptInput = mkRow('Prompt', state.imagePrompts[url], 'image generation prompt', true);
-  const actionInput = mkRow('Action', meta.action, 'what happens in the video');
-  const audioInput  = mkRow('Audio',  meta.audio,  'sounds / dialogue');
+  const descriptionInput = mkRow('Description', meta.description, 'style, first frame, camera move, action — speech as (S1) says: <d>[English] …</d>', true);
+  const soundscapeInput  = mkRow('Soundscape',  meta.soundscape,  'ambient & physical sound (no dialogue or music)', true);
+  const musicInput       = mkRow('Music',       meta.music,       'background score, or N/A');
 
   const refreshTooltip = () => {
     const i2v = wrap && wrap.querySelector('.img-i2v');
@@ -511,17 +514,18 @@ function openVideoMetaEditor(url, wrap) {
 
   // Write the edited values back onto the image's state. Shared by Apply and Start.
   const commitMeta = () => {
-    const prompt = promptInput.value.trim();
-    const action = actionInput.value.trim();
-    const audio  = audioInput.value.trim();
+    const prompt      = promptInput.value.trim();
+    const description = descriptionInput.value.trim();
+    const soundscape  = soundscapeInput.value.trim();
+    const music       = musicInput.value.trim();
     if (prompt) state.imagePrompts[url] = prompt; else delete state.imagePrompts[url];
-    if (action || audio) {
-      state.imageVideoMeta[url] = { action, audio };
+    if (description || soundscape || music) {
+      state.imageVideoMeta[url] = { description, soundscape, music };
     } else {
       delete state.imageVideoMeta[url];
     }
     refreshTooltip();
-    return { prompt, action, audio };
+    return { prompt, description, soundscape, music };
   };
 
   // Clone — refill the three fields from the last video that was actually generated
@@ -536,9 +540,11 @@ function openVideoMetaEditor(url, wrap) {
     cloneBtn.title = 'Clone the last metadata used for a video';
     cloneBtn.addEventListener('click', () => {
       const last = state.lastVideoMeta || {};
-      promptInput.value = last.prompt || '';
-      actionInput.value = last.action || '';
-      audioInput.value  = last.audio  || '';
+      const lastMeta = normalizeVideoMeta(last, last.prompt);
+      promptInput.value      = last.prompt || '';
+      descriptionInput.value = lastMeta.description;
+      soundscapeInput.value  = lastMeta.soundscape;
+      musicInput.value       = lastMeta.music;
       promptInput.focus();
     });
   } else {
@@ -564,8 +570,9 @@ function openVideoMetaEditor(url, wrap) {
   clearBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
 
   applyBtn.addEventListener('click', () => {
-    const { prompt, action, audio } = commitMeta();
-    addMessage('bot', `Metadata set — Prompt <strong style="color:#a78bfa">${escapeHtml(prompt || '—')}</strong> · Action <strong style="color:#a78bfa">${escapeHtml(action || '—')}</strong> · Audio <strong style="color:#a78bfa">${escapeHtml(audio || '—')}</strong>.`);
+    const { prompt, description, soundscape, music } = commitMeta();
+    const shown = v => `<strong style="color:#a78bfa">${escapeHtml(v || '—')}</strong>`;
+    addMessage('bot', `Metadata set — Prompt ${shown(prompt)} · Description ${shown(description)} · Soundscape ${shown(soundscape)} · Music ${shown(music)}.`);
     scrollBottom();
   });
   startBtn.addEventListener('click', () => {
@@ -840,12 +847,12 @@ function startImage2VideoFor(url, btn) {
   } else {
     const orig = state.imagePrompts[url];
     const meta = state.imageVideoMeta[url];
-    if (!orig && !(meta && meta.action)) {
+    if (!orig && !normalizeVideoMeta(meta).description) {
       addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
       return null;
     }
     const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
-    prompt = buildVideoPrompt(base, meta, state.currentVideoSettings.audio);
+    prompt = buildVideoPrompt(base, meta, videoPromptOpts(state, url));
   }
   if (btn) btn.disabled = true;
   addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
@@ -858,15 +865,11 @@ function runImage2Video(prompt, image) {
   // Every i2v launch funnels through here (the 🎬 overlay and Start buttons, the review
   // grid's 🎬, the /i2v command), so this is the one place that needs to record it. The
   // stored fields go in raw, not buildVideoPrompt's assembled output — cloning that back
-  // into the dialog would double up the Action:/Audio: segments on the next run.
-  const srcMeta = state.imageVideoMeta[image] || {};
+  // into the dialog would nest one instruction line and field set inside another.
   const srcPrompt = state.imagePrompts[image] || '';
-  if (srcPrompt || srcMeta.action || srcMeta.audio) {
-    state.lastVideoMeta = {
-      prompt: srcPrompt,
-      action: srcMeta.action || '',
-      audio: srcMeta.audio || '',
-    };
+  const srcMeta = normalizeVideoMeta(state.imageVideoMeta[image], srcPrompt);
+  if (srcPrompt || srcMeta.description || srcMeta.soundscape || srcMeta.music) {
+    state.lastVideoMeta = { prompt: srcPrompt, ...srcMeta };
   }
   sendBtn.disabled = true;
   const lastFrame = (state.lastFrameUrl && state.lastFrameUrl !== image) ? state.lastFrameUrl : null;
@@ -1794,8 +1797,8 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (msg.type === 'prompts') {
       const items = msg.prompts || [];
       state.lastSequence = msg.video
-        ? { video: true,  items: items.map(s => ({ prompt: s.prompt || '', action: s.action || '', audio: s.audio || '' })) }
-        : { video: false, items: items.map(p => ({ prompt: p, action: '', audio: '' })) };
+        ? { video: true,  items: items.map(s => ({ prompt: s.prompt || '', ...normalizeVideoMeta(s, s.prompt) })) }
+        : { video: false, items: items.map(p => ({ prompt: p, ...normalizeVideoMeta(null) })) };
       if (statusText) statusText.textContent = `Grok returned ${items.length} ${msg.video ? 'shot' : 'prompt'}(s) — generating one after another…`;
       scrollBottom();
       return;
