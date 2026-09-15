@@ -645,6 +645,10 @@ function showChatSummary() {
     rows.push({ label: 'Auto face-detail', value: '<span style="color:#4ade80">on</span>' });
   }
 
+  if (state.autoVideoSequence) {
+    rows.push({ label: 'Auto video-sequence', value: '<span style="color:#4ade80">on</span> <span style="color:#475569">— every /video-sequence shot becomes a video</span>' });
+  }
+
   if (state.lastFaceDetailPrompt) {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(state.lastFaceDetailPrompt)}</code>` });
   }
@@ -1126,6 +1130,7 @@ export function makeCommandHandler(deps) {
     state.faceDetailReplacements = [];
     state.faceSuperN = 1;
     state.autoFaceDetail = false;
+    state.autoVideoSequence = false;
     // Recording is always on: start the new chat recording into a fresh
     // temporary name rather than continuing to append to the previous one.
     // Detach (without cancelling) any sequence run this tab was watching —
@@ -1611,6 +1616,21 @@ export function makeCommandHandler(deps) {
         await deps.runSequenceRunJob(master, count, { video: true });
         sendBtn.disabled = false;
       })();
+    }
+
+    if (cmd === '/video-sequence-auto') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.autoVideoSequence = true;
+      addMessage('bot', 'Auto video-sequence enabled — each <code>/video-sequence</code> shot is now turned into a video as soon as its still is ready, using the current image2video workflow, <code>/video-settings</code> and <code>/references</code>' +
+        (state.autoFaceDetail ? ' (after the auto face-detail pass).' : '.'));
+      return;
+    }
+
+    if (cmd === '/video-sequence-auto-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.autoVideoSequence = false;
+      addMessage('bot', 'Auto video-sequence disabled.');
+      return;
     }
 
     if (cmd === '/sequence-review') {
@@ -2327,7 +2347,7 @@ export function makeCommandHandler(deps) {
         { sig: '/face-detail-prompt-reset', desc: 'clear that override so the face icons derive a prompt from each image again' },
         { sig: '/face-detail-replacement <from> <to>', desc: 'find→replace applied to every face-detail prompt (override or derived) before it is run (no args lists them)' },
         { sig: '/face-detail-replacement-reset', desc: 'clear all face-detail replacements' },
-        { sig: '/face-detail-auto', desc: 'automatically run a face-detail pass on every new generation (silently replaces the image; skips prompts with no <code>&lt;lora:…&gt;</code> tag and videos)' },
+        { sig: '/face-detail-auto', desc: 'automatically run a face-detail pass on every new generation, <code>/sequence</code> and <code>/video-sequence</code> shots included (silently replaces the image; skips prompts with no <code>&lt;lora:…&gt;</code> tag and videos)' },
         { sig: '/face-detail-auto-reset', desc: 'stop auto-running face-detail on new generations' },
         { sig: '/face-detail-session', desc: 'face-detail every image from this session, one after another' },
         { sig: '/face-detail-workflow [name]', desc: 'choose which face-detailer workflow the face icons use (no arg = picker)' },
@@ -2391,6 +2411,8 @@ export function makeCommandHandler(deps) {
         { sig: '/upscale-workflow [name]', desc: 'choose which upscaler workflow the <code>/upscale</code> command and ⬆ button use (no arg = picker)' },
         { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
         { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also writes a MiniMax H3 video description &amp; soundscape per shot, plus one background score for the run; turning an image into a video assembles them into an H3 prompt (<code>integrated_multimodal_description</code> / <code>overall_soundscape</code> / <code>non_diegetic_music</code>), with the first-and-last-frame instruction when a 🎞️ end frame is set' },
+        { sig: '/video-sequence-auto', desc: 'turn every <code>/video-sequence</code> shot into a video automatically as soon as its still is ready (after <code>/face-detail-auto</code>, if on); runs server-side, so it carries on if the browser closes' },
+        { sig: '/video-sequence-auto-reset', desc: 'stop auto-running image2video on <code>/video-sequence</code> shots' },
         { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio for a silent clip (<code>overall_soundscape</code> &amp; <code>non_diegetic_music</code> sent as N/A) &nbsp;·&nbsp; the five <em>Optimisations</em> boxes bypass the matching <code>[opt:&hellip;]</code> nodes in the video workflow (all on = fast, lower-quality preview) &nbsp;·&nbsp; ticking <em>Turbo 4-step LoRA</em> sets Steps to 4, unticking it returns them to the workflow default' },
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
         { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
@@ -3068,6 +3090,7 @@ export function makeCommandHandler(deps) {
         faceDetailReplacements:    state.faceDetailReplacements.slice(),
         faceSuperN:                state.faceSuperN,
         autoFaceDetail:            state.autoFaceDetail,
+        autoVideoSequence:         state.autoVideoSequence,
         lastFaceDetailPrompt:      state.lastFaceDetailPrompt,
         lastVideoMeta:             state.lastVideoMeta,
         lastInpaintingPrompt:      state.lastInpaintingPrompt,
@@ -3113,6 +3136,8 @@ export function makeCommandHandler(deps) {
       state.faceDetailReplacements      = s.faceDetailReplacements;
       if (s.faceSuperN !== undefined) state.faceSuperN = s.faceSuperN;
       state.autoFaceDetail              = s.autoFaceDetail;
+      // Guarded: snapshots pushed before /video-sequence-auto existed have no key.
+      if (s.autoVideoSequence !== undefined) state.autoVideoSequence = s.autoVideoSequence;
       state.lastFaceDetailPrompt        = s.lastFaceDetailPrompt;
       // Guarded: snapshots pushed before the Clone button existed have no key.
       if (s.lastVideoMeta !== undefined) state.lastVideoMeta = s.lastVideoMeta;

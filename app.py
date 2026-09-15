@@ -1650,10 +1650,7 @@ def _parse_sequence_request(data):
 
     # Replacements arrive as a list of [from, to] pairs applied to each prompt
     # after it comes back from Grok.
-    replacements = []
-    for pair in data.get("replacements") or []:
-        if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0]:
-            replacements.append((str(pair[0]), str(pair[1])))
+    replacements = _parse_replacement_pairs(data.get("replacements"))
 
     return master, count, replacements
 
@@ -1705,6 +1702,83 @@ def _parse_gen_settings(data):
     }, None
 
 
+def _parse_replacement_pairs(raw):
+    """[from, to] pairs from a request, dropping malformed ones and empty froms."""
+    return [
+        (str(pair[0]), str(pair[1]))
+        for pair in raw or []
+        if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0]
+    ]
+
+
+def _parse_sequence_auto(data, video):
+    """Validate a sequence run's optional per-shot follow-up passes.
+
+    ``autoFaceDetail`` (sent while /face-detail-auto is on) face-details each still in
+    place; ``autoVideo`` (sent while /video-sequence-auto is on) then image2videos it, and
+    is ignored unless this is a /video-sequence run. The prompts themselves are built
+    per shot on the job thread (prompt_builders), since Grok hasn't written them yet —
+    everything else is validated here, so a bad setting is a 400 before Grok is called.
+
+    Returns ({"face": {...}?, "video": {...}?}, None) or (None, error_response).
+    """
+    auto = {}
+
+    face = data.get("autoFaceDetail")
+    if isinstance(face, dict):
+        workflow_name, err = resolve_workflow(
+            face.get("workflow") or COMFY_FACEDETAILER_WORKFLOW,
+            list_facedetailer_workflows(), "face-detailer",
+        )
+        if err:
+            return None, err
+        denoise, err = _parse_denoise(face)
+        if err:
+            return None, err
+        auto["face"] = {
+            "workflow": workflow_name,
+            "workflow_dir": COMFY_FACEDETAILER_DIR,
+            "denoise": denoise,
+            "prompt": (face.get("prompt") or "").strip() or None,
+            "replacements": _parse_replacement_pairs(face.get("replacements")),
+        }
+
+    vid = data.get("autoVideo")
+    if video and isinstance(vid, dict):
+        workflow_name, err = resolve_workflow(
+            vid.get("workflow") or COMFY_IMAGE2VIDEO_WORKFLOW,
+            list_image2video_workflows(), "image2video",
+        )
+        if err:
+            return None, err
+        vs, err = _parse_video_settings(vid)
+        if err:
+            return None, err
+        assert vs is not None  # err is None here, so vs is populated
+        steps, err = _parse_steps(vid)
+        if err:
+            return None, err
+        disabled_opts, err = _parse_video_opts(vid)
+        if err:
+            return None, err
+        ref_kwargs, err = _resolve_references(vid)
+        if err:
+            return None, err
+        auto["video"] = {
+            "workflow": workflow_name,
+            "workflow_dir": COMFY_IMAGE2VIDEO_DIR,
+            **vs,
+            "steps": steps,
+            "disabled_optimizations": disabled_opts,
+            "references": ref_kwargs,
+            "audio": vid.get("audio") is not False,
+            "override_prompt": (vid.get("overridePrompt") or "").strip() or None,
+            "replacements": _parse_replacement_pairs(vid.get("replacements")),
+        }
+
+    return auto, None
+
+
 @app.route("/api/sequence-run", methods=["POST"])
 @login_required
 def api_sequence_run():
@@ -1736,8 +1810,13 @@ def api_sequence_run():
     if err:
         return err
 
+    # After the storage check: the auto-video references resolve to files under it.
+    auto, err = _parse_sequence_auto(data, video)
+    if err:
+        return err
+
     job_id = start_sequence_run_job(
-        master, count, replacements, video, recording_name, gen_settings
+        master, count, replacements, video, recording_name, gen_settings, auto=auto
     )
     return jsonify({"job_id": job_id})
 

@@ -622,6 +622,41 @@ Raw markdown for either is at the same path with `/raw/` in place of `/blob/`.
 - Any new reader of `imageVideoMeta`, `lastVideoMeta` or `lastSequence.items` must go
   through `normalizeVideoMeta`, or old sessions will show blank fields.
 
+### Auto passes in sequence runs (`/video-sequence-auto`, `/face-detail-auto`)
+
+`/video-sequence-auto` (`state.autoVideoSequence`) turns every `/video-sequence` shot into
+a video as soon as its still is ready; `/video-sequence-auto-reset` turns it off. See
+`ADR/video-sequence-auto.md`.
+
+- **Server-side, inside `run_sequence_run`** — not queued from the client's `image`
+  handler, which would die with the tab and write videos the session never records (the
+  client may not write a session during a live run). Each shot is up to three stages:
+  generate → **face-detail** (when the request has `autoFaceDetail`) → **image2video**
+  (when `video` and `autoVideo`). Face-detail takes precedence, so the video is made from
+  the detailed still.
+- **`/face-detail-auto` therefore now applies to `/sequence` and `/video-sequence` shots
+  too**; its client-side pass in `runGeneration` never saw sequence-run images. The server
+  version mirrors it: `lastFaceDetailPrompt` or a derived prompt, face replacements, skipped
+  with no `<lora:…>` tag, the still replaced (file + seed entry deleted). A cancel during
+  it records the undetailed still.
+- **Prompts are built on the job thread by `prompt_builders.py`**, line-for-line ports of
+  `deriveFaceDetailPrompt` / `buildVideoPrompt` / `normalizeVideoMeta` /
+  `applyReplacements` in `utils.js` — **change them together** (`tests/test_prompt_builders.py`
+  mirrors the JS cases). I2VA only: an auto run never uses the 🎞️ end frame.
+- **Settings are snapshotted at request time** — `runSequenceRunJob` sends face workflow +
+  denoise, the i2v workflow, `/video-settings`, optimisations, steps,
+  `referencesForRun(null)`, override prompt and replacements; `app._parse_sequence_auto`
+  validates them with the ordinary i2v/face-detail parsers (400 before Grok is called).
+  `autoVideo` is ignored for a plain `/sequence`.
+- **One retry loop per stage** (`run_stage`): a failed face-detail or video pauses on ⟳ and
+  re-runs only that stage. `shot_failed` and `failed` entries carry `stage`.
+- **Streaming/persistence**: the video stage sends `shot` with `stage: "image2video"`
+  (client opens an `Image2video:` bubble) then `image` with the video URL, carrying the
+  still's prompt/meta as a client-side i2v stores them; `append_session_image(message_prompt=…)`
+  persists the video prompt as the user line.
+- `state.autoVideoSequence` restores **default-off** (like `t2vMode`), is in the
+  `/settings-save` stack (guarded) and resets in `newChat`.
+
 ### Video optimisation toggles (`/video-settings`)
 
 The MiniMax H3 workflows carry eight speed-for-quality optimisations — **4-step turbo

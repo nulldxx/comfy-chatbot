@@ -205,6 +205,7 @@ export const state = {
   image2videoOverridePrompt:   null,
   faceDetailReplacements:      [],
   autoFaceDetail:              false,
+  autoVideoSequence:           false,   // /video-sequence-auto: image2video every shot
 
   // Session image tracking
   sessionImages:               [],

@@ -94,6 +94,8 @@ export const SLASH_COMMANDS = [
   { cmd: '/upscale-workflow',             desc: 'choose an upscaler workflow (no arg = picker)',                                      args: ' ' },
   { cmd: '/upscale-workflow-reset',       desc: 'reset the upscaler workflow to its default',                                         args: ''  },
   { cmd: '/video-sequence',               desc: 'like /sequence, plus MiniMax H3 video prompts per shot (Grok)',                    args: ' ' },
+  { cmd: '/video-sequence-auto',          desc: 'auto-run image2video on every /video-sequence shot (after face-detail)',             args: ''  },
+  { cmd: '/video-sequence-auto-reset',    desc: 'stop auto-running image2video on /video-sequence shots',                              args: ''  },
   { cmd: '/video-settings',               desc: 'set video duration, frames, fps, resolution & audio (lock one, the others follow)',  args: ''  },
   { cmd: '/workflows',                    desc: 'table of every workflow type & its current selection; click a row to switch',       args: ''  },
 ];

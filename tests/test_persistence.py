@@ -194,6 +194,12 @@ class TestSessions(unittest.TestCase):
         doc = json.loads((Path(self.tmp) / "sessions" / "run1.json").read_text())
         self.assertEqual(doc["imageVideoMeta"]["/images/a.png"], {"action": "runs", "audio": "meow"})
 
+    def test_append_message_prompt_replaces_only_the_user_line(self):
+        persistence.append_session_image("run1", "/images/a.mp4", "a cat", message_prompt="video prompt")
+        doc = json.loads((Path(self.tmp) / "sessions" / "run1.json").read_text())
+        self.assertEqual(doc["imagePrompts"]["/images/a.mp4"], "a cat")
+        self.assertEqual(doc["messages"][0], {"role": "user", "prompt": "video prompt"})
+
     def test_append_seeds_settings_once(self):
         persistence.append_session_image("run1", "/images/a.png", "a", settings={"workflow": "wf1"})
         persistence.append_session_image("run1", "/images/b.png", "b", settings={"workflow": "wf2"})

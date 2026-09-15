@@ -1373,6 +1373,7 @@ function doRecordSave() {
         faceDetailReplacements: state.faceDetailReplacements.slice(),
         faceSuperN: state.faceSuperN,
         autoFaceDetail: state.autoFaceDetail,
+        autoVideoSequence: state.autoVideoSequence,
         lastFaceDetailPrompt: state.lastFaceDetailPrompt,
         lastVideoMeta: state.lastVideoMeta,
         lastInpaintingPrompt: state.lastInpaintingPrompt,
@@ -1441,6 +1442,9 @@ function restoreSession(data) {
   if (s.faceDetailReplacements  !== undefined) state.faceDetailReplacements  = s.faceDetailReplacements;
   state.faceSuperN = (s.faceSuperN !== undefined) ? s.faceSuperN : 1;
   if (s.autoFaceDetail          !== undefined) state.autoFaceDetail          = s.autoFaceDetail;
+  // Default OFF, like t2vMode: a mode that queues a video per shot mustn't leak in
+  // from whatever the previous chat had.
+  state.autoVideoSequence = !!s.autoVideoSequence;
   if (s.lastFaceDetailPrompt    !== undefined) state.lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastVideoMeta           !== undefined) state.lastVideoMeta           = s.lastVideoMeta;
   if (s.lastInpaintingPrompt    !== undefined) state.lastInpaintingPrompt    = s.lastInpaintingPrompt;
@@ -1699,9 +1703,11 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
   wireCancel(cancelBtn);
 
   // Opens a fresh per-shot bubble (user line + bot status bubble with its own
-  // dots and cancel button) and starts its generation timer.
-  const openShell = prompt => {
-    addMessage('user', escapeHtml(prompt || ''), prompt || '');
+  // dots and cancel button) and starts its generation timer. An auto image2video
+  // stage (/video-sequence-auto) gets the same "Image2video:" line the 🎬 button writes.
+  const openShell = (prompt, stage) => {
+    const label = stage === 'image2video' ? 'Image2video: ' : '';
+    addMessage('user', label + escapeHtml(prompt || ''), prompt || '');
     const bubble = addMessage('bot', `
       <div class="status-text">Connecting…</div>
       <div class="dots"><span></span><span></span><span></span></div>
@@ -1808,8 +1814,10 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     // client sees the run's final state.
     if (msg.type === 'done') {
       stop();
-      const n = (msg.images || []).length;
-      statusBubble.innerHTML = `<div class="status-text">Sequence complete — ${n} image(s). Recorded to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '')}</strong>.</div>`;
+      const assets = msg.images || [];
+      const nVideos = assets.filter(isVideoUrl).length;
+      const counts = `${assets.length - nVideos} image(s)` + (nVideos ? `, ${nVideos} video(s)` : '');
+      statusBubble.innerHTML = `<div class="status-text">Sequence complete — ${counts}. Recorded to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '')}</strong>.</div>`;
       scrollBottom();
       if (onDone) onDone(msg);
       return;
@@ -1836,7 +1844,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (!caughtUp) return;
 
     if (msg.type === 'shot') {
-      shell = openShell(msg.prompt);
+      shell = openShell(msg.prompt, msg.stage);
       scrollBottom();
     } else if (msg.type === 'tick') {
       if (shell) applyProgressTick(shell.barWrap, shell.captionEl, msg);
@@ -1935,6 +1943,32 @@ function runSequenceRunJob(master, count, opts = {}) {
           steps: state.currentGenerationSteps,
           extraPrompt: state.extraPrompt,
         },
+        // Follow-up passes run per shot on the server, so they survive the tab
+        // closing: face-detail first (it takes precedence), then image2video.
+        ...(state.autoFaceDetail ? {
+          autoFaceDetail: {
+            workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW,
+            prompt: state.lastFaceDetailPrompt || null,
+            replacements: state.faceDetailReplacements,
+            denoise: state.currentDenoise.face,
+          },
+        } : {}),
+        ...(video && state.autoVideoSequence ? {
+          autoVideo: {
+            workflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW,
+            duration: state.currentVideoSettings.duration,
+            frames: state.currentVideoSettings.frames,
+            fps: state.currentVideoSettings.fps,
+            video_width: state.currentVideoSettings.width,
+            video_height: state.currentVideoSettings.height,
+            video_opts: videoOptsPayload(state.currentVideoSettings),
+            ...(state.currentVideoSteps !== null ? { steps: state.currentVideoSteps } : {}),
+            references: referencesForRun(null),
+            audio: state.currentVideoSettings.audio !== false,
+            overridePrompt: state.image2videoOverridePrompt || null,
+            replacements: state.image2videoReplacements,
+          },
+        } : {}),
       }),
     })
     .then(parseJsonResponse)

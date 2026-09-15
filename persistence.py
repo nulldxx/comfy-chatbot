@@ -73,7 +73,7 @@ def save_session(name, body):
     return path
 
 
-def append_session_image(name, url, prompt, video_meta=None, settings=None):
+def append_session_image(name, url, prompt, video_meta=None, settings=None, message_prompt=None):
     """Append one completed image to a session file, creating it if needed.
 
     Used by the server-side sequence run (generation_service.run_sequence_run) so
@@ -83,6 +83,10 @@ def append_session_image(name, url, prompt, video_meta=None, settings=None):
     rebuild the chat: a user message carrying the prompt followed by a bot message
     carrying the image. Runs under sessions_write_lock as a read-modify-write and
     writes atomically. Returns the updated document.
+
+    ``message_prompt``, when given, is the user line's text in place of ``prompt``.
+    An auto image2video stores the still's prompt against the video (as the client's
+    i2v does) but shows the video prompt it was actually run with.
     """
     path = sessions_dir() / f"{name}.json"
     with sessions_write_lock:
@@ -110,7 +114,7 @@ def append_session_image(name, url, prompt, video_meta=None, settings=None):
         if video_meta is not None:
             doc["imageVideoMeta"][url] = video_meta
 
-        doc["messages"].append({"role": "user", "prompt": prompt})
+        doc["messages"].append({"role": "user", "prompt": message_prompt or prompt})
         doc["messages"].append({"role": "bot", "images": [url], "text": ""})
 
         doc["saved_at"] = datetime.now().isoformat()

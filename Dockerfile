@@ -44,6 +44,7 @@ COPY idle_lock.py .
 COPY image_store.py .
 COPY persistence.py .
 COPY profanity.py .
+COPY prompt_builders.py .
 COPY seed_store.py .
 COPY workflow.py .
 COPY docker-entrypoint.sh .

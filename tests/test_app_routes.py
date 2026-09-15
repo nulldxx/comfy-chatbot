@@ -1212,6 +1212,76 @@ class TestSequenceRunRoute(_AppFixture):
         gen_settings = self._job.call_args[0][5]
         self.assertIsNone(gen_settings["extraPrompt"])
 
+    # --- follow-up passes (/face-detail-auto, /video-sequence-auto) ---
+
+    def _workflow_dirs(self):
+        import catalogue
+        for attr, name in (("COMFY_FACEDETAILER_DIR", "facedetailer"),
+                           ("COMFY_IMAGE2VIDEO_DIR", "image2video")):
+            d = Path(self.tmp) / name
+            d.mkdir()
+            (d / f"{name}-wf.json").write_text("{}")
+            patcher = patch.object(catalogue, attr, d)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    AUTO_VIDEO = {"workflow": "image2video-wf", "duration": 5, "frames": 125, "fps": 25,
+                  "video_width": 960, "video_height": 540, "steps": 8,
+                  "video_opts": {"sage": False}, "audio": False,
+                  "overridePrompt": "  zoom ", "replacements": [["cat", "dog"]]}
+
+    def test_no_auto_blocks_means_no_passes(self):
+        self.client.post("/api/sequence-run", json={"prompt": "pets", "recordingName": "r"})
+        self.assertEqual(self._job.call_args.kwargs["auto"], {})
+
+    def test_auto_blocks_validated_and_passed(self):
+        self._workflow_dirs()
+        resp = self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "recordingName": "r", "video": True,
+            "autoFaceDetail": {"workflow": "facedetailer-wf", "denoise": 0.35, "prompt": " ",
+                               "replacements": [["a", "b"], ["", "x"]]},
+            "autoVideo": self.AUTO_VIDEO,
+        })
+        self.assertEqual(resp.status_code, 200)
+        auto = self._job.call_args.kwargs["auto"]
+        self.assertEqual(auto["face"]["workflow"], "facedetailer-wf")
+        self.assertEqual(auto["face"]["denoise"], 0.35)
+        self.assertIsNone(auto["face"]["prompt"])
+        self.assertEqual(auto["face"]["replacements"], [("a", "b")])
+        video = auto["video"]
+        self.assertEqual(video["workflow"], "image2video-wf")
+        self.assertEqual((video["frames"], video["fps"], video["steps"]), (125, 25, 8))
+        self.assertEqual(video["disabled_optimizations"], {"sage"})
+        self.assertFalse(video["audio"])
+        self.assertEqual(video["override_prompt"], "zoom")
+        self.assertEqual(video["replacements"], [("cat", "dog")])
+        self.assertEqual(video["references"]["input_reference_images"], [None] * 9)
+
+    def test_auto_video_ignored_without_the_video_flag(self):
+        self._workflow_dirs()
+        self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "recordingName": "r", "autoVideo": self.AUTO_VIDEO,
+        })
+        self.assertNotIn("video", self._job.call_args.kwargs["auto"])
+
+    def test_bad_auto_video_settings_return_400(self):
+        self._workflow_dirs()
+        resp = self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "recordingName": "r", "video": True,
+            "autoVideo": dict(self.AUTO_VIDEO, duration=-1),
+        })
+        self.assertEqual(resp.status_code, 400)
+        self._job.assert_not_called()
+
+    def test_unknown_auto_face_workflow_returns_400(self):
+        self._workflow_dirs()
+        resp = self.client.post("/api/sequence-run", json={
+            "prompt": "pets", "recordingName": "r",
+            "autoFaceDetail": {"workflow": "nope"},
+        })
+        self.assertEqual(resp.status_code, 400)
+        self._job.assert_not_called()
+
     def test_profanity_in_master_prompt_returns_400(self):
         # The master prompt is posted verbatim to Grok, so PROFANITY_FILTER guards it.
         app_module.profanity.configure("damn,blast")

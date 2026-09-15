@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import generation_service as gs
 import seed_store
+from prompt_builders import build_video_prompt
 import shutil
 
 
@@ -468,6 +469,164 @@ class RunSequenceRunTests(unittest.TestCase):
         # append_failure_to_recording(job_id, prompt, error_text)
         self.assertEqual(len(persisted), 1)
         self.assertEqual(persisted[0][1], "bad")
+
+    # --- per-shot follow-up passes (/face-detail-auto, /video-sequence-auto) ---
+
+    STILL_PROMPT = "a woman smiling <lora:her:0.8>"
+    SHOT = {"prompt": STILL_PROMPT, "description": "she waves", "soundscape": "birdsong", "music": ""}
+    FACE_AUTO = {"workflow": "face", "workflow_dir": Path("/wf/face"), "denoise": 0.4,
+                 "prompt": None, "replacements": []}
+
+    def _video_auto(self, **overrides):
+        auto = {
+            "workflow": "vid", "workflow_dir": Path("/wf/i2v"),
+            "duration": 5.0, "frames": 125, "fps": 25, "video_width": 960, "video_height": 540,
+            "steps": 8, "disabled_optimizations": {"sage"},
+            "references": {"input_reference_images": [None] * 9,
+                           "input_reference_audios": [None] * 3,
+                           "input_reference_videos": [None] * 3,
+                           "input_reference_video_audios": [None] * 3},
+            "audio": True, "override_prompt": None, "replacements": [],
+        }
+        auto.update(overrides)
+        return auto
+
+    OUTPUTS = {"wf": ["/images/still.png"], "face": ["/images/detailed.png"], "vid": ["/images/clip.mp4"]}
+
+    def _core(self, calls, fail=None):
+        """A fake generation core that tells the stages apart by workflow name."""
+        def core(jid, channel, cancel, prompt, loras, server, server_os, workflow, **k):
+            calls.append((workflow, prompt, k))
+            if fail:
+                fail(workflow)
+            return list(self.OUTPUTS[workflow])
+        return core
+
+    def _run_auto(self, core, auto, video=True, prompt=None, append=None):
+        """Run a one-shot sequence with ``auto``; returns (msgs, still_exists, forget_mock)."""
+        job_id = self._make_job()
+        shot = dict(self.SHOT, prompt=prompt or self.STILL_PROMPT)
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(gs, "IMAGES_DIR", Path(tmp)), \
+             patch.object(gs, "forget_seed") as forget, \
+             patch.object(gs, "generate_video_prompt_sequence", return_value=[shot]), \
+             patch.object(gs, "generate_prompt_sequence", return_value=[shot["prompt"]]), \
+             patch.object(gs, "_run_generation_core", side_effect=core), \
+             patch.object(gs, "append_session_image", side_effect=append), \
+             patch.object(gs, "append_failure_to_recording"):
+            (Path(tmp) / "still.png").write_bytes(b"x")
+            gs.run_sequence_run(job_id, "x", 1, [], video=video,
+                                gen_settings=self._settings(), auto=auto)
+            still_exists = (Path(tmp) / "still.png").exists()
+        return _drain(gs.jobs[job_id]["channel"]), still_exists, forget
+
+    def test_auto_face_detail_replaces_the_still(self):
+        calls = []
+        msgs, still_exists, forget = self._run_auto(self._core(calls), {"face": self.FACE_AUTO}, video=False)
+        self.assertEqual([c[0] for c in calls], ["wf", "face"])
+        _, face_prompt, k = calls[1]
+        self.assertEqual(face_prompt, "a woman's face, smiling")
+        self.assertEqual(k["input_image"].name, "still.png")
+        self.assertEqual(k["preserve_mtime_from"], "still.png")
+        self.assertEqual(k["denoise"], 0.4)
+        self.assertEqual([m["url"] for m in msgs if m["type"] == "image"], ["/images/detailed.png"])
+        self.assertFalse(still_exists)
+        forget.assert_called_once_with("still.png")
+
+    def test_auto_face_detail_prompt_override_and_replacements(self):
+        calls = []
+        face = dict(self.FACE_AUTO, prompt="a face <lora:her:1>", replacements=[("face", "visage")])
+        self._run_auto(self._core(calls), {"face": face}, video=False)
+        self.assertEqual(calls[1][1], "a visage")
+
+    def test_auto_face_detail_skipped_without_a_lora(self):
+        calls = []
+        msgs, still_exists, _ = self._run_auto(self._core(calls), {"face": self.FACE_AUTO},
+                                               video=False, prompt="a woman smiling")
+        self.assertEqual([c[0] for c in calls], ["wf"])
+        self.assertTrue(still_exists)
+        self.assertEqual([m["url"] for m in msgs if m["type"] == "image"], ["/images/still.png"])
+
+    def test_auto_video_runs_after_face_detail(self):
+        calls = []
+        msgs, _, _ = self._run_auto(self._core(calls), {"face": self.FACE_AUTO, "video": self._video_auto()})
+        self.assertEqual([c[0] for c in calls], ["wf", "face", "vid"])
+        _, v_prompt, k = calls[2]
+        self.assertEqual(k["input_image"].name, "detailed.png")
+        self.assertEqual(v_prompt, build_video_prompt(self.STILL_PROMPT, {
+            "description": "she waves", "soundscape": "birdsong", "music": ""}))
+        self.assertEqual((k["frames"], k["fps"], k["steps"]), (125, 25, 8))
+        self.assertEqual(k["disabled_optimizations"], {"sage"})
+        self.assertEqual(k["input_reference_images"], [None] * 9)
+
+        shots = [m for m in msgs if m["type"] == "shot"]
+        self.assertEqual([s.get("stage") for s in shots], [None, "image2video"])
+        self.assertEqual(shots[1]["prompt"], v_prompt)
+        images = [m for m in msgs if m["type"] == "image"]
+        self.assertEqual([(m["url"], m.get("stage")) for m in images],
+                         [("/images/detailed.png", None), ("/images/clip.mp4", "image2video")])
+        # The video carries the still's prompt and meta, as a client-side i2v stores it.
+        self.assertEqual(images[1]["prompt"], self.STILL_PROMPT)
+        self.assertEqual(images[1]["videoMeta"]["description"], "she waves")
+        done = [m for m in msgs if m["type"] == "done"][0]
+        self.assertEqual(done["images"], ["/images/detailed.png", "/images/clip.mp4"])
+
+    def test_auto_video_recorded_with_its_prompt_as_the_user_line(self):
+        appended = []
+        calls = []
+        self._run_auto(self._core(calls), {"video": self._video_auto()},
+                       append=lambda *a, **k: appended.append((a, k)))
+        self.assertEqual(len(appended), 2)
+        (args, kwargs) = appended[1]
+        self.assertEqual(args[1:3], ("/images/clip.mp4", self.STILL_PROMPT))
+        self.assertEqual(kwargs["message_prompt"], calls[1][1])
+        self.assertNotIn("message_prompt", appended[0][1])
+
+    def test_auto_video_override_prompt_and_audio_off(self):
+        calls = []
+        self._run_auto(self._core(calls), {"video": self._video_auto(override_prompt="slow zoom")})
+        self.assertEqual(calls[1][1], "slow zoom")
+        calls = []
+        self._run_auto(self._core(calls), {"video": self._video_auto(audio=False)})
+        self.assertIn("overall_soundscape: N/A", calls[1][1])
+
+    def test_auto_video_ignored_for_a_plain_sequence(self):
+        calls = []
+        self._run_auto(self._core(calls), {"video": self._video_auto()}, video=False)
+        self.assertEqual([c[0] for c in calls], ["wf"])
+
+    def test_auto_video_failure_retries_only_that_stage(self):
+        calls = []
+        attempts = {"vid": 0}
+
+        def fail(workflow):
+            if workflow == "vid":
+                attempts["vid"] += 1
+                if attempts["vid"] == 1:
+                    gs.jobs["test-run-job"]["retry"].set()
+                    raise ValueError("boom")
+
+        msgs, _, _ = self._run_auto(self._core(calls, fail), {"video": self._video_auto()})
+        self.assertEqual([c[0] for c in calls], ["wf", "vid", "vid"])
+        failed = [m for m in msgs if m["type"] == "shot_failed"]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]["stage"], "image2video")
+        self.assertEqual(failed[0]["error"], "image2video: boom")
+        self.assertEqual(gs.jobs["test-run-job"]["status"], "done")
+        self.assertEqual(gs.jobs["test-run-job"]["failed"], [])
+
+    def test_cancel_during_face_detail_keeps_the_still(self):
+        appended = []
+
+        def fail(workflow):
+            if workflow == "face":
+                raise gs.JobCancelled()
+
+        _, still_exists, _ = self._run_auto(self._core([], fail), {"face": self.FACE_AUTO},
+                                            append=lambda *a, **k: appended.append(a[1]))
+        self.assertEqual(appended, ["/images/still.png"])
+        self.assertTrue(still_exists)
+        self.assertEqual(gs.jobs["test-run-job"]["status"], "cancelled")
 
 
 class AppendToRecordingTests(unittest.TestCase):
