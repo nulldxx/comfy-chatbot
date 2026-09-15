@@ -588,10 +588,22 @@ pairing it by array index was only ever a convention nothing enforced.
 
 ### `/video-sequence` prompts (MiniMax H3 format)
 
-`/video-sequence` writes prompts to MiniMax H3's guide
-(`MiniMaxAI/MiniMax-H3` `docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md`); the Wan-era
+`/video-sequence` writes prompts to MiniMax H3's base prompt guide; the Wan-era
 `"<prompt>. <action>. Audio: <audio>"` format is gone. See
 `ADR/video-sequence-h3-prompt-format.md`.
+
+**MiniMax H3 prompt-writing guides** — read these before changing how any H3 prompt is
+written:
+
+- **Base guide** (T2VA / I2VA / FL2VA / L2VA — text, first-frame, first-and-last-frame and
+  last-frame to video):
+  https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md
+  — this is what `/video-sequence` and `buildVideoPrompt` implement.
+- **Reference guide** (reference-to-video, the `minimax-h3-r2v.json` / `/references`
+  path): https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md
+  — not yet applied anywhere in this app.
+
+Raw markdown for either is at the same path with `/raw/` in place of `/blob/`.
 
 - **Per-image `videoMeta` is `{ description, soundscape, music }`.** Grok
   (`generate_video_prompt_sequence`) writes a description (style, first-frame anchor,
