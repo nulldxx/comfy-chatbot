@@ -423,7 +423,7 @@ card per catalogue server and can start or stop ComfyUI remotely. See
   stopped and `port` being *ComfyUI's* port, not the API's. `server_status._normalise_status`
   maps it to snake_case and keeps those nulls (a coerced `0` would read as a real pid).
 - **One global tray port.** `COMFY_TRAY_PORT` (default `8765`) applies to every entry, so
-  `servers.json`, `/addserver` and `_restore_servers`' validator (which drops unknown
+  `servers.json`, `/server-add` and `_restore_servers`' validator (which drops unknown
   keys) are all untouched. The tray is addressed by **host**, never by the `host:port`
   the row displays.
 - **Idempotent, so "already running" is a success.** Start/stop answer `200` with

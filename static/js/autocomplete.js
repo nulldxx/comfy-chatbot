@@ -3,7 +3,6 @@ import { state } from './state.js';
 import { inputEl, slashAcEl } from './dom.js';
 
 export const SLASH_COMMANDS = [
-  { cmd: '/addserver',                    desc: 'add a server  (name host:port:os)',                                                 args: ' ' },
   { cmd: '/alias-create',                 desc: 'create or update a prompt text alias  (<from> <to>)',                                args: ' ' },
   { cmd: '/alias-list',                   desc: 'list all defined prompt text aliases',                                               args: ''  },
   { cmd: '/archive-all',                  desc: 'archive every image and video to the encrypted volume (optional folder name)',      args: ' ' },
@@ -75,6 +74,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/sequence-replacement-reset',   desc: 'clear all sequence replacements',                                                    args: ''  },
   { cmd: '/sequence-review',              desc: 'show the last sequence\'s prompts in a grid; ▶ to generate one',                     args: ''  },
   { cmd: '/server',                       desc: 'choose a ComfyUI server',                                                            args: ''  },
+  { cmd: '/server-add',                   desc: 'add a server  (name host:port:os)',                                                 args: ' ' },
   { cmd: '/server-status',                desc: 'server health: is ComfyUI up, and start/stop it via ComfyTray',                     args: ''  },
   { cmd: '/settings',                     desc: 'open a menu of all settings commands',                                               args: ''  },
   { cmd: '/chat-summary',                 desc: 'show active settings (workflow, replacements, etc.)',                                args: ''  },

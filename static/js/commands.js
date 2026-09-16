@@ -1014,7 +1014,7 @@ function renderServerStatusGrid(bubble, deps) {
         if (!servers.length) {
           const empty = document.createElement('div');
           empty.style.cssText = 'color:#94a3b8;margin-top:6px';
-          empty.textContent = 'No servers configured — add one with /addserver.';
+          empty.textContent = 'No servers configured — add one with /server-add.';
           bubble.appendChild(empty);
           return;
         }
@@ -2529,7 +2529,6 @@ export function makeCommandHandler(deps) {
       const filterLc = filter.toLowerCase();
 
       const helpEntries = [
-        { sig: '/addserver <name> <host:port:os>', desc: 'add a server', notes: 'OS types: <code>unix</code> (Linux/macOS) &nbsp;·&nbsp; <code>windows</code> (Windows path separators)<br>e.g. <code>/addserver mordor mordor:8000:windows</code><br>e.g. <code>/addserver mybox 192.168.1.50:8188:unix</code>' },
         { sig: '/alias-create <word> <expansion>', desc: 'create or update a text alias; typing the word in a prompt and pressing space expands it immediately', notes: 'e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code> &nbsp;·&nbsp; quotes are optional' },
         { sig: '/alias-list', desc: 'list all defined aliases' },
         { sig: '/archive-all [name]', desc: 'archive every image and video in the output folder into the encrypted volume (asks y/n first; optional folder name)', notes: 'needs the <code>archive-agent</code> running on the host and <code>ARCHIVE_*</code> set on the server' },
@@ -2597,6 +2596,7 @@ export function makeCommandHandler(deps) {
         { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
         { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
         { sig: '/server', desc: 'choose a ComfyUI server' },
+        { sig: '/server-add <name> <host:port:os>', desc: 'add a server', notes: 'OS types: <code>unix</code> (Linux/macOS) &nbsp;·&nbsp; <code>windows</code> (Windows path separators)<br>e.g. <code>/server-add mordor mordor:8000:windows</code><br>e.g. <code>/server-add mybox 192.168.1.50:8188:unix</code>' },
         { sig: '/server-status', desc: 'health of every configured server — whether ComfyUI is running, and whether ComfyTray is there to start/stop it remotely', notes: 'ComfyUI is probed directly, so its state is reported for every server &nbsp;·&nbsp; <strong>ComfyTray</strong> (<code>COMFY_TRAY_PORT</code>, default <code>8765</code>, same host as ComfyUI) is what supplies the ▶/■ buttons; a server without one reads <em>unmanaged</em> and can only be reported on &nbsp;·&nbsp; starting is asynchronous — the panel keeps polling until ComfyUI actually answers &nbsp;·&nbsp; each row can also make its server the active one, like <code>/server</code>' },
         { sig: '/settings', desc: 'open a menu of all configuration commands (image/video settings, denoise, iterations, workflows, server, save/restore/backup)' },
         { sig: '/chat-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
@@ -2781,12 +2781,12 @@ export function makeCommandHandler(deps) {
       return;
     }
 
-    if (cmd === '/addserver') {
+    if (cmd === '/server-add') {
       const name = parts[1];
       const connStr = parts[2];
       if (!name || !connStr) {
-        addMessage('bot', `Usage: <code>/addserver &lt;name&gt; &lt;host:port:os&gt;</code><br>
-          e.g. <code>/addserver mordor mordor:8000:windows</code>`);
+        addMessage('bot', `Usage: <code>/server-add &lt;name&gt; &lt;host:port:os&gt;</code><br>
+          e.g. <code>/server-add mordor mordor:8000:windows</code>`);
         return;
       }
       const connParts = connStr.split(':');
