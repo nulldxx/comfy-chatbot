@@ -46,6 +46,7 @@ COPY persistence.py .
 COPY profanity.py .
 COPY prompt_builders.py .
 COPY seed_store.py .
+COPY server_status.py .
 COPY workflow.py .
 COPY docker-entrypoint.sh .
 COPY templates/ templates/

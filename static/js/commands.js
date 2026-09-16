@@ -1,13 +1,13 @@
 import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement,
-  buildVideoPrompt, isVideoUrl, fmtDuration, clampVideo, recomputeVideo,
+  buildVideoPrompt, isVideoUrl, fmtDuration, fmtUptime, clampVideo, recomputeVideo,
   splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
   deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, BASE_VIDEO_STEPS,
   activeAccelerator, videoOptsPayload, normalizeVideoMeta, videoPromptOpts,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles, referenceSlotCost } from './state.js';
-import { messagesEl, sendBtn, addMessage, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
+import { messagesEl, sendBtn, addMessage, clearBubble, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
 import { renderArchiveBrowser } from './archive.js';
@@ -905,6 +905,243 @@ function renderJobsGrid(bubble, deps) {
   load();
 }
 
+// ---------------------------------------------------------------------------
+// /server-status — ComfyUI + ComfyTray health, with remote start/stop
+// ---------------------------------------------------------------------------
+//
+// Two independent readings per catalogue server, because not every server is
+// managed by ComfyTray (see server_status.py):
+//
+//   * ComfyUI itself, probed directly — the one that decides whether a
+//     generation would work right now, and answerable for every server.
+//   * ComfyTray, probed on the same host at COMFY_TRAY_PORT. Present, so we can
+//     offer Start/Stop; absent, so the server is "unmanaged" and gets none.
+//
+// The panel is also a superset of /server: each row can make its server the
+// active one, so you can see a box is up and switch to it in one place.
+
+const SRV_UP    = '#22c55e';
+const SRV_DOWN  = '#94a3b8';
+const SRV_ERR   = '#f87171';
+
+// How long to keep re-polling after a Start or Stop before giving up on the
+// state ever settling. ComfyTray's start returns as soon as the process is
+// spawned, so ComfyUI is not listening for some seconds afterwards; a cold
+// start with models to load can take the best part of a minute.
+const SRV_SETTLE_POLL_MS = 5000;
+const SRV_SETTLE_MAX_MS  = 150000;
+
+function srvDot(color) {
+  return `<span class="srv-dot" style="background:${color}"></span>`;
+}
+
+// The ComfyUI line: the honest answer to "can I generate on this right now?".
+function srvComfyLine(comfy) {
+  if (comfy.reachable) {
+    const ver = comfy.version ? ` <span style="color:#475569">v${escapeHtml(comfy.version)}</span>` : '';
+    return `${srvDot(SRV_UP)}<span style="color:#cbd5e1">ComfyUI</span> <span style="color:${SRV_UP}">running</span>${ver}`;
+  }
+  const why = comfy.error ? ` <span style="color:#475569">(${escapeHtml(comfy.error)})</span>` : '';
+  return `${srvDot(SRV_DOWN)}<span style="color:#cbd5e1">ComfyUI</span> <span style="color:${SRV_DOWN}">not responding</span>${why}`;
+}
+
+// The ComfyTray line. "No tray" is a normal, un-alarming state — plenty of
+// servers are started by hand — so it is grey, not red.
+function srvTrayLine(tray, trayPort) {
+  if (!tray.reachable) {
+    return `${srvDot(SRV_DOWN)}<span style="color:#cbd5e1">ComfyTray</span> ` +
+           `<span style="color:${SRV_DOWN}">no tray on :${trayPort} — unmanaged</span>`;
+  }
+  const bits = [];
+  if (tray.pid) bits.push(`pid ${tray.pid}`);
+  const up = fmtUptime(tray.uptime_seconds);
+  if (up) bits.push(`up ${up}`);
+  const detail = bits.length ? ` <span style="color:#475569">· ${escapeHtml(bits.join(' · '))}</span>` : '';
+  const state = tray.running
+    ? `<span style="color:${SRV_UP}">ComfyUI running</span>`
+    : `<span style="color:${SRV_DOWN}">ComfyUI stopped</span>`;
+  return `${srvDot(SRV_UP)}<span style="color:#cbd5e1">ComfyTray</span> <span style="color:${SRV_UP}">up</span> · ${state}${detail}`;
+}
+
+function renderServerStatusGrid(bubble, deps) {
+  let refreshTimer = null;
+  // address -> epoch ms at which we stop waiting for that server to settle.
+  const settling = new Map();
+  // address -> a one-line note from the last action, shown until it settles.
+  const notes = new Map();
+
+  function stopAutoRefresh() {
+    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+  }
+
+  // A server is "settled" once ComfyUI's real reachability agrees with what the
+  // tray says it is doing — which is the whole point of polling: the tray says
+  // "running" the instant it spawns the process, minutes before a cold ComfyUI
+  // is actually listening.
+  function isSettled(server) {
+    if (!server.tray.reachable) return true;
+    return server.comfy.reachable === !!server.tray.running;
+  }
+
+  function scheduleAutoRefresh(servers) {
+    stopAutoRefresh();
+    const now = Date.now();
+    let waiting = false;
+    servers.forEach(s => {
+      const until = settling.get(s.address);
+      if (until === undefined) return;
+      if (now > until || isSettled(s)) {
+        settling.delete(s.address);
+        notes.delete(s.address);
+      } else {
+        waiting = true;
+      }
+    });
+    if (waiting) refreshTimer = setTimeout(load, SRV_SETTLE_POLL_MS);
+  }
+
+  function load() {
+    fetch('/api/server-status')
+      .then(parseJsonResponse)
+      .then(data => {
+        // parseJsonResponse hands back the body even on a non-2xx, so the error
+        // has to be checked explicitly or a failure reads as "no servers".
+        if (data && data.error) throw new Error(data.error);
+        const servers = (data && data.servers) || [];
+        clearBubble(bubble);
+        bubble.appendChild(buildHeader());
+        if (!servers.length) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'color:#94a3b8;margin-top:6px';
+          empty.textContent = 'No servers configured — add one with /addserver.';
+          bubble.appendChild(empty);
+          return;
+        }
+        const list = document.createElement('div');
+        list.className = 'srv-list';
+        servers.forEach(s => list.appendChild(buildCard(s, data.tray_port)));
+        bubble.appendChild(list);
+        scheduleAutoRefresh(servers);
+        scrollBottom();
+      })
+      .catch(err => {
+        stopAutoRefresh();
+        clearBubble(bubble);
+        bubble.insertAdjacentHTML('beforeend',
+          `<span style="color:${SRV_ERR}">⚠ Failed to load server status: ${escapeHtml(err.message || err)}</span>`);
+      });
+  }
+
+  function buildHeader() {
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px';
+    head.innerHTML = '<strong>ComfyUI servers</strong>';
+    const refresh = document.createElement('button');
+    refresh.className = 'sel-btn';
+    refresh.style.marginLeft = 'auto';
+    refresh.textContent = '↻ Refresh';
+    refresh.addEventListener('click', () => { refresh.disabled = true; load(); });
+    head.appendChild(refresh);
+    return head;
+  }
+
+  function buildCard(server, trayPort) {
+    const curAddr = state.currentServer ? state.currentServer.address : DEFAULT_SERVER;
+    const isCur = server.address === curAddr;
+
+    const card = document.createElement('div');
+    card.className = 'srv-card' + (isCur ? ' current' : '');
+    card.innerHTML = `
+      <div class="srv-card-header">
+        <strong style="color:#a78bfa">${escapeHtml(server.name)}</strong>
+        <code style="color:#475569;font-size:0.8rem">${escapeHtml(server.address)}</code>
+        ${isCur ? '<span style="color:#7c3aed;margin-left:auto">✓ current</span>' : ''}
+      </div>
+      <div class="srv-card-line">${srvComfyLine(server.comfy)}</div>
+      <div class="srv-card-line">${srvTrayLine(server.tray, trayPort)}</div>
+      <div class="srv-card-actions"></div>
+    `;
+
+    const note = notes.get(server.address);
+    if (note) {
+      const noteEl = document.createElement('div');
+      noteEl.className = 'srv-card-note';
+      noteEl.innerHTML = note;
+      card.querySelector('.srv-card-actions').before(noteEl);
+    }
+
+    const actions = card.querySelector('.srv-card-actions');
+
+    // Power buttons exist only where a tray answered — an unmanaged server
+    // cannot be driven from here, and offering a dead button would lie.
+    if (server.tray.reachable) {
+      const action = server.tray.running ? 'stop' : 'start';
+      const btn = document.createElement('button');
+      btn.className = 'sel-btn';
+      btn.textContent = server.tray.running ? '■ Stop ComfyUI' : '▶ Start ComfyUI';
+      btn.addEventListener('click', () => {
+        btn.disabled = true;
+        power(server, action);
+      });
+      actions.appendChild(btn);
+    }
+
+    if (!isCur) {
+      const useBtn = document.createElement('button');
+      useBtn.className = 'sel-btn';
+      useBtn.textContent = 'Use this server';
+      useBtn.title = 'Make this the active server for generations (same as /server)';
+      useBtn.addEventListener('click', () => {
+        state.currentServer = { address: server.address, os: server.os || 'unix', name: server.name };
+        deps.updateHeaderStatus();
+        load();
+      });
+      actions.appendChild(useBtn);
+    }
+
+    return card;
+  }
+
+  function power(server, action) {
+    notes.set(server.address,
+      `<span style="color:#38bdf8">${action === 'start' ? 'Starting' : 'Stopping'} ComfyUI…</span>`);
+    fetch('/api/server-power', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server: server.address, action }),
+    })
+      .then(parseJsonResponse)
+      .then(data => {
+        // Same here: a 502 carrying ComfyTray's own message arrives as a resolved
+        // promise, so it must be turned into a rejection or it reads as success.
+        if (data && data.error) throw new Error(data.error);
+        const tray = (data && data.tray) || {};
+        // Idempotent by design: "it was already in that state" is a success, and
+        // saying so is more use than silently showing the same card again.
+        if (tray.changed === false) {
+          notes.set(server.address,
+            `<span style="color:#94a3b8">Already ${action === 'start' ? 'running' : 'stopped'}.</span>`);
+        } else if (action === 'start') {
+          // The tray returns the moment the process is spawned; ComfyUI will not
+          // answer for a while yet, so say so rather than look hung.
+          notes.set(server.address,
+            '<span style="color:#38bdf8">Started — waiting for ComfyUI to come up…</span>');
+        } else {
+          notes.set(server.address, '<span style="color:#38bdf8">Stopping…</span>');
+        }
+        settling.set(server.address, Date.now() + SRV_SETTLE_MAX_MS);
+      })
+      .catch(err => {
+        settling.delete(server.address);
+        notes.set(server.address,
+          `<span style="color:${SRV_ERR}">⚠ ${escapeHtml(err.message || err)}</span>`);
+      })
+      .finally(load);
+  }
+
+  load();
+}
+
 function renderMacroEditor(bubble, name, initialSteps, onCancel) {
   const steps = [...initialSteps];
 
@@ -1377,6 +1614,7 @@ export function makeCommandHandler(deps) {
     { group: 'Workflows & server', items: [
       { label: 'Workflows (all types)',               cmd: '/workflows',             mode: 'run'    },
       { label: 'ComfyUI server',                      cmd: '/server',                mode: 'run'    },
+      { label: 'Server status (start/stop ComfyUI)',  cmd: '/server-status',         mode: 'run'    },
     ]},
     { group: 'Manage settings', items: [
       { label: 'Chat summary (view active settings)', cmd: '/chat-summary',          mode: 'run'    },
@@ -2396,6 +2634,7 @@ export function makeCommandHandler(deps) {
         { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
         { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
         { sig: '/server', desc: 'choose a ComfyUI server' },
+        { sig: '/server-status', desc: 'health of every configured server — whether ComfyUI is running, and whether ComfyTray is there to start/stop it remotely', notes: 'ComfyUI is probed directly, so its state is reported for every server &nbsp;·&nbsp; <strong>ComfyTray</strong> (<code>COMFY_TRAY_PORT</code>, default <code>8765</code>, same host as ComfyUI) is what supplies the ▶/■ buttons; a server without one reads <em>unmanaged</em> and can only be reported on &nbsp;·&nbsp; starting is asynchronous — the panel keeps polling until ComfyUI actually answers &nbsp;·&nbsp; each row can also make its server the active one, like <code>/server</code>' },
         { sig: '/settings', desc: 'open a menu of all configuration commands (image/video settings, denoise, iterations, workflows, server, save/restore/backup)' },
         { sig: '/chat-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
         { sig: '/settings-backup', desc: 'download a ZIP of all server-side settings for backup — macros, prompt aliases, saved sessions and the server catalogue (<code>servers.json</code>)', notes: 'server-side files only; per-tab generation settings live in a saved session' },
@@ -2496,6 +2735,13 @@ export function makeCommandHandler(deps) {
         });
         scrollBottom();
       }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load servers.</span>'; });
+      return;
+    }
+
+    if (cmd === '/server-status') {
+      addMessage('user', escapeHtml(raw), raw);
+      const bubble = addMessage('bot', '<div class="status-text">Probing servers…</div>');
+      renderServerStatusGrid(bubble, deps);
       return;
     }
 

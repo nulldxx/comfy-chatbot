@@ -27,8 +27,10 @@ from catalogue import (
     list_upscaler_workflows, list_workflow_names,
     list_workflow_variants,
     load_loras_result, load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
+    server_catalogue_with_default,
 )
 from ComfyServer import ComfyServer
+import server_status
 from config import (
     ARCHIVE_AGENT_SOCKET, ARCHIVE_BROWSE_TIMEOUT_SECONDS, ARCHIVE_MARKER,
     ARCHIVE_MOUNT_DIR, ARCHIVE_SIZE, ARCHIVE_VOLUME,
@@ -38,7 +40,8 @@ from config import (
     COMFY_INPAINTING_DIR, COMFY_INPAINTING_WORKFLOW,
     COMFY_REMOVAL_DIR, COMFY_REMOVAL_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS,
-    COMFY_TEXT2VIDEO_DIR, COMFY_TEXT2VIDEO_WORKFLOW, COMFY_UPSCALER_DIR,
+    COMFY_TEXT2VIDEO_DIR, COMFY_TEXT2VIDEO_WORKFLOW, COMFY_TRAY_PORT,
+    COMFY_UPSCALER_DIR,
     VIDEO_OPTIMIZATIONS, WORKFLOW_KIND_DIRS,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     FSCK_TIMEOUT, IDLE_TIMEOUT_SECONDS,
@@ -409,12 +412,59 @@ def api_loras():
 @app.route("/api/servers")
 @login_required
 def api_servers():
-    servers = load_server_catalogue()
-    if not servers:
-        # Synthesise one entry from env-var defaults so the UI always has something
-        host, _, port = COMFY_SERVER.rpartition(":")
-        servers = [{"name": "default", "host": host or COMFY_SERVER, "port": int(port or 8000), "os": COMFY_SERVER_OS}]
-    return jsonify(servers)
+    return jsonify(server_catalogue_with_default())
+
+
+@app.route("/api/server-status")
+@login_required
+def api_server_status():
+    """Liveness of every catalogue server, for the /server-status panel.
+
+    Two independent readings per server (see server_status.py): ComfyUI itself,
+    which answers whether or not anything manages it, and the ComfyTray REST API
+    on the same host at COMFY_TRAY_PORT. A server with no tray reports
+    ``tray.reachable: False`` — an unmanaged server is a normal state, and the
+    client just withholds its start/stop buttons.
+
+    Nothing here touches IMAGES_DIR, so no @requires_output_storage: the panel is
+    meant to work in exactly the situations where things are broken.
+    """
+    return jsonify({
+        "tray_port": COMFY_TRAY_PORT,
+        "servers": server_status.probe_all(server_catalogue_with_default()),
+    })
+
+
+@app.route("/api/server-power", methods=["POST"])
+@login_required
+def api_server_power():
+    """Start or stop ComfyUI on a catalogue server via its ComfyTray.
+
+    The requested server must be one the catalogue names. Unlike /api/purge,
+    which forwards to whatever address it is given, this route can *spawn a
+    process* on the far end, so it will only ever post to a host the appliance
+    already knows about.
+
+    The returned status is a hint, not the final state: ComfyTray's start returns
+    as soon as the process is spawned, so ``running`` goes true seconds before
+    ComfyUI is listening. The client re-polls /api/server-status for the truth.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    action = (data.get("action") or "").strip().lower()
+    if action not in server_status.TRAY_ACTIONS:
+        return jsonify({"error": "Action must be 'start' or 'stop'"}), 400
+
+    address = (data.get("server") or "").strip()
+    entry = next((e for e in server_catalogue_with_default()
+                  if f"{e.get('host')}:{e.get('port')}" == address), None)
+    if entry is None:
+        return jsonify({"error": f"Unknown server: {address or '(none)'}"}), 404
+
+    try:
+        status = server_status.tray_power(entry["host"], action)
+    except server_status.TrayError as e:
+        return jsonify({"error": str(e)}), 502
+    return jsonify({"server": address, "action": action, "tray": status})
 
 
 @app.route("/api/add-server", methods=["POST"])

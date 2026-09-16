@@ -258,3 +258,18 @@ AUTO_PURGE_SECONDS = int(os.environ.get('AUTO_PURGE_SECONDS', '300'))
 # encrypted volumes (see idle_lock.py and app._idle_lock_down). Logging back in
 # re-opens the output volume via the existing lazy-mount path. 0 disables.
 IDLE_TIMEOUT_SECONDS = int(os.environ.get('IDLE_TIMEOUT_SECONDS', '7200'))
+
+# ComfyTray REST API (github.com/nulldxx/comfy-tray). A tray app that runs ComfyUI
+# headless and exposes /api/status, /api/start and /api/stop so it can be driven
+# without reaching the tray menu. It listens on the *same host* as ComfyUI but a
+# different port, so one global port covers every entry in servers.json; a server
+# with no tray answering there is simply "unmanaged" and gets no start/stop buttons.
+# See server_status.py and app.api_server_status.
+COMFY_TRAY_PORT = int(os.environ.get('COMFY_TRAY_PORT', '8765'))
+# Liveness probes for /server-status. Short, because the panel probes every server
+# and the whole point is a quick answer; a slow host reads as down, which is true
+# enough for "can I generate on it right now?".
+SERVER_PROBE_TIMEOUT = float(os.environ.get('SERVER_PROBE_TIMEOUT', '2.5'))
+# Start/stop. Matches ComfyTray's own 15s socket timeout (ApiServer.SocketTimeout),
+# so we never wait past the point it would answer. Well inside gunicorn's 120s.
+SERVER_POWER_TIMEOUT = float(os.environ.get('SERVER_POWER_TIMEOUT', '15'))

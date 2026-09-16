@@ -367,6 +367,62 @@ it to a snapshot the job thread reads. See `ADR/generation-progress-bars.md`.
 - Client helpers `progressPercent`/`progressCaption` are pure and live in `utils.js`
   (unit-tested); `.determinate` on `.progress-bar-wrap` is what kills the CSS animation.
 
+### Server status (`/server-status`, `server_status.py`)
+
+The app knew which ComfyUI servers existed (`servers.json` → `/api/servers` → the
+`/server` picker) but never whether any of them was **up**: picking a dead one just
+meant the next generation failed with a connection error. `/server-status` renders one
+card per catalogue server and can start or stop ComfyUI remotely. See
+`ADR/server-status-command.md`.
+
+- **Two independent readings per server**, because **not every server is managed by
+  ComfyTray**. **ComfyUI itself** is probed directly (`GET /system_stats`), so its state
+  is answerable for every server and is the honest answer to "can I generate right now?".
+  **ComfyTray** is probed separately on the *same host* at `COMFY_TRAY_PORT` — present,
+  so the row gets ▶/■; absent, so the row reads *unmanaged* and gets none. A missing tray
+  is a normal state reported as `reachable: false`, never an error.
+- **ComfyTray** (`~/Code/comfy-tray`) is a WPF tray app that runs ComfyUI headless; its
+  REST API (`ApiRoutes.cs`, `ApiServer.cs`) is `GET /api/status` and `POST|GET
+  /api/start|/api/stop`, all returning one camelCase payload — `{running, state, pid,
+  port, uptimeSeconds, changed}`, with `pid`/`port`/`uptimeSeconds` **null** while
+  stopped and `port` being *ComfyUI's* port, not the API's. `server_status._normalise_status`
+  maps it to snake_case and keeps those nulls (a coerced `0` would read as a real pid).
+- **One global tray port.** `COMFY_TRAY_PORT` (default `8765`) applies to every entry, so
+  `servers.json`, `/addserver` and `_restore_servers`' validator (which drops unknown
+  keys) are all untouched. The tray is addressed by **host**, never by the `host:port`
+  the row displays.
+- **Idempotent, so "already running" is a success.** Start/stop answer `200` with
+  `changed: false` rather than an error; the panel says *Already running.* instead of
+  showing a failure. A launch failure is a `500` carrying the reason, which becomes a
+  `TrayError` and then a **502** with the tray's own message.
+- **Start is asynchronous** — the tray returns the moment the process is spawned, so
+  `running` goes true seconds (a cold start: most of a minute) before ComfyUI is
+  listening. This is why the panel polls: after a power action the row is marked
+  *settling* and re-polls every 5s until ComfyUI's real reachability agrees with what the
+  tray says it is doing, capped at 150s. Otherwise it does not poll at all — same rule as
+  `/jobs`, which only refreshes while something is active. A ↻ button is always there.
+- **`/api/server-power` only posts to hosts the catalogue names** (**404** otherwise).
+  Deliberately unlike `/api/purge`, which forwards to any address given: this route can
+  *spawn a process* on the far end, so it is not an open proxy. Both routes are
+  `@login_required` and neither takes `@requires_output_storage` — the panel is meant to
+  work in exactly the situations where things are broken.
+- **Probes are fanned out** (`probe_all`, a `ThreadPoolExecutor`): done serially, one
+  dead host would cost every other server a full timeout each. `SERVER_PROBE_TIMEOUT`
+  (2.5s) is short on purpose — a slow host reads as down, which is true enough.
+  `SERVER_POWER_TIMEOUT` (15s) matches `ApiServer`'s own socket timeout, so the app never
+  waits past the point the tray would answer.
+- **`server_catalogue_with_default()`** (`catalogue.py`) is now the single source of the
+  server list — `/api/servers` and both new routes share it, so the panel and `/server`
+  can never disagree about which servers exist.
+- **Also a superset of `/server`**: each row has a *Use this server* button setting
+  `state.currentServer`, so you can see a box is up and switch to it in one place.
+- **Reaching the tray from another machine needs an inbound firewall rule** the tray's
+  per-user MSI cannot add; its About box prints the `netsh` command. A tray that is up but
+  firewalled is indistinguishable from no tray — the row reads *unmanaged*.
+- **Not covered**: no restart button (stop-then-start would have to straddle the
+  asynchronous start), and ComfyTray's API has **no authentication** by design, so this
+  is only safe on a trusted network.
+
 ## Known Pitfalls
 
 ### Curly/smart quote corruption in JS files

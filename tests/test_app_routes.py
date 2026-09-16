@@ -321,6 +321,106 @@ class TestAddServer(_AppFixture):
 
 
 # ---------------------------------------------------------------------------
+# /server-status and /server-power (the ComfyTray panel)
+# ---------------------------------------------------------------------------
+
+_CATALOGUE = [
+    {"name": "mordor", "host": "mordor", "port": 8000, "os": "windows"},
+    {"name": "laptop", "host": "10.0.0.9", "port": 8188, "os": "unix"},
+]
+
+
+class TestServerStatusEndpoints(_AppFixture):
+    """The panel's two routes. server_status's own probes are covered by
+    tests/test_server_status.py; here it is patched out so nothing touches a
+    network, and what is checked is the routing, the SSRF guard and the
+    error-to-status-code mapping."""
+
+    def _with_catalogue(self):
+        return patch.object(app_module, "server_catalogue_with_default",
+                            return_value=list(_CATALOGUE))
+
+    def test_status_probes_every_catalogue_server(self):
+        probed = [
+            {"name": "mordor", "host": "mordor", "port": 8000, "os": "windows",
+             "address": "mordor:8000",
+             "comfy": {"reachable": True, "version": "0.34.2", "error": None},
+             "tray": {"reachable": True, "running": True, "pid": 4312, "port": 8000,
+                      "uptime_seconds": 8040.0, "changed": False, "error": None}},
+        ]
+        with self._with_catalogue(), \
+             patch.object(app_module.server_status, "probe_all",
+                          return_value=probed) as probe_all:
+            resp = self.client.get("/api/server-status")
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["servers"], probed)
+        self.assertEqual(data["tray_port"], app_module.COMFY_TRAY_PORT)
+        self.assertEqual(probe_all.call_args[0][0], _CATALOGUE)
+
+    def test_power_start_reaches_the_right_host(self):
+        status = {"reachable": True, "running": True, "pid": 1, "port": 8000,
+                  "uptime_seconds": 0.1, "changed": True, "error": None}
+        with self._with_catalogue(), \
+             patch.object(app_module.server_status, "tray_power",
+                          return_value=status) as power:
+            resp = self.client.post("/api/server-power",
+                                    json={"server": "mordor:8000", "action": "start"})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["tray"], status)
+        # Addressed by host, not by the pasted address: the tray is on its own port.
+        self.assertEqual(power.call_args[0], ("mordor", "start"))
+
+    def test_power_stop_is_accepted(self):
+        with self._with_catalogue(), \
+             patch.object(app_module.server_status, "tray_power",
+                          return_value={"reachable": True, "running": False,
+                                        "changed": True}) as power:
+            resp = self.client.post("/api/server-power",
+                                    json={"server": "10.0.0.9:8188", "action": "stop"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(power.call_args[0], ("10.0.0.9", "stop"))
+
+    def test_bad_action_is_400(self):
+        with self._with_catalogue(), \
+             patch.object(app_module.server_status, "tray_power") as power:
+            resp = self.client.post("/api/server-power",
+                                    json={"server": "mordor:8000", "action": "restart"})
+        self.assertEqual(resp.status_code, 400)
+        power.assert_not_called()
+
+    def test_unknown_server_is_404_and_is_never_contacted(self):
+        """The SSRF guard: this route can spawn a process on the far end, so it
+        only ever posts to a host the catalogue names."""
+        with self._with_catalogue(), \
+             patch.object(app_module.server_status, "tray_power") as power:
+            resp = self.client.post("/api/server-power",
+                                    json={"server": "evil.example:80", "action": "start"})
+        self.assertEqual(resp.status_code, 404)
+        power.assert_not_called()
+
+    def test_right_host_wrong_port_is_still_rejected(self):
+        with self._with_catalogue(), \
+             patch.object(app_module.server_status, "tray_power") as power:
+            resp = self.client.post("/api/server-power",
+                                    json={"server": "mordor:22", "action": "start"})
+        self.assertEqual(resp.status_code, 404)
+        power.assert_not_called()
+
+    def test_tray_failure_is_502_carrying_its_message(self):
+        with self._with_catalogue(), \
+             patch.object(app_module.server_status, "tray_power",
+                          side_effect=app_module.server_status.TrayError(
+                              "ComfyUI folder not found")):
+            resp = self.client.post("/api/server-power",
+                                    json={"server": "mordor:8000", "action": "start"})
+        self.assertEqual(resp.status_code, 502)
+        self.assertIn("ComfyUI folder not found", resp.get_json()["error"])
+
+
+# ---------------------------------------------------------------------------
 # Image management
 # ---------------------------------------------------------------------------
 

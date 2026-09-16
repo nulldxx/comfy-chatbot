@@ -388,6 +388,25 @@ export function fmtDuration(d) {
   return Number.isInteger(r) ? String(r) : r.toFixed(1);
 }
 
+// Uptime as ComfyTray reports it (a float of seconds) in the compactest readable
+// form: "42s", "7m", "2h 14m", "3d 4h". Distinct from fmtDuration, which is a
+// number formatter for video lengths, not a clock. Pure, so it is unit-tested.
+export function fmtUptime(seconds) {
+  if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return '';
+  const total = Math.max(0, Math.floor(Number(seconds)));
+  if (total < 60) return `${total}s`;
+  const mins = Math.floor(total / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) {
+    const rem = mins % 60;
+    return rem ? `${hours}h ${rem}m` : `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  const rem = hours % 24;
+  return rem ? `${days}d ${rem}h` : `${days}d`;
+}
+
 export function clampVideo(key, val) {
   const lim = VIDEO_LIMITS[key];
   let v = Math.min(lim.max, Math.max(lim.min, val));

@@ -2,7 +2,7 @@ import re
 import json
 
 from config import (
-    COMFY_WORKFLOW_DIR, COMFY_LORAS_FILE,
+    COMFY_WORKFLOW_DIR, COMFY_LORAS_FILE, COMFY_SERVER, COMFY_SERVER_OS,
     COMFY_FACEDETAILER_DIR,
     COMFY_UPSCALER_DIR, COMFY_IMAGE2IMAGE_DIR, COMFY_INPAINTING_DIR,
     COMFY_IMAGE2VIDEO_DIR, COMFY_TEXT2VIDEO_DIR, COMFY_REMOVAL_DIR,
@@ -21,6 +21,22 @@ def load_server_catalogue():
         return json.loads(servers_file.read_text()).get("servers", [])
     except Exception:
         return []
+
+
+def server_catalogue_with_default():
+    """The server list the UI works from: servers.json, or one entry synthesised
+    from the COMFY_SERVER env default when the file is absent or empty.
+
+    Shared by /api/servers (the /server picker) and /api/server-status so the two
+    can never disagree about which servers exist — and so /api/server-power has a
+    single authoritative list to check a requested host against.
+    """
+    servers = load_server_catalogue()
+    if servers:
+        return servers
+    host, _, port = COMFY_SERVER.rpartition(":")
+    return [{"name": "default", "host": host or COMFY_SERVER,
+             "port": int(port or 8000), "os": COMFY_SERVER_OS}]
 
 
 def parse_strength(value, default=0.8):

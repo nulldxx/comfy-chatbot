@@ -5,7 +5,8 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          videoOptsPayload, activeAccelerator, VIDEO_OPTIMIZATIONS, TURBO_STEPS, BASE_VIDEO_STEPS,
          splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
          WORKFLOW_VARIANT_SEP, progressPercent, progressCaption,
-         archiveParentPath, archiveBreadcrumb, joinArchivePath } from '../../static/js/utils.js';
+         archiveParentPath, archiveBreadcrumb, joinArchivePath,
+         fmtUptime } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -1059,5 +1060,45 @@ describe('joinArchivePath', () => {
   test('refuses an empty child', () => {
     expect(joinArchivePath('staging', '')).toBeNull();
     expect(joinArchivePath('staging', null)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fmtUptime — ComfyTray's uptimeSeconds as a readable clock for /server-status
+// ---------------------------------------------------------------------------
+
+describe('fmtUptime', () => {
+  test('seconds below a minute', () => {
+    expect(fmtUptime(0)).toBe('0s');
+    expect(fmtUptime(42.7)).toBe('42s');
+    expect(fmtUptime(59)).toBe('59s');
+  });
+
+  test('whole minutes below an hour', () => {
+    expect(fmtUptime(60)).toBe('1m');
+    expect(fmtUptime(3599)).toBe('59m');
+  });
+
+  test('hours carry their remaining minutes, and drop them when zero', () => {
+    expect(fmtUptime(3600)).toBe('1h');
+    expect(fmtUptime(8040)).toBe('2h 14m');
+    expect(fmtUptime(7200)).toBe('2h');
+  });
+
+  test('days past 24 hours', () => {
+    expect(fmtUptime(86400)).toBe('1d');
+    expect(fmtUptime(86400 + 4 * 3600)).toBe('1d 4h');
+  });
+
+  // The tray sends null for uptimeSeconds while ComfyUI is stopped, so the
+  // caller must get an empty string rather than "NaN" to append to its caption.
+  test('a stopped tray sends null, which formats as nothing', () => {
+    expect(fmtUptime(null)).toBe('');
+    expect(fmtUptime(undefined)).toBe('');
+    expect(fmtUptime('nonsense')).toBe('');
+  });
+
+  test('never goes negative', () => {
+    expect(fmtUptime(-5)).toBe('0s');
   });
 });
