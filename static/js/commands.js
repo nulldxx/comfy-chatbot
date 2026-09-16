@@ -1,10 +1,11 @@
 import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement,
-  buildVideoPrompt, isVideoUrl, fmtDuration, fmtUptime, clampVideo, recomputeVideo,
+  isVideoUrl, fmtDuration, fmtUptime, clampVideo, recomputeVideo,
   splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
-  deriveFaceDetailPrompt, formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
+  formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, BASE_VIDEO_STEPS,
-  activeAccelerator, videoOptsPayload, normalizeVideoMeta, videoPromptOpts,
+  activeAccelerator, videoOptsPayload, normalizeVideoMeta,
+  buildI2vSteps, buildFaceDetailSteps,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles, referenceSlotCost } from './state.js';
 import { messagesEl, sendBtn, addMessage, clearBubble, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
@@ -1393,6 +1394,20 @@ export function makeCommandHandler(deps) {
     }).catch(() => {});
   }
 
+  // /face-detail <N> and /face-detail-session: one server-side batch of face-detail
+  // steps. Images with no derivable face prompt are skipped with one warning, where the
+  // old promise chain warned once per image.
+  function runFaceDetailBatch(images) {
+    const { steps, skippedVideos, noPrompt } = buildFaceDetailSteps(images, state);
+    if (skippedVideos) {
+      addMessage('bot', `Skipping ${skippedVideos} video(s) — face-detail needs a still image.`);
+    }
+    if (noPrompt) {
+      addMessage('bot', `<span style="color:#f87171">No LoRA in ${noPrompt === 1 ? 'this image\'s prompt' : `${noPrompt} images' prompts`} — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>`);
+    }
+    return deps.runBatchJob(steps);
+  }
+
   function runDefaultMacroOnImage(url) {
     if (!state.defaultMacro) {
       addMessage('bot', '<span style="color:#f87171">⚠ No default macro set — use <code>/macro-set-default</code> to choose one.</span>');
@@ -1806,17 +1821,11 @@ export function makeCommandHandler(deps) {
         addMessage('bot', '<span style="color:#f87171">⚠ Paste line-separated prompts after <code>/multi-prompt</code> (use Shift+Enter between lines)</span>');
         return;
       }
-      state.iterationsFromSequence = false;
-      sendBtn.disabled = true;
-      return (async () => {
-        for (const prompt of lines) {
-          const expanded = expandAliases(prompt, state.ALIASES);
-          addMessage('user', escapeHtml(expanded), expanded);
-          const ok = await deps.runGeneration(expanded, '');
-          if (!ok) break;
-        }
-        sendBtn.disabled = false;
-      })();
+      // One server-side batch: each line's shot writes its own user line.
+      return deps.runBatchJob(lines.map((prompt, i) => ({
+        kind: 't2i', prompt: expandAliases(prompt, state.ALIASES),
+        ...(lines.length > 1 ? { label: ` (${i + 1}/${lines.length})` } : {}),
+      })));
     }
 
     if (cmd === '/sequence') {
@@ -2211,31 +2220,18 @@ export function makeCommandHandler(deps) {
         addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/i2v</code> or <code>/i2v &lt;N&gt;</code></span>');
         return;
       }
-      const i2vTargets = state.sessionImages.slice(-i2vN);
-      let i2vChain = Promise.resolve();
-      let i2vAborted = false;
-      i2vTargets.forEach(img => {
-        i2vChain = i2vChain.then(() => {
-          if (i2vAborted) return;
-          let prompt;
-          if (state.image2videoOverridePrompt) {
-            prompt = state.image2videoOverridePrompt;
-          } else {
-            const orig = state.imagePrompts[img];
-            const meta = state.imageVideoMeta[img];
-            if (!orig && !normalizeVideoMeta(meta).description) {
-              i2vAborted = true;
-              addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/i2v-set-prompt &lt;prompt&gt;</code></span>');
-              return;
-            }
-            const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
-            prompt = buildVideoPrompt(base, meta, videoPromptOpts(state, img));
-          }
-          addMessage('user', 'Image2video: ' + escapeHtml(prompt), prompt);
-          return deps.runImage2Video(prompt, img);
-        });
-      });
-      return i2vChain;
+      // Built up front and run as one server-side batch, so the chain survives the tab
+      // closing. As before, the chain stops at the first image with no prompt source.
+      const { steps: i2vSteps, skippedVideos: i2vVideos, missingPrompt } =
+        buildI2vSteps(state.sessionImages.slice(-i2vN), state);
+      if (i2vVideos) {
+        addMessage('bot', `Skipping ${i2vVideos} video(s) — image2video needs a still image.`);
+      }
+      if (missingPrompt) {
+        addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/i2v-set-prompt &lt;prompt&gt;</code></span>'
+          + (i2vSteps.length ? ` Running the ${i2vSteps.length} before it.` : ''));
+      }
+      return deps.runBatchJob(i2vSteps);
     }
 
     if (cmd === '/inpaint-workflow') {
@@ -2434,17 +2430,10 @@ export function makeCommandHandler(deps) {
           bubble.insertAdjacentHTML('beforeend',
             `<div class="status-text" style="margin-top:8px">Generating <strong style="color:#a78bfa">${selected.length}</strong> workflow(s)…</div>`);
 
-          state.iterationsFromSequence = false;
-          sendBtn.disabled = true;
-          (async () => {
-            for (let i = 0; i < selected.length; i++) {
-              const wf = selected[i];
-              const label = ` — ${wf} (${i + 1}/${selected.length})`;
-              const ok = await deps.runGeneration(master, label, wf);
-              if (!ok) break;
-            }
-            sendBtn.disabled = false;
-          })();
+          deps.runBatchJob(selected.map((wf, i) => ({
+            kind: 't2i', prompt: master, workflow: wf,
+            label: ` — ${wf} (${i + 1}/${selected.length})`,
+          })));
         });
         scrollBottom();
       }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load workflows.</span>'; });
@@ -2498,20 +2487,7 @@ export function makeCommandHandler(deps) {
         addMessage('bot', 'No images from this session to face-detail — generate some first.');
         return;
       }
-      const fdSessionTargets = state.sessionImages.slice();
-      let fdSessionChain = Promise.resolve();
-      fdSessionTargets.forEach(img => {
-        fdSessionChain = fdSessionChain.then(() => {
-          const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]), state.faceDetailReplacements);
-          if (!prompt) {
-            addMessage('bot', '<span style="color:#f87171">No LoRA in this image\'s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
-            return;
-          }
-          addMessage('user', 'Face detail: ' + escapeHtml(prompt));
-          return deps.runFaceDetail(prompt, img);
-        });
-      });
-      return fdSessionChain;
+      return runFaceDetailBatch(state.sessionImages.slice());
     }
 
     if (cmd === '/face-detail') {
@@ -2526,20 +2502,7 @@ export function makeCommandHandler(deps) {
         addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/face-detail</code> or <code>/face-detail &lt;N&gt;</code> — face-detail the last N images</span>');
         return;
       }
-      const fdTargets = state.sessionImages.slice(-fdN);
-      let fdChain = Promise.resolve();
-      fdTargets.forEach(img => {
-        fdChain = fdChain.then(() => {
-          const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[img]), state.faceDetailReplacements);
-          if (!prompt) {
-            addMessage('bot', '<span style="color:#f87171">No LoRA in this image\'s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
-            return;
-          }
-          addMessage('user', 'Face detail: ' + escapeHtml(prompt));
-          return deps.runFaceDetail(prompt, img);
-        });
-      });
-      return fdChain;
+      return runFaceDetailBatch(state.sessionImages.slice(-fdN));
     }
 
     if (cmd === '/face-detail-super') {
@@ -2579,7 +2542,7 @@ export function makeCommandHandler(deps) {
         { sig: '/delete-session', desc: 'delete all images from this session (chat + output folder)' },
         { sig: '/delete-today', desc: 'delete every image generated today (asks y/n first)' },
         { sig: '/denoise', desc: 'set the default denoise strength for this session for face-detail, image2image, inpainting and upscale (sliders; Reset restores defaults 0.35 / 0.30 / 0.45 / 0.15)', notes: 'session-only; snapshotted by <code>/settings-save</code> and shown under <code>/settings</code>' },
-        { sig: '/face-detail [N]', desc: 'run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image\'s prompt' },
+        { sig: '/face-detail [N]', desc: 'run face-detail over the last N images (default 1); uses <code>/face-detail-prompt</code> override or derives from each image\'s prompt', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
         { sig: '/face-detail-super <N>', desc: 'put the face (&#128100;) icon into N-variation mode: it runs the detailer N (2–16) times and shows a tile picker cropped to the face; pick the best one. <code>/face-detail-super 1</code> restores the normal before/after slider' },
         { sig: '/face-detail-prompt <prompt>', desc: 'set the prompt the per-image face (&#128100;) icons use; otherwise each icon derives one from that image\'s own prompt (needs a <code>&lt;lora:…&gt;</code> tag)' },
         { sig: '/face-detail-prompt-reset', desc: 'clear that override so the face icons derive a prompt from each image again' },
@@ -2587,7 +2550,7 @@ export function makeCommandHandler(deps) {
         { sig: '/face-detail-replacement-reset', desc: 'clear all face-detail replacements' },
         { sig: '/face-detail-auto', desc: 'automatically run a face-detail pass on every new generation, <code>/sequence</code> and <code>/video-sequence</code> shots included (silently replaces the image; skips prompts with no <code>&lt;lora:…&gt;</code> tag and videos)' },
         { sig: '/face-detail-auto-reset', desc: 'stop auto-running face-detail on new generations' },
-        { sig: '/face-detail-session', desc: 'face-detail every image from this session, one after another' },
+        { sig: '/face-detail-session', desc: 'face-detail every image from this session, one after another', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
         { sig: '/face-detail-workflow [name]', desc: 'choose which face-detailer workflow the face icons use (no arg = picker)' },
         { sig: '/face-detail-workflow-reset', desc: 'reset the face-detailer workflow to its default' },
         { sig: '/fscheck', desc: 'check and auto-repair the encrypted volumes (archive checked now; output volume checked at container startup)', notes: 'needs the <code>archive-agent</code> running on the host; runs <code>e2fsck -fy</code>' },
@@ -2600,7 +2563,7 @@ export function makeCommandHandler(deps) {
         { sig: '/i2i-set-prompt-reset', desc: 'clear the override prompt' },
         { sig: '/i2i-workflow [name]', desc: 'choose which image2image workflow <code>/i2i</code> uses (no arg = picker)' },
         { sig: '/i2i-workflow-reset', desc: 'reset the image2image workflow to its default' },
-        { sig: '/i2v [N]', desc: 'run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set' },
+        { sig: '/i2v [N]', desc: 'run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
         { sig: '/i2v-replacement <from> <to>', desc: 'find→replace applied to the original prompt when <code>/i2v</code> runs with no override (no args lists them)' },
         { sig: '/i2v-replacement-reset', desc: 'clear all image2video replacements' },
         { sig: '/i2v-set-prompt <prompt>', desc: 'override prompt used by <code>/i2v</code> and the 🎬 button instead of each image\'s original prompt; no args shows it' },
@@ -2613,7 +2576,7 @@ export function makeCommandHandler(deps) {
         { sig: '/inpaint-workflow-reset', desc: 'reset the inpainting workflow to its default' },
         { sig: '/inpainting-prompt <prompt>', desc: 'set the prompt used by the 🩹 inpaint button; no args clears it' },
         { sig: '/getseed', desc: 'reuse the seed from the last t2i/i2v/t2v generation on the next such run, to reproduce or tweak it', notes: 'one-shot: reverts to random seeds after the next generation &nbsp;·&nbsp; <code>/getseed-reset</code> cancels a pending reuse &nbsp;·&nbsp; to take the seed of a <em>specific</em> image rather than the most recent one, right-click it and choose <em>Copy seed</em>' },
-        { sig: '/iterations <n>', desc: 'generate n images per prompt (default 1)' },
+        { sig: '/iterations <n>', desc: 'generate n images per prompt (default 1)', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
         { sig: '/jobs', desc: 'grid of the last 10 server-side jobs with status, cancel, and a button to pull the asset into the current chat (useful if the connection dropped mid-render)' },
         { sig: '/last-sent', desc: 'show the last workflow submitted to ComfyUI with all replacements applied — downloadable as JSON' },
         { sig: '/logoff', desc: 'lock the appliance now: close the encrypted volumes, forget the login password and sign out (the header <em>Sign out</em> link does the same)', notes: 'refuses while a generation is still running; log back in to unlock \u2014 the volumes take a few seconds to remount' },
@@ -2621,7 +2584,7 @@ export function makeCommandHandler(deps) {
         { sig: '/macro-create <name>', desc: 'open an inline editor to define a named macro — a sequence of prompts and/or /commands run in order', notes: 'invoke the macro later by typing <code>#name</code> — e.g. <code>/macro-create warmup</code> then <code>#warmup</code><br>re-run <code>/macro-create name</code> to edit an existing macro' },
         { sig: '/macro-list', desc: 'list all defined macros with a delete button for each' },
         { sig: '/macro-set-default', desc: 'choose a default macro for the 🤖 button on images — clicking 🤖 runs that macro with the image URL substituted for <code>&lt;PARAM&gt;</code>', notes: 'pass a name (e.g. <code>/macro-set-default warmup</code>) to set it directly without the picker' },
-        { sig: '/multi-prompt', desc: 'generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)' },
+        { sig: '/multi-prompt', desc: 'generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
         { sig: '/purge', desc: 'free GPU memory on the active ComfyUI server' },
         { sig: '/review <n>', desc: 'grid of the last N images, oldest first' },
         { sig: '/review-all', desc: 'grid of every image, oldest first (tap to view, trash to delete)' },
@@ -2654,7 +2617,7 @@ export function makeCommandHandler(deps) {
         { sig: '/video-sequence-auto-reset', desc: 'stop auto-running image2video on <code>/video-sequence</code> shots' },
         { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio for a silent clip (<code>overall_soundscape</code> &amp; <code>non_diegetic_music</code> sent as N/A) &nbsp;·&nbsp; the five <em>Optimisations</em> boxes bypass the matching <code>[opt:&hellip;]</code> nodes in the video workflow (all on = fast, lower-quality preview) &nbsp;·&nbsp; ticking <em>Turbo 4-step LoRA</em> sets Steps to 4, unticking it returns them to the workflow default' },
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
-        { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one' },
+        { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
         { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
         { sig: '/t2v', desc: 'toggle text-to-video mode — while on, a plain prompt generates a video with the text2video workflow instead of an image; type it again to turn it off', notes: 'uses <code>/video-settings</code> for duration/fps/resolution &nbsp;·&nbsp; also applies to <code>#macro</code> steps, but <em>not</em> to <code>/sequence-run</code> or <code>/multi-prompt</code>' },
         { sig: '/t2v-workflow [name]', desc: 'choose which text2video workflow <code>/t2v</code> uses (no arg = picker)' },

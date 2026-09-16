@@ -249,6 +249,77 @@ export function videoPromptOpts(state, image) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Server-side batch runs (/api/batch-run)
+// ---------------------------------------------------------------------------
+// /i2v <N>, /face-detail <N> and /face-detail-session post their whole chain as one
+// batch. Every input a step's prompt is built from already exists, so the prompts are
+// built here — with the same helpers the single-image buttons use — rather than
+// re-derived server-side.
+
+// The user-line prefix a run's shot shows for its stage: the text the single-run
+// buttons write ("Image2video: …", "Face detail: …"). A still has none.
+export function runStagePrefix(stage) {
+  if (stage === 'image2video') return 'Image2video: ';
+  if (stage === 'face-detail') return 'Face detail: ';
+  return '';
+}
+
+// The /i2v <N> steps for `images`. Mirrors startImage2VideoFor per image: the override
+// prompt when set, else buildVideoPrompt over the image's prompt and meta. Like the old
+// promise chain it stops at the first image with nothing to build a prompt from, and
+// returns that image as `missingPrompt`. Videos can't be a source, so they are skipped
+// and counted. The 🎞️ end frame rides along when it is a different image.
+export function buildI2vSteps(images, state) {
+  const steps = [];
+  let skippedVideos = 0;
+  let missingPrompt = null;
+  for (const img of images) {
+    if (isVideoUrl(img)) { skippedVideos++; continue; }
+    const orig = state.imagePrompts[img];
+    const meta = state.imageVideoMeta[img];
+    let prompt;
+    if (state.image2videoOverridePrompt) {
+      prompt = state.image2videoOverridePrompt;
+    } else {
+      if (!orig && !normalizeVideoMeta(meta).description) { missingPrompt = img; break; }
+      const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
+      prompt = buildVideoPrompt(base, meta, videoPromptOpts(state, img));
+    }
+    const lastFrame = (state.lastFrameUrl && state.lastFrameUrl !== img) ? state.lastFrameUrl : null;
+    steps.push({
+      kind: 'i2v', prompt, image: img,
+      ...(lastFrame ? { last_frame: lastFrame } : {}),
+      sourcePrompt: orig || '',
+      ...(meta ? { videoMeta: meta } : {}),
+    });
+  }
+  return { steps, skippedVideos, missingPrompt };
+}
+
+// The /face-detail steps for `images`: the pinned face prompt, else one derived from
+// each image's own prompt, with the face-detail replacements applied. An image with no
+// <lora:…> tag to derive from is skipped (the old chain warned and moved on), as is a
+// video.
+export function buildFaceDetailSteps(images, state) {
+  const steps = [];
+  let skippedVideos = 0;
+  let noPrompt = 0;
+  for (const img of images) {
+    if (isVideoUrl(img)) { skippedVideos++; continue; }
+    const orig = state.imagePrompts[img];
+    const prompt = applyReplacements(
+      state.lastFaceDetailPrompt || deriveFaceDetailPrompt(orig), state.faceDetailReplacements);
+    if (!prompt) { noPrompt++; continue; }
+    const meta = state.imageVideoMeta[img];
+    steps.push({
+      kind: 'face-detail', prompt, image: img, sourcePrompt: orig || '',
+      ...(meta ? { videoMeta: meta } : {}),
+    });
+  }
+  return { steps, skippedVideos, noPrompt };
+}
+
 // Builds the tooltip for an image's image2video button: "Image to video", plus the
 // start of the image's video description (or its soundscape) when it has one.
 export function i2vTooltip(meta, max = 160) {

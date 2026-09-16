@@ -17,18 +17,17 @@ command relies on the browser to write the session. So a job that *does* finish 
 the tab is gone leaves its image in the gallery but never in the chat — which is also
 why a client-side chain can't simply be left to run headless as-is.
 
-## Should move
+## Moved (2026-09-16)
 
-Ordered by how much the move is worth.
+All six moved to one server-side batch job, `/api/batch-run` — see
+`ADR/server-side-batch-runs.md`: `/face-detail-auto` on plain prompts, `/i2v <N>`,
+`/iterations`, `/multi-prompt`, `/face-detail <N>` / `/face-detail-session`, and
+`/t2i-workflow-iterate`.
 
-| Command | Loop lives in | Why it matters |
-|---|---|---|
-| `/face-detail-auto` on ordinary prompts | `chat.js:2296` (the `image` handler in `runGeneration`) | The server version already exists inside `run_sequence_run`, so this is mostly reuse. Today the pass only covers sequence-run shots server-side; a plain prompt's pass is queued in the browser. |
-| `/i2v <N>` | `commands.js:1976` | Videos take minutes each, so `/i2v 10` is exactly the run you start and walk away from. |
-| `/iterations` (N copies of a plain prompt, or of a t2v prompt while `/t2v` is on) | `chat.js:1586` | A large N stops after the current job if the tab goes. |
-| `/multi-prompt` | `commands.js:1574` | A pasted list of prompts, run one at a time from the browser. |
-| `/face-detail <N>`, `/face-detail-session` | `commands.js:2291`, `commands.js:2263` | Promise chains of one face-detail job per image. |
-| `/t2i-workflow-iterate` | `commands.js:2202` | One prompt run through each ticked workflow in turn. |
+## Still client-side, not yet surveyed for moving
+
+- `/upscale <N>` — a promise chain of one upscale job per image (`commands.js`). It
+  would be one more batch step kind.
 
 ## Should stay client-side
 
@@ -40,26 +39,7 @@ table. Moving them would mean running the command parser on the server.
 ## Already server-side (no work needed)
 
 - `/sequence`, `/video-sequence` and their auto passes — `run_sequence_run`.
+- The batch commands above — `run_batch_run`.
 - `/face-detail-super` — one request carrying a `count`, not N requests.
 - `/video-splice` — `POST /api/composite-videos`.
 - `/archive-*`, `/fscheck`, `/archive-explore`.
-
-## Suggested shape
-
-One general server-side batch job rather than six endpoints: a list of steps like
-`{kind, prompt, image?, workflow?}` run in order on a single thread. It would reuse
-`run_sequence_run`'s session recording, per-stage retry, cancel handling and its auto
-face-detail stage; each command above would just build the list and post it. The client
-would render progress the way it already does for a sequence run.
-
-Two things to settle when this is picked up:
-
-- **Settings snapshotting.** As with `/video-sequence-auto`, the steps must carry the
-  settings they were requested with (workflow, denoise, steps, video settings,
-  optimisations, references) and be validated with the ordinary parsers so a bad
-  request is a 400 before any job starts.
-- **Prompt derivation.** `/face-detail <N>` and `/i2v <N>` derive their prompts from
-  `state.imagePrompts` / `state.imageVideoMeta` in the browser. The server equivalents
-  live in `prompt_builders.py` (ports of `deriveFaceDetailPrompt` / `buildVideoPrompt` /
-  `normalizeVideoMeta` / `applyReplacements`) — change them together with `utils.js`,
-  as `tests/test_prompt_builders.py` mirrors the JS cases.

@@ -237,6 +237,9 @@ AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac"}
 # fed to the workflow, so a clip contributing both its video and its audio costs 2.
 # Mirrored client-side as REFERENCE_MAX_FILES in static/js/state.js.
 REFERENCE_MAX_FILES = 12
+# Most steps one /api/batch-run may carry. Generous, so /face-detail-session over a
+# long chat still fits in one run, while still bounding a runaway request.
+BATCH_MAX_STEPS = 500
 # Bypassable optimisations in the video workflows, toggled per run from /video-settings.
 # Each key names a "[opt:<key>] ..." marked node in the template (see
 # workflow.bypass_optimisation_nodes); a key absent from a template just bypasses

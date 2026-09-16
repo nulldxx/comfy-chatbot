@@ -34,7 +34,7 @@ import server_status
 from config import (
     ARCHIVE_AGENT_SOCKET, ARCHIVE_BROWSE_TIMEOUT_SECONDS, ARCHIVE_MARKER,
     ARCHIVE_MOUNT_DIR, ARCHIVE_SIZE, ARCHIVE_VOLUME,
-    BUILD_VERSION, COMFY_FACEDETAILER_DIR, COMFY_FACEDETAILER_WORKFLOW,
+    BATCH_MAX_STEPS, BUILD_VERSION, COMFY_FACEDETAILER_DIR, COMFY_FACEDETAILER_WORKFLOW,
     COMFY_GENERATION_DIR, COMFY_IMAGE2IMAGE_DIR, COMFY_IMAGE2IMAGE_WORKFLOW,
     COMFY_IMAGE2VIDEO_DIR, COMFY_IMAGE2VIDEO_WORKFLOW,
     COMFY_INPAINTING_DIR, COMFY_INPAINTING_WORKFLOW,
@@ -53,7 +53,9 @@ from config import (
 from generation_service import (
     TERMINAL_STATUSES,
     cancel_auto_purge, get_last_seed, get_last_sent_workflow, jobs, jobs_lock,
+    BATCH_STEP_KINDS,
     rename_and_retarget_session, run_generation, start_background_job,
+    start_batch_run_job,
     start_face_detail_super_job, start_generation_job, start_sequence_run_job,
 )
 from image_store import (
@@ -1713,10 +1715,22 @@ def _parse_gen_settings(data):
     (settings_dict, None) or (None, error_response).
     """
     settings = data.get("settings") or {}
-    server_address = settings.get("server") or COMFY_SERVER
-    server_os      = settings.get("server_os") or COMFY_SERVER_OS
-    workflow_name  = settings.get("workflow") or COMFY_WORKFLOW
+    image, err = _parse_image_settings(settings)
+    if err:
+        return None, err
+    return {
+        "server": settings.get("server") or COMFY_SERVER,
+        "server_os": settings.get("server_os") or COMFY_SERVER_OS,
+        "workflow": settings.get("workflow") or COMFY_WORKFLOW,
+        **image,
+    }, None
 
+
+def _parse_image_settings(block):
+    """The still-image (t2i) settings shared by sequence and batch runs.
+
+    Returns ({width, height, steps, extraPrompt}, None) or (None, error_response).
+    """
     def _opt_int(raw, label, minimum=None):
         if raw is None:
             return None, None
@@ -1728,27 +1742,23 @@ def _parse_gen_settings(data):
             return None, (jsonify({"error": f"{label} must be >= {minimum}"}), 400)
         return value, None
 
-    width,  err = _opt_int(settings.get("width"),  "width")
+    width,  err = _opt_int(block.get("width"),  "width")
     if err:
         return None, err
-    height, err = _opt_int(settings.get("height"), "height")
+    height, err = _opt_int(block.get("height"), "height")
     if err:
         return None, err
-    steps,  err = _opt_int(settings.get("steps"),  "steps", minimum=1)
+    steps,  err = _opt_int(block.get("steps"),  "steps", minimum=1)
     if err:
         return None, err
 
     return {
-        "server": server_address,
-        "server_os": server_os,
-        "workflow": workflow_name,
         "width": width,
         "height": height,
         "steps": steps,
         # Appended to every generated prompt server-side, matching the client's
-        # old per-image runGeneration behaviour for the (now-removed) client-driven
-        # sequence loop.
-        "extraPrompt": (settings.get("extraPrompt") or "").strip() or None,
+        # runGeneration behaviour for a single prompt.
+        "extraPrompt": (block.get("extraPrompt") or "").strip() or None,
     }, None
 
 
@@ -1759,6 +1769,33 @@ def _parse_replacement_pairs(raw):
         for pair in raw or []
         if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0]
     ]
+
+
+def _parse_auto_face(data):
+    """Validate an optional ``autoFaceDetail`` block (sent while /face-detail-auto is on).
+
+    Shared by sequence and batch runs. Returns ({"face": {...}} or {}, None) or
+    (None, error_response).
+    """
+    face = data.get("autoFaceDetail")
+    if not isinstance(face, dict):
+        return {}, None
+    workflow_name, err = resolve_workflow(
+        face.get("workflow") or COMFY_FACEDETAILER_WORKFLOW,
+        list_facedetailer_workflows(), "face-detailer",
+    )
+    if err:
+        return None, err
+    denoise, err = _parse_denoise(face)
+    if err:
+        return None, err
+    return {"face": {
+        "workflow": workflow_name,
+        "workflow_dir": COMFY_FACEDETAILER_DIR,
+        "denoise": denoise,
+        "prompt": (face.get("prompt") or "").strip() or None,
+        "replacements": _parse_replacement_pairs(face.get("replacements")),
+    }}, None
 
 
 def _parse_sequence_auto(data, video):
@@ -1772,26 +1809,9 @@ def _parse_sequence_auto(data, video):
 
     Returns ({"face": {...}?, "video": {...}?}, None) or (None, error_response).
     """
-    auto = {}
-
-    face = data.get("autoFaceDetail")
-    if isinstance(face, dict):
-        workflow_name, err = resolve_workflow(
-            face.get("workflow") or COMFY_FACEDETAILER_WORKFLOW,
-            list_facedetailer_workflows(), "face-detailer",
-        )
-        if err:
-            return None, err
-        denoise, err = _parse_denoise(face)
-        if err:
-            return None, err
-        auto["face"] = {
-            "workflow": workflow_name,
-            "workflow_dir": COMFY_FACEDETAILER_DIR,
-            "denoise": denoise,
-            "prompt": (face.get("prompt") or "").strip() or None,
-            "replacements": _parse_replacement_pairs(face.get("replacements")),
-        }
+    auto, err = _parse_auto_face(data)
+    if err:
+        return None, err
 
     vid = data.get("autoVideo")
     if video and isinstance(vid, dict):
@@ -1868,6 +1888,195 @@ def api_sequence_run():
     job_id = start_sequence_run_job(
         master, count, replacements, video, recording_name, gen_settings, auto=auto
     )
+    return jsonify({"job_id": job_id})
+
+
+def _batch_error(i, message):
+    return jsonify({"error": f"Step {i}: {message}"}), 400
+
+
+def _parse_batch_video_meta(raw):
+    """A step's source videoMeta, passed through for recording. The client sends
+    state.imageVideoMeta as-is, which may still be the legacy {action, audio} shape —
+    normalizeVideoMeta reads either on the way back — so only the type is enforced."""
+    if not isinstance(raw, dict):
+        return None
+    return {str(k): str(v) if v is not None else "" for k, v in raw.items()}
+
+
+def _parse_batch_run(data):
+    """Validate a /api/batch-run request into (steps, settings, auto, seed).
+
+    Every step is resolved here — workflow against its kind's allowlist, input images
+    to Paths, prompts checked non-empty — and each settings block is validated only if
+    a step needs it, so a bad request is a 400 before any job starts. See
+    generation_service.run_batch_run for how the resolved shapes are consumed.
+
+    Returns ((steps, settings, auto, seed), None) or (None, error_response).
+    """
+    raw_steps = data.get("steps")
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return None, (jsonify({"error": "steps must be a non-empty list"}), 400)
+    if len(raw_steps) > BATCH_MAX_STEPS:
+        return None, (jsonify({
+            "error": f"Too many steps ({len(raw_steps)}); the limit is {BATCH_MAX_STEPS}."
+        }), 400)
+
+    settings_in = data.get("settings") or {}
+    if not isinstance(settings_in, dict):
+        return None, (jsonify({"error": "settings must be an object"}), 400)
+    kinds = set()
+    for i, step in enumerate(raw_steps, start=1):
+        if not isinstance(step, dict) or step.get("kind") not in BATCH_STEP_KINDS:
+            kind = step.get("kind") if isinstance(step, dict) else None
+            return None, _batch_error(i, f"unknown step kind: {kind}")
+        kinds.add(step["kind"])
+
+    t2i_in = settings_in.get("t2i") or {}
+    video_in = settings_in.get("video") or {}
+    face_in = settings_in.get("face") or {}
+    settings = {
+        "server": settings_in.get("server") or COMFY_SERVER,
+        "server_os": settings_in.get("server_os") or COMFY_SERVER_OS,
+    }
+
+    if "t2i" in kinds:
+        image, err = _parse_image_settings(t2i_in)
+        if err:
+            return None, err
+        settings["t2i"] = image
+
+    if kinds & {"t2v", "i2v"}:
+        vs, err = _parse_video_settings(video_in)
+        if err:
+            return None, err
+        assert vs is not None  # err is None here, so vs is populated
+        video_steps, err = _parse_steps(video_in)
+        if err:
+            return None, err
+        disabled_opts, err = _parse_video_opts(video_in)
+        if err:
+            return None, err
+        ref_kwargs, err = _resolve_references(video_in)
+        if err:
+            return None, err
+        settings["video"] = {**vs, "steps": video_steps,
+                             "disabled_optimizations": disabled_opts,
+                             "references": ref_kwargs}
+
+    if "face-detail" in kinds:
+        denoise, err = _parse_denoise(face_in)
+        if err:
+            return None, err
+        settings["face"] = {"denoise": denoise}
+
+    # Each kind's allowlist and default, listed once per request rather than per step.
+    workflow_kinds = {
+        # t2i isn't allowlisted, matching /api/generate and /api/sequence-run.
+        "t2i": (None, t2i_in.get("workflow") or COMFY_WORKFLOW, COMFY_GENERATION_DIR, "t2i"),
+        "t2v": (list_text2video_workflows, video_in.get("t2vWorkflow") or COMFY_TEXT2VIDEO_WORKFLOW,
+                COMFY_TEXT2VIDEO_DIR, "text2video"),
+        "i2v": (list_image2video_workflows, video_in.get("i2vWorkflow") or COMFY_IMAGE2VIDEO_WORKFLOW,
+                COMFY_IMAGE2VIDEO_DIR, "image2video"),
+        "face-detail": (list_facedetailer_workflows, face_in.get("workflow") or COMFY_FACEDETAILER_WORKFLOW,
+                        COMFY_FACEDETAILER_DIR, "face-detailer"),
+    }
+    available = {kind: lister() for kind, (lister, *_rest) in workflow_kinds.items()
+                 if kind in kinds and lister is not None}
+
+    steps = []
+    for i, raw in enumerate(raw_steps, start=1):
+        kind = raw["kind"]
+        prompt = str(raw.get("prompt") or "").strip()
+        lister, default_wf, workflow_dir, label = workflow_kinds[kind]
+        wanted = str(raw.get("workflow") or "").strip() or default_wf
+        if lister is None:
+            workflow_name = wanted
+        else:
+            workflow_name, err = resolve_workflow(wanted, available[kind], label)
+            if err:
+                return None, err
+
+        clean, _ = parse_loras_from_prompt(prompt)
+        if kind in ("t2i", "face-detail", "t2v") and not prompt:
+            return None, _batch_error(i, "prompt is required")
+        if kind in ("t2i", "face-detail") and not clean:
+            return None, _batch_error(i, "prompt is empty after removing LoRA tags")
+
+        step = {"kind": kind, "prompt": prompt, "workflow": workflow_name,
+                "workflow_dir": workflow_dir,
+                "label": str(raw.get("label") or "")[:200]}
+
+        if kind in ("i2v", "face-detail"):
+            image_url = str(raw.get("image") or "").strip()
+            if not image_url:
+                return None, _batch_error(i, "image is required")
+            safe, image_path, err = resolve_input_image(image_url)
+            if err:
+                return None, err
+            step["input_image"] = image_path
+            step["source_prompt"] = str(raw.get("sourcePrompt") or "")
+            step["video_meta"] = _parse_batch_video_meta(raw.get("videoMeta"))
+            if kind == "face-detail":
+                step["preserve_mtime_from"] = safe
+            else:
+                step["input_last_frame"] = None
+                last_frame_url = str(raw.get("last_frame") or "").strip()
+                if last_frame_url:
+                    _, last_frame_path, err = resolve_input_image(last_frame_url)
+                    if err:
+                        return None, err
+                    step["input_last_frame"] = last_frame_path
+        steps.append(step)
+
+    auto, err = _parse_auto_face(data) if "t2i" in kinds else ({}, None)
+    if err:
+        return None, err
+
+    seed, err = _parse_seed(data)
+    if err:
+        return None, err
+
+    # What the session file stores as its settings on first write — JSON-safe, and the
+    # same shape a sequence run stores.
+    settings["record"] = {
+        "server": settings["server"], "server_os": settings["server_os"],
+        "workflow": workflow_kinds["t2i"][1],
+        **(settings.get("t2i") or {}),
+    }
+    return (steps, settings, auto, seed), None
+
+
+@app.route("/api/batch-run", methods=["POST"])
+@login_required
+def api_batch_run():
+    """Run a list of generation steps server-side, one after another.
+
+    Backs the commands that used to loop in the browser (/iterations, /multi-prompt,
+    /t2i-workflow-iterate, /i2v <N>, /face-detail <N>, /face-detail-session, and a plain
+    prompt under /face-detail-auto). Like /api/sequence-run the run survives the browser
+    closing and appends every result to <recordingName>; the client watches
+    /api/progress/<job_id>.
+    """
+    data = request.get_json(force=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object"}), 400
+
+    recording_name = slugify(data.get("recordingName") or "")
+    if not recording_name:
+        return jsonify({"error": "A recording session name is required"}), 400
+
+    # Before parsing: the steps' images and references resolve to files under it.
+    err = output_storage_error()
+    if err:
+        return err
+
+    parsed, err = _parse_batch_run(data)
+    if err:
+        return err
+    steps, settings, auto, seed = parsed
+
+    job_id = start_batch_run_job(steps, settings, recording_name, auto=auto, seed=seed)
     return jsonify({"job_id": job_id})
 
 
@@ -2018,15 +2227,16 @@ def api_jobs():
 
     Grok prompt-sequence jobs (kind == "sequence", expansion-only, not
     long-running) are excluded. "sequence-run" jobs (the server-driven
-    expand-and-generate loop behind /api/sequence-run) ARE included, both so
-    they're visible/cancellable in the /jobs recovery UI and so the client's
+    expand-and-generate loop behind /api/sequence-run) and "batch-run" jobs (the
+    step list behind /api/batch-run) ARE included, both so they're
+    visible/cancellable in the /jobs recovery UI and so the client's
     reattachLiveSequenceRun can find a still-running one by recording_name after
     a /session-load. Newest first.
     """
     with jobs_lock:
         items = []
         for job_id, rec in jobs.items():
-            if rec.get("kind") not in ("image", "video", "sequence-run"):
+            if rec.get("kind") not in ("image", "video", "sequence-run", "batch-run"):
                 continue
             items.append({
                 "job_id": job_id,

@@ -34,9 +34,9 @@ from workflow import (
 
 # In-memory job tracking. Each job record carries:
 #   status:          "pending" | "running" | "done" | "error" | "cancelled"
-#   kind:            "image" | "video" | "sequence" | "sequence-run" | "task"
+#   kind:            "image" | "video" | "sequence" | "sequence-run" | "batch-run" | "task"
 #   workflow_name:   filename of the workflow template (None for sequence jobs)
-#   recording_name:  chat file a sequence-run appends images to (that kind only)
+#   recording_name:  chat file a sequence-run/batch-run appends images to (those kinds only)
 #   prompt:          user prompt (empty string for upscale/sequence)
 #   summary:         short human label for /jobs cards
 #   server:          ComfyUI server address (None for sequence jobs)
@@ -925,30 +925,49 @@ def _discard_gallery_file(url):
         pass
 
 
-def run_sequence_run(job_id, master, count, replacements, video, gen_settings, auto=None):
-    """Expand ``master`` via Grok, then render every shot on this thread.
+class _StepRunner:
+    """The per-shot machinery a server-driven run is built from.
 
-    Each shot is up to three ComfyUI stages: generate the still; face-detail it in
-    place when ``auto["face"]`` is set (/face-detail-auto); then, for a /video-sequence
-    with ``auto["video"]`` set (/video-sequence-auto), image2video the result. See
-    app._parse_sequence_auto for the shape of ``auto``.
+    Shared by run_sequence_run and run_batch_run: both are "a list of ComfyUI stages
+    on one job thread, each result recorded into the chat session". It owns the job's
+    channel and cancel/retry events, the pause-on-failure retry loop (run_stage), the
+    persist-and-stream step (record), the terminal bookkeeping (finish), and the
+    generate → auto face-detail → auto image2video chain for a still (run_still).
     """
-    with jobs_lock:
-        channel = jobs[job_id]["channel"]
-        cancel_event = jobs[job_id]["cancel"]
-        retry_event = jobs[job_id]["retry"]
-        session = jobs[job_id]["session"]
-        jobs[job_id]["status"] = "running"
 
-    def send(msg_type, **kwargs):
-        channel.send(json.dumps({"type": msg_type, **kwargs}))
+    def __init__(self, job_id, gen_settings, server, server_os, face_auto=None, video_auto=None):
+        with jobs_lock:
+            rec = jobs[job_id]
+            self.channel = rec["channel"]
+            self.cancel_event = rec["cancel"]
+            self.retry_event = rec["retry"]
+            rec["status"] = "running"
+        self.job_id = job_id
+        # Persisted with the session on its first recorded asset, so JSON-safe only.
+        self.gen_settings = gen_settings
+        self.server = server
+        self.server_os = server_os
+        self.face_auto = face_auto
+        self.video_auto = video_auto
+        self.all_urls = []
+        self.failed = []
 
-    all_urls = []
-    failed = []
-    face_auto = (auto or {}).get("face")
-    video_auto = (auto or {}).get("video") if video else None
+    def send(self, msg_type, **kwargs):
+        self.channel.send(json.dumps({"type": msg_type, **kwargs}))
 
-    def run_stage(i, total, fail_prompt, progress_msg, retry_msg, fn, stage=None):
+    def check_cancel(self):
+        if self.cancel_event.is_set():
+            raise JobCancelled()
+
+    def core(self, prompt, loras, workflow, **kwargs):
+        """One _run_generation_core call against this run's server and events."""
+        return _run_generation_core(
+            self.job_id, self.channel, self.cancel_event, prompt, loras,
+            self.server, self.server_os, workflow,
+            retry_event=self.retry_event, **kwargs,
+        )
+
+    def run_stage(self, i, total, fail_prompt, progress_msg, retry_msg, fn, stage=None):
         """Run one ComfyUI stage of shot ``i`` until it succeeds or the run is cancelled.
 
         The user can abort a stuck/failed stage (via /api/retry-shot, which trips
@@ -959,58 +978,181 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings, a
         """
         tag = {"stage": stage} if stage else {}
         while True:
-            if cancel_event.is_set():
-                raise JobCancelled()
-            retry_event.clear()
-            send("progress", message=progress_msg)
+            self.check_cancel()
+            self.retry_event.clear()
+            self.send("progress", message=progress_msg)
             try:
                 return fn()
             except JobCancelled:
                 raise
             except JobRetry:
-                send("progress", message=retry_msg)
+                self.send("progress", message=retry_msg)
                 continue
             except Exception as e:
                 # Persist and surface the failure, then pause until the user
                 # retries (retry_event) or cancels the whole run (cancel_event).
                 error = f"{stage}: {e}" if stage else str(e)
-                failed.append({"index": i, "prompt": fail_prompt, "error": error, **tag})
+                self.failed.append({"index": i, "prompt": fail_prompt, "error": error, **tag})
                 try:
-                    append_failure_to_recording(job_id, fail_prompt, error)
+                    append_failure_to_recording(self.job_id, fail_prompt, error)
                 except Exception:
                     pass
-                send("shot_failed", prompt=fail_prompt, error=error, index=i, total=total, **tag)
-                while not retry_event.is_set():
-                    if cancel_event.is_set():
-                        raise JobCancelled()
+                self.send("shot_failed", prompt=fail_prompt, error=error, index=i, total=total, **tag)
+                while not self.retry_event.is_set():
+                    self.check_cancel()
                     time.sleep(0.25)
                 # Retry requested: drop this failure from the record (it will be
                 # re-attempted) and loop.
-                failed[:] = [f for f in failed if (f.get("index"), f.get("stage")) != (i, stage)]
+                self.failed[:] = [f for f in self.failed
+                                  if (f.get("index"), f.get("stage")) != (i, stage)]
 
-    def record(url, prompt, video_meta, i, total, message_prompt=None, stage=None):
+    def record(self, url, prompt, video_meta, i, total, message_prompt=None, stage=None):
         """Persist one finished asset to the session and stream it to the browser."""
-        all_urls.append(url)
+        self.all_urls.append(url)
         try:
             append_image_to_recording(
-                job_id, url, prompt, video_meta, gen_settings, message_prompt=message_prompt
+                self.job_id, url, prompt, video_meta, self.gen_settings,
+                message_prompt=message_prompt,
             )
         except Exception as e:
-            send("progress", message=f"Warning: could not persist to session: {e}")
-        send("image", url=url, prompt=prompt, videoMeta=video_meta, index=i, total=total,
-             **({"stage": stage} if stage else {}))
+            self.send("progress", message=f"Warning: could not persist to session: {e}")
+        self.send("image", url=url, prompt=prompt, videoMeta=video_meta, index=i, total=total,
+                  **({"stage": stage} if stage else {}))
+
+    def run_still(self, i, total, item_prompt, video_meta, urls):
+        """Record freshly generated ``urls`` for shot ``i``, running the auto passes.
+
+        Auto face-detail replaces the still before anything is recorded, so the session
+        and the video stage only ever see the detailed image. Like the client's pass it
+        is skipped when no face prompt can be derived (the prompt has no <lora:…> tag).
+        Auto image2video then runs on each recorded still.
+        """
+        face_auto, video_auto = self.face_auto, self.video_auto
+        for url in urls:
+            stills = [url]
+            face_prompt, face_loras = "", []
+            if face_auto and not _is_video_url(url):
+                fp = apply_replacements(
+                    face_auto["prompt"] or derive_face_detail_prompt(item_prompt),
+                    face_auto["replacements"],
+                )
+                if fp:
+                    face_prompt, face_loras = parse_loras_from_prompt(fp)
+            if face_auto and face_prompt:
+                try:
+                    detailed = self.run_stage(
+                        i, total, item_prompt,
+                        f"Face-detailing {i}/{total}…", f"Retrying face-detail {i}/{total}…",
+                        lambda: self.core(
+                            face_prompt, face_loras, face_auto["workflow"],
+                            workflow_dir=face_auto["workflow_dir"],
+                            input_image=_gallery_path(url),
+                            preserve_mtime_from=_gallery_path(url).name,
+                            denoise=face_auto["denoise"],
+                        ),
+                        stage="face-detail",
+                    )
+                except JobCancelled:
+                    # Keep the undetailed still rather than orphaning it.
+                    self.record(url, item_prompt, video_meta, i, total)
+                    raise
+                if detailed:
+                    _discard_gallery_file(url)
+                    stills = detailed
+
+            for still in stills:
+                self.record(still, item_prompt, video_meta, i, total)
+                if not video_auto or _is_video_url(still):
+                    continue
+                # The prompt the 🎬 button would build (startImage2VideoFor), minus
+                # the 🎞️ end frame: every shot starts from its own still.
+                v_prompt = video_auto["override_prompt"] or build_video_prompt(
+                    apply_replacements(item_prompt, video_auto["replacements"]),
+                    video_meta, audio=video_auto["audio"],
+                )
+                v_clean, _ = parse_loras_from_prompt(v_prompt)
+                self.send("shot", index=i, total=total, prompt=v_prompt,
+                          videoMeta=video_meta, stage="image2video")
+                videos = self.run_stage(
+                    i, total, v_prompt,
+                    f"Image2video {i}/{total}…", f"Retrying image2video {i}/{total}…",
+                    lambda: self.core(
+                        v_clean, [], video_auto["workflow"],
+                        workflow_dir=video_auto["workflow_dir"],
+                        input_image=_gallery_path(still),
+                        steps=video_auto["steps"],
+                        duration=video_auto["duration"], frames=video_auto["frames"],
+                        fps=video_auto["fps"],
+                        video_width=video_auto["video_width"],
+                        video_height=video_auto["video_height"],
+                        disabled_optimizations=video_auto["disabled_optimizations"],
+                        **_copy_references(video_auto["references"]),
+                    ),
+                    stage="image2video",
+                )
+                # Stored against the still's prompt and meta, as runImage2Video
+                # stores a video; the user line shows the prompt it ran with.
+                for v in videos:
+                    self.record(v, item_prompt, video_meta, i, total,
+                                message_prompt=v_prompt, stage="image2video")
+
+    def finish(self, status, error=None, **done_extra):
+        """Mark the job terminal and emit the matching SSE event."""
+        extra = {"images": self.all_urls, "assets": self.all_urls, "failed": self.failed}
+        with jobs_lock:
+            if status == "error":
+                _mark_terminal_locked(self.job_id, status, error=error, **extra)
+            else:
+                _mark_terminal_locked(self.job_id, status, **extra)
+        if status == "done":
+            self.send("done", images=self.all_urls, failed=self.failed, **done_extra)
+        elif status == "cancelled":
+            self.send("cancelled", message="Cancelled")
+        else:
+            self.send("error", message=error)
+
+
+def _copy_references(refs):
+    """Fresh per-call copies of the resolved reference slot lists.
+
+    _run_generation_core pads/mutates these, and a run submits the same references
+    many times over."""
+    return {key: list(refs.get(key) or []) for key in REFERENCE_KWARGS}
+
+
+REFERENCE_KWARGS = (
+    "input_reference_images", "input_reference_videos",
+    "input_reference_video_audios", "input_reference_audios",
+)
+
+
+def run_sequence_run(job_id, master, count, replacements, video, gen_settings, auto=None):
+    """Expand ``master`` via Grok, then render every shot on this thread.
+
+    Each shot is up to three ComfyUI stages: generate the still; face-detail it in
+    place when ``auto["face"]`` is set (/face-detail-auto); then, for a /video-sequence
+    with ``auto["video"]`` set (/video-sequence-auto), image2video the result. See
+    app._parse_sequence_auto for the shape of ``auto``.
+    """
+    with jobs_lock:
+        session = jobs[job_id]["session"]
+    run = _StepRunner(
+        job_id, gen_settings, gen_settings["server"], gen_settings["server_os"],
+        face_auto=(auto or {}).get("face"),
+        video_auto=(auto or {}).get("video") if video else None,
+    )
+    send = run.send
+    out = []
 
     try:
-        if cancel_event.is_set():
-            raise JobCancelled()
+        run.check_cancel()
 
         send("progress", message=f"Asking Grok for {count} {'shot' if video else 'prompt'}(s)…")
 
         if video:
             shots = generate_video_prompt_sequence(
-                master, count, cancel_event=cancel_event, session=session
+                master, count, cancel_event=run.cancel_event, session=session
             )
-            out = []
             for shot in shots:
                 item = {key: shot.get(key, "") for key in VIDEO_SHOT_KEYS}
                 for src, dst in replacements:
@@ -1019,9 +1161,8 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings, a
                 out.append(item)
         else:
             prompts = generate_prompt_sequence(
-                master, count, cancel_event=cancel_event, session=session
+                master, count, cancel_event=run.cancel_event, session=session
             )
-            out = []
             for p in prompts:
                 for src, dst in replacements:
                     p = case_preserving_replace(p, src, dst)
@@ -1033,8 +1174,7 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings, a
         extra_prompt = (gen_settings.get("extraPrompt") or "").strip()
         total = len(out)
         for i, item in enumerate(out, start=1):
-            if cancel_event.is_set():
-                raise JobCancelled()
+            run.check_cancel()
 
             if video:
                 item_prompt = item.get("prompt", "")
@@ -1058,132 +1198,39 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings, a
             # Announce the start of this shot so the attached client can open a
             # fresh per-shot bubble (with its own status line, retry/cancel buttons
             # and generation timer) before the "Generating…"/"Queued…" progress and
-            # the final image arrive — restoring the per-image UX the old
-            # client-driven loop had. Carries the original prompt (pre-extra) and
+            # the final image arrive. Carries the original prompt (pre-extra) and
             # video meta so the bubble's user line matches the "image" event.
             # Emitted once, before the retry loop, so the client keeps the same
             # per-shot bubble across any retries.
             send("shot", index=i, total=total, prompt=item_prompt, videoMeta=video_meta)
 
-            server, server_os = gen_settings["server"], gen_settings["server_os"]
-            urls = run_stage(
+            urls = run.run_stage(
                 i, total, item_prompt, f"Generating {i}/{total}…", f"Retrying {i}/{total}…",
-                lambda: _run_generation_core(
-                    job_id, channel, cancel_event, gen_prompt, loras,
-                    server, server_os, gen_settings["workflow"],
+                lambda: run.core(
+                    gen_prompt, loras, gen_settings["workflow"],
                     workflow_dir=COMFY_GENERATION_DIR,
                     width=gen_settings.get("width"),
                     height=gen_settings.get("height"),
                     steps=gen_settings.get("steps"),
-                    retry_event=retry_event,
                 ),
             )
+            run.run_still(i, total, item_prompt, video_meta, urls)
 
-            for url in urls:
-                # Auto face-detail replaces the still before anything is recorded, so
-                # the session and the video stage only ever see the detailed image.
-                # Like the client's pass it is skipped when no face prompt can be
-                # derived (the prompt has no <lora:…> tag).
-                stills = [url]
-                face_prompt, face_loras = "", []
-                if face_auto and not _is_video_url(url):
-                    fp = apply_replacements(
-                        face_auto["prompt"] or derive_face_detail_prompt(item_prompt),
-                        face_auto["replacements"],
-                    )
-                    if fp:
-                        face_prompt, face_loras = parse_loras_from_prompt(fp)
-                if face_auto and face_prompt:
-                    try:
-                        detailed = run_stage(
-                            i, total, item_prompt,
-                            f"Face-detailing {i}/{total}…", f"Retrying face-detail {i}/{total}…",
-                            lambda: _run_generation_core(
-                                job_id, channel, cancel_event, face_prompt, face_loras,
-                                server, server_os, face_auto["workflow"],
-                                workflow_dir=face_auto["workflow_dir"],
-                                input_image=_gallery_path(url),
-                                preserve_mtime_from=_gallery_path(url).name,
-                                denoise=face_auto["denoise"],
-                                retry_event=retry_event,
-                            ),
-                            stage="face-detail",
-                        )
-                    except JobCancelled:
-                        # Keep the undetailed still rather than orphaning it.
-                        record(url, item_prompt, video_meta, i, total)
-                        raise
-                    if detailed:
-                        _discard_gallery_file(url)
-                        stills = detailed
-
-                for still in stills:
-                    record(still, item_prompt, video_meta, i, total)
-                    if not video_auto or _is_video_url(still):
-                        continue
-                    # The prompt the 🎬 button would build (startImage2VideoFor), minus
-                    # the 🎞️ end frame: every shot starts from its own still.
-                    v_prompt = video_auto["override_prompt"] or build_video_prompt(
-                        apply_replacements(item_prompt, video_auto["replacements"]),
-                        video_meta, audio=video_auto["audio"],
-                    )
-                    v_clean, _ = parse_loras_from_prompt(v_prompt)
-                    refs = video_auto["references"]
-                    send("shot", index=i, total=total, prompt=v_prompt,
-                         videoMeta=video_meta, stage="image2video")
-                    videos = run_stage(
-                        i, total, v_prompt,
-                        f"Image2video {i}/{total}…", f"Retrying image2video {i}/{total}…",
-                        lambda: _run_generation_core(
-                            job_id, channel, cancel_event, v_clean, [],
-                            server, server_os, video_auto["workflow"],
-                            workflow_dir=video_auto["workflow_dir"],
-                            input_image=_gallery_path(still),
-                            steps=video_auto["steps"],
-                            duration=video_auto["duration"], frames=video_auto["frames"],
-                            fps=video_auto["fps"],
-                            video_width=video_auto["video_width"],
-                            video_height=video_auto["video_height"],
-                            disabled_optimizations=video_auto["disabled_optimizations"],
-                            retry_event=retry_event,
-                            input_reference_images=list(refs["input_reference_images"]),
-                            input_reference_videos=list(refs["input_reference_videos"]),
-                            input_reference_video_audios=list(refs["input_reference_video_audios"]),
-                            input_reference_audios=list(refs["input_reference_audios"]),
-                        ),
-                        stage="image2video",
-                    )
-                    # Stored against the still's prompt and meta, as runImage2Video
-                    # stores a video; the user line shows the prompt it ran with.
-                    for v in videos:
-                        record(v, item_prompt, video_meta, i, total,
-                               message_prompt=v_prompt, stage="image2video")
-
-        with jobs_lock:
-            _mark_terminal_locked(job_id, "done", images=all_urls, assets=all_urls, failed=failed)
-        send("done", images=all_urls, prompts=out, video=video, failed=failed)
+        run.finish("done", prompts=out, video=video)
 
     except JobCancelled:
-        with jobs_lock:
-            _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls, failed=failed)
-        send("cancelled", message="Cancelled")
+        run.finish("cancelled")
     except GrokError as e:
         # A cancel during the Grok call closes the session, surfacing as a
         # GrokError from the aborted request — report it as a cancellation.
-        if cancel_event.is_set():
-            with jobs_lock:
-                _mark_terminal_locked(job_id, "cancelled", images=all_urls, assets=all_urls, failed=failed)
-            send("cancelled", message="Cancelled")
+        if run.cancel_event.is_set():
+            run.finish("cancelled")
         else:
-            with jobs_lock:
-                _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls, failed=failed)
-            send("error", message=str(e))
+            run.finish("error", error=str(e))
     except Exception as e:
-        with jobs_lock:
-            _mark_terminal_locked(job_id, "error", error=str(e), images=all_urls, assets=all_urls, failed=failed)
-        send("error", message=str(e))
+        run.finish("error", error=str(e))
     finally:
-        channel.close()
+        run.channel.close()
         try:
             session.close()
         except Exception:
@@ -1200,8 +1247,19 @@ def start_sequence_run_job(master, count, replacements, video, recording_name, g
     run appends each image to; it may be retargeted mid-run by
     rename_and_retarget_session (see append_image_to_recording).
     """
-    job_id = str(uuid.uuid4())
     summary = _build_summary(None, master, "video-sequence-run" if video else "sequence-run")
+    return _start_run_job(
+        run_sequence_run, (master, count, replacements, video, gen_settings, auto),
+        kind="sequence-run", recording_name=recording_name, server=gen_settings.get("server"),
+        workflow_name=gen_settings.get("workflow"), prompt=master, summary=summary,
+        session=requests.Session(),
+    )
+
+
+def _start_run_job(target, args, *, kind, recording_name, server, workflow_name, prompt,
+                   summary, session=None):
+    """Create the job record a _StepRunner-driven run needs and start its thread."""
+    job_id = str(uuid.uuid4())
     with jobs_lock:
         jobs[job_id] = {
             "status": "pending",
@@ -1210,13 +1268,13 @@ def start_sequence_run_job(master, count, replacements, video, recording_name, g
             "assets": [],
             "cancel": threading.Event(),
             "retry": threading.Event(),
-            "server": gen_settings.get("server"),
+            "server": server,
             "prompt_id": None,
-            "session": requests.Session(),
+            "session": session,
             "recording_name": recording_name,
-            "kind": "sequence-run",
-            "workflow_name": gen_settings.get("workflow"),
-            "prompt": master,
+            "kind": kind,
+            "workflow_name": workflow_name,
+            "prompt": prompt,
             "summary": summary,
             "started_at": time.time(),
             "finished_at": None,
@@ -1224,13 +1282,174 @@ def start_sequence_run_job(master, count, replacements, video, recording_name, g
         }
         _evict_old_jobs_locked()
 
-    t = threading.Thread(
-        target=run_sequence_run,
-        args=(job_id, master, count, replacements, video, gen_settings, auto),
-        daemon=True,
-    )
+    t = threading.Thread(target=target, args=(job_id, *args), daemon=True)
     t.start()
     return job_id
+
+
+# ---------------------------------------------------------------------------
+# Server-side batch runs
+# ---------------------------------------------------------------------------
+#
+# The commands that used to loop in the browser — /iterations, /multi-prompt,
+# /t2i-workflow-iterate, /i2v <N>, /face-detail <N>, /face-detail-session and a plain
+# prompt under /face-detail-auto — post their whole step list to /api/batch-run
+# instead. Same guarantees as a sequence run: the chain survives the tab closing and
+# every result is recorded into the chat session from this thread.
+#
+# Steps arrive fully resolved by app._parse_batch_run: workflow + workflow_dir, input
+# image Paths, and the user-facing prompt. Only the auto face-detail pass on a t2i
+# step builds its prompt here, since its image doesn't exist until the step runs.
+
+BATCH_STEP_KINDS = ("t2i", "t2v", "i2v", "face-detail")
+# Kinds whose generation is a "primary" one — the ones /getseed pins and tracks.
+BATCH_PRIMARY_KINDS = ("t2i", "t2v", "i2v")
+# The "stage" a step's shot/image events carry, which picks the client's user-line
+# label. A t2i step has none, exactly like a sequence-run still.
+BATCH_STAGE_FOR_KIND = {"t2i": None, "t2v": "text2video", "i2v": "image2video",
+                        "face-detail": "face-detail"}
+
+
+def _batch_step_references(refs, input_image):
+    """The references for one i2v step, with image slot 1 dropped when it is the step's
+    own source image — so the <INPUT_IMAGE> fallback applies, exactly as the client's
+    referencesForRun(image) suppresses it for a single run."""
+    out = _copy_references(refs)
+    images = out["input_reference_images"]
+    if input_image is not None and images and images[0] == input_image:
+        images[0] = None
+    return out
+
+
+def run_batch_run(job_id, steps, settings, auto=None, seed=None):
+    """Run ``steps`` in order on this thread, recording every result to the session.
+
+    ``settings`` carries server/server_os, the per-kind setting blocks ("t2i", "video",
+    "face") and "record" (the JSON-safe snapshot persisted with the session). ``seed``
+    pins the first primary (t2i/t2v/i2v) step, as a /getseed on the first run would.
+    See app._parse_batch_run for the step shapes.
+    """
+    t2i = settings.get("t2i") or {}
+    video = settings.get("video") or {}
+    face = settings.get("face") or {}
+    run = _StepRunner(
+        job_id, settings.get("record") or {}, settings["server"], settings["server_os"],
+        face_auto=(auto or {}).get("face"),
+    )
+    send = run.send
+    extra_prompt = (t2i.get("extraPrompt") or "").strip()
+    seed_left = seed
+    total = len(steps)
+
+    try:
+        for i, step in enumerate(steps, start=1):
+            run.check_cancel()
+            kind = step["kind"]
+            prompt = step.get("prompt") or ""
+            label = step.get("label") or ""
+            step_seed = None
+            if kind in BATCH_PRIMARY_KINDS and seed_left is not None:
+                step_seed, seed_left = seed_left, None
+
+            stage = BATCH_STAGE_FOR_KIND[kind]
+            send("shot", index=i, total=total, prompt=prompt,
+                 videoMeta=step.get("video_meta"),
+                 **({"stage": stage} if stage else {}),
+                 **({"label": label} if label else {}))
+            progress_msg, retry_msg = f"Generating {i}/{total}…", f"Retrying {i}/{total}…"
+
+            if kind == "t2i":
+                clean, loras = parse_loras_from_prompt(prompt)
+                gen_prompt = f"{clean} {extra_prompt}".strip() if extra_prompt else clean
+                urls = run.run_stage(
+                    i, total, prompt, progress_msg, retry_msg,
+                    lambda: run.core(
+                        gen_prompt, loras, step["workflow"],
+                        workflow_dir=step["workflow_dir"],
+                        width=t2i.get("width"), height=t2i.get("height"),
+                        steps=t2i.get("steps"),
+                        seed=step_seed, track_seed=True,
+                    ),
+                )
+                run.run_still(i, total, prompt, None, urls)
+
+            elif kind in ("t2v", "i2v"):
+                clean, _ = parse_loras_from_prompt(prompt)
+                input_image = step.get("input_image")
+                refs = video.get("references") or {}
+                image_kwargs = {}
+                if kind == "i2v":
+                    image_kwargs = {"input_image": input_image,
+                                    "input_last_frame": step.get("input_last_frame")}
+                    refs_kwargs = _batch_step_references(refs, input_image)
+                else:
+                    refs_kwargs = _copy_references(refs)
+                urls = run.run_stage(
+                    i, total, prompt, progress_msg, retry_msg,
+                    lambda: run.core(
+                        clean, [], step["workflow"],
+                        workflow_dir=step["workflow_dir"],
+                        steps=video.get("steps"), seed=step_seed, track_seed=True,
+                        duration=video.get("duration"), frames=video.get("frames"),
+                        fps=video.get("fps"),
+                        video_width=video.get("video_width"),
+                        video_height=video.get("video_height"),
+                        disabled_optimizations=video.get("disabled_optimizations") or set(),
+                        **image_kwargs, **refs_kwargs,
+                    ),
+                )
+                for url in urls:
+                    if kind == "i2v":
+                        # Stored against the source image's prompt and meta, as
+                        # runImage2Video stores a video; the user line is the i2v prompt.
+                        run.record(url, step.get("source_prompt") or "", step.get("video_meta"),
+                                   i, total, message_prompt=prompt, stage=stage)
+                    else:
+                        run.record(url, prompt, None, i, total, stage=stage)
+
+            elif kind == "face-detail":
+                clean, loras = parse_loras_from_prompt(prompt)
+                urls = run.run_stage(
+                    i, total, prompt, progress_msg, retry_msg,
+                    lambda: run.core(
+                        clean, loras, step["workflow"],
+                        workflow_dir=step["workflow_dir"],
+                        input_image=step["input_image"],
+                        preserve_mtime_from=step.get("preserve_mtime_from"),
+                        denoise=face.get("denoise"),
+                    ),
+                )
+                # A new image alongside its source (as /face-detail <N> always showed
+                # it), inheriting the source's prompt and meta.
+                for url in urls:
+                    run.record(url, step.get("source_prompt") or "", step.get("video_meta"),
+                               i, total, message_prompt=prompt, stage=stage)
+
+            else:  # validated in app._parse_batch_run; defensive only
+                raise ValueError(f"Unknown batch step kind: {kind}")
+
+        run.finish("done", batch=True)
+
+    except JobCancelled:
+        run.finish("cancelled")
+    except Exception as e:
+        run.finish("error", error=str(e))
+    finally:
+        run.channel.close()
+
+
+def start_batch_run_job(steps, settings, recording_name, auto=None, seed=None):
+    """Create a tracked server-side batch run; return its job_id."""
+    first = steps[0] if steps else {}
+    summary = _build_summary(first.get("workflow"), first.get("prompt") or "", "batch-run")
+    if len(steps) > 1:
+        summary = f"{summary} (+{len(steps) - 1} more)"
+    return _start_run_job(
+        run_batch_run, (steps, settings, auto, seed),
+        kind="batch-run", recording_name=recording_name, server=settings.get("server"),
+        workflow_name=first.get("workflow"), prompt=first.get("prompt") or "",
+        summary=summary,
+    )
 
 
 def append_image_to_recording(job_id, url, prompt, video_meta, settings, message_prompt=None):

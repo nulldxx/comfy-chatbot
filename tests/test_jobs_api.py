@@ -76,6 +76,12 @@ class ApiJobsTests(_JobsFixture):
         item = self.client.get("/api/jobs").get_json()[0]
         self.assertEqual(item["recording_name"], "my-run")
 
+    def test_batch_run_is_listed_with_its_recording_name(self):
+        # /api/batch-run jobs are rejoined after a reload exactly like sequence runs.
+        gs.jobs["a"] = _make_record(kind="batch-run", recording_name="my-batch")
+        items = self.client.get("/api/jobs").get_json()
+        self.assertEqual([(i["job_id"], i["recording_name"]) for i in items], [("a", "my-batch")])
+
     def test_image_job_recording_name_is_none(self):
         gs.jobs["a"] = _make_record(kind="image")
         item = self.client.get("/api/jobs").get_json()[0]

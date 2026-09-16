@@ -2,7 +2,7 @@ import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
   buildVideoPrompt, i2vTooltip, normalizeVideoMeta, videoPromptOpts, COMFY_URL_DND_TYPE, videoOptsPayload,
-  progressPercent, progressCaption,
+  progressPercent, progressCaption, runStagePrefix,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
 import {
@@ -148,13 +148,20 @@ if (!state.recordingName) state.recordingName = newTempSessionName();
 // load the session it's recording into (bringing back the images generated so
 // far) which in turn reattaches to its live SSE stream (restoreSession →
 // reattachLiveSequenceRun), restoring the "Queued…" progress and cancel button.
+// The job kinds driven server-side into a recording session — a /sequence run or a
+// batch (/iterations, /multi-prompt, /i2v <N>, …). Both stream through
+// attachSequenceRunStream and are rejoined the same way.
+function isLiveRunKind(kind) {
+  return kind === 'sequence-run' || kind === 'batch-run';
+}
+
 function resumeRunningSequenceRunOnStartup() {
   fetch('/api/jobs')
     .then(r => r.json())
     .then(jobsList => {
       if (!Array.isArray(jobsList)) return;
       const job = jobsList.find(j =>
-        j.kind === 'sequence-run'
+        isLiveRunKind(j.kind)
         && (j.status === 'pending' || j.status === 'running')
         && j.recording_name
       );
@@ -1577,9 +1584,22 @@ function sendMessage() {
 
   raw = expandAliases(raw, state.ALIASES);
 
-  addMessage('user', escapeHtml(raw), raw);
   inputEl.value = '';
   inputEl.style.height = 'auto';
+
+  // Several iterations, or a generate-then-face-detail chain, run as one server-side
+  // batch so they survive the tab closing. Each shot writes its own user line.
+  const n = state.iterations;
+  if (n > 1 || (state.autoFaceDetail && !state.t2vMode)) {
+    const kind = state.t2vMode ? 't2v' : 't2i';
+    const steps = Array.from({ length: n }, (_, i) => ({
+      kind, prompt: raw, ...(n > 1 ? { label: ` (${i + 1}/${n})` } : {}),
+    }));
+    runBatchJob(steps);
+    return;
+  }
+
+  addMessage('user', escapeHtml(raw), raw);
   sendBtn.disabled = true;
 
   (async () => {
@@ -1705,9 +1725,10 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
   // Opens a fresh per-shot bubble (user line + bot status bubble with its own
   // dots and cancel button) and starts its generation timer. An auto image2video
   // stage (/video-sequence-auto) gets the same "Image2video:" line the 🎬 button writes.
-  const openShell = (prompt, stage) => {
-    const label = stage === 'image2video' ? 'Image2video: ' : '';
-    addMessage('user', label + escapeHtml(prompt || ''), prompt || '');
+  // A batch step's `label` (e.g. " (2/5)", " — workflow (1/3)") trails every status
+  // line of its shell, as runGeneration's label does.
+  const openShell = (prompt, stage, label = '') => {
+    addMessage('user', runStagePrefix(stage) + escapeHtml(prompt || ''), prompt || '');
     const bubble = addMessage('bot', `
       <div class="status-text">Connecting…</div>
       <div class="dots"><span></span><span></span><span></span></div>
@@ -1743,6 +1764,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       cancelBtn: cb,
       retryBtn: rb,
       startTime: Date.now(),
+      label,
     };
   };
 
@@ -1753,7 +1775,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (sh.cancelBtn) sh.cancelBtn.remove();
     if (sh.retryBtn) sh.retryBtn.remove();
     const elapsed = ((Date.now() - sh.startTime) / 1000).toFixed(1);
-    if (sh.statusText) sh.statusText.textContent = `Done — 1 result in ${elapsed}s`;
+    if (sh.statusText) sh.statusText.textContent = `Done — 1 result in ${elapsed}s${sh.label || ''}`;
     appendChatImage(sh.bubble, url);
   };
 
@@ -1817,7 +1839,8 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       const assets = msg.images || [];
       const nVideos = assets.filter(isVideoUrl).length;
       const counts = `${assets.length - nVideos} image(s)` + (nVideos ? `, ${nVideos} video(s)` : '');
-      statusBubble.innerHTML = `<div class="status-text">Sequence complete — ${counts}. Recorded to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '')}</strong>.</div>`;
+      const what = msg.batch ? 'Batch' : 'Sequence';
+      statusBubble.innerHTML = `<div class="status-text">${what} complete — ${counts}. Recorded to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '')}</strong>.</div>`;
       scrollBottom();
       if (onDone) onDone(msg);
       return;
@@ -1844,13 +1867,13 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (!caughtUp) return;
 
     if (msg.type === 'shot') {
-      shell = openShell(msg.prompt, msg.stage);
+      shell = openShell(msg.prompt, msg.stage, msg.label || '');
       scrollBottom();
     } else if (msg.type === 'tick') {
       if (shell) applyProgressTick(shell.barWrap, shell.captionEl, msg);
     } else if (msg.type === 'progress') {
       if (shell && shell.statusText) {
-        shell.statusText.textContent = msg.message;
+        shell.statusText.textContent = msg.message + (shell.label || '');
         // A progress event means the (possibly retried) generation is live
         // again — re-enable retry and restore the spinner if a prior failure
         // had paused the shell.
@@ -1873,6 +1896,14 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
         state.sessionImages.push(url);
         if (msg.prompt) state.imagePrompts[url] = msg.prompt;
         if (msg.videoMeta) state.imageVideoMeta[url] = msg.videoMeta;
+        // As runImage2Video does, remember what a video was made from for the
+        // metadata editor's Clone button.
+        if (msg.stage === 'image2video') {
+          const srcMeta = normalizeVideoMeta(msg.videoMeta, msg.prompt || '');
+          if (msg.prompt || srcMeta.description || srcMeta.soundscape || srcMeta.music) {
+            state.lastVideoMeta = { prompt: msg.prompt || '', ...srcMeta };
+          }
+        }
         if (shell) {
           finishShellWithImage(shell, url);
           shell = null;
@@ -1945,14 +1976,7 @@ function runSequenceRunJob(master, count, opts = {}) {
         },
         // Follow-up passes run per shot on the server, so they survive the tab
         // closing: face-detail first (it takes precedence), then image2video.
-        ...(state.autoFaceDetail ? {
-          autoFaceDetail: {
-            workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW,
-            prompt: state.lastFaceDetailPrompt || null,
-            replacements: state.faceDetailReplacements,
-            denoise: state.currentDenoise.face,
-          },
-        } : {}),
+        ...autoFaceDetailPayload(),
         ...(video && state.autoVideoSequence ? {
           autoVideo: {
             workflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW,
@@ -1991,6 +2015,107 @@ function runSequenceRunJob(master, count, opts = {}) {
   });
 }
 
+// The /face-detail-auto block a server-driven run carries: the pass runs per still on
+// the job thread, deriving each prompt there (prompt_builders.py).
+function autoFaceDetailPayload() {
+  if (!state.autoFaceDetail) return {};
+  return {
+    autoFaceDetail: {
+      workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW,
+      prompt: state.lastFaceDetailPrompt || null,
+      replacements: state.faceDetailReplacements,
+      denoise: state.currentDenoise.face,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// runBatchJob — a list of generation steps run server-side over SSE
+// ---------------------------------------------------------------------------
+// The commands that used to loop here (/iterations, /multi-prompt,
+// /t2i-workflow-iterate, /i2v <N>, /face-detail <N>, /face-detail-session, and a plain
+// prompt under /face-detail-auto) build `steps` and post them once to /api/batch-run.
+// The server runs them in order and records each result into the session, so the chain
+// survives the tab closing; this tab renders it exactly like a sequence run.
+//
+// Each step is {kind: 't2i'|'t2v'|'i2v'|'face-detail', prompt, …} (see
+// app._parse_batch_run). Settings are snapshotted now, per kind. Resolves true when the
+// batch completes, false on cancel/error — so a macro awaiting a command waits for it.
+function runBatchJob(steps) {
+  if (!steps.length) return Promise.resolve(false);
+  state.iterationsFromSequence = false;
+  sendBtn.disabled = true;
+  const vs = state.currentVideoSettings;
+  // /getseed pins the batch's first t2i/t2v/i2v step, and is consumed once accepted.
+  const seedToUse = state.reuseSeed != null ? state.reuseSeed : null;
+  return new Promise(resolve => {
+    const statusBubble = addMessage('bot', `
+      <div class="status-text">Starting ${steps.length} step(s)…</div>
+      <div class="dots"><span></span><span></span><span></span></div>
+    `);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'cancel-btn';
+    cancelBtn.title = 'Cancel this run';
+    cancelBtn.textContent = '✕';
+    cancelBtn.disabled = true;
+    statusBubble.appendChild(cancelBtn);
+
+    fetch('/api/batch-run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recordingName: state.recordingName,
+        steps,
+        settings: {
+          server: state.currentServer ? state.currentServer.address : null,
+          server_os: state.currentServer ? state.currentServer.os : null,
+          t2i: {
+            workflow: state.currentWorkflow,
+            width: state.currentResolution ? state.currentResolution.width : null,
+            height: state.currentResolution ? state.currentResolution.height : null,
+            steps: state.currentGenerationSteps,
+            extraPrompt: state.extraPrompt,
+          },
+          video: {
+            i2vWorkflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW,
+            t2vWorkflow: state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW,
+            duration: vs.duration, frames: vs.frames, fps: vs.fps,
+            video_width: vs.width, video_height: vs.height,
+            video_opts: videoOptsPayload(vs),
+            ...(state.currentVideoSteps !== null ? { steps: state.currentVideoSteps } : {}),
+            // Slot 1 is dropped server-side for an i2v step whose source it is, as
+            // referencesForRun(image) does for a single run.
+            references: referencesForRun(null),
+          },
+          face: {
+            workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW,
+            denoise: state.currentDenoise.face,
+          },
+        },
+        ...autoFaceDetailPayload(),
+        ...(seedToUse != null ? { seed: seedToUse } : {}),
+      }),
+    })
+    .then(parseJsonResponse)
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      if (seedToUse != null && state.reuseSeed === seedToUse) state.reuseSeed = null;
+      // The server is now the sole writer of this session file (see scheduleRecordSave).
+      state.liveRunSession = state.recordingName;
+      attachSequenceRunStream(data.job_id, statusBubble, cancelBtn, {
+        onDone: () => { sendBtn.disabled = false; resolve(true); },
+        onFail: () => { sendBtn.disabled = false; resolve(false); },
+      });
+    })
+    .catch(err => {
+      if (cancelBtn.parentNode) cancelBtn.remove();
+      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+      sendBtn.disabled = false;
+      resolve(false);
+    });
+  });
+}
+
 // Looks for a still-running server-side sequence run recording into
 // `recordingName` (via /api/jobs) and, if found, rejoins its SSE stream so a
 // /session-load into a session another tab/session left running keeps updating
@@ -2003,7 +2128,7 @@ function reattachLiveSequenceRun(recordingName) {
     .then(jobsList => {
       if (!Array.isArray(jobsList)) return;
       const job = jobsList.find(j =>
-        j.kind === 'sequence-run'
+        isLiveRunKind(j.kind)
         && (j.status === 'pending' || j.status === 'running')
         && j.recording_name === recordingName
       );
@@ -2011,7 +2136,7 @@ function reattachLiveSequenceRun(recordingName) {
 
       state.liveRunSession = recordingName;
       const statusBubble = addMessage('bot', `
-        <div class="status-text">Reattached to a sequence run still in progress…</div>
+        <div class="status-text">Reattached to a run still in progress…</div>
         <div class="dots"><span></span><span></span><span></span></div>
       `);
       const cancelBtn = document.createElement('button');
@@ -2293,6 +2418,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             const wrap = appendChatImage(botBubble, url);
             // Auto face-detail: only for fresh (non-job) still-image generations,
             // and only when a face prompt can be derived (needs a <lora:…> tag).
+            // Only macro steps still reach this: a typed prompt with the pass on
+            // runs as a server-side batch instead (runBatchJob), which applies the
+            // same pass on the job thread.
             if (!job && state.autoFaceDetail && !isVideoUrl(url)) {
               const fp = applyReplacements(
                 state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]),
@@ -2384,6 +2512,7 @@ const { handleSlashCommand, runDefaultMacroOnImage, newChat } = makeCommandHandl
   updateHeaderStatus,
   compositeVideos,
   runSequenceRunJob,
+  runBatchJob,
   detachActiveSequenceRun,
   newTempSessionName,
   appendChatImage,

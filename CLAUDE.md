@@ -367,6 +367,41 @@ it to a snapshot the job thread reads. See `ADR/generation-progress-bars.md`.
 - Client helpers `progressPercent`/`progressCaption` are pure and live in `utils.js`
   (unit-tested); `.determinate` on `.progress-bar-wrap` is what kills the CSS animation.
 
+### Server-side batch runs (`/api/batch-run`)
+
+The commands that used to loop in the browser — `/iterations`, `/multi-prompt`,
+`/t2i-workflow-iterate`, `/i2v <N>`, `/face-detail <N>`, `/face-detail-session`, and a
+typed prompt while `/face-detail-auto` is on — build a step list and post it once. The
+server runs the steps in order and records each result into the session, so the chain
+survives the tab closing. See `ADR/server-side-batch-runs.md`.
+
+- **One runner, two run kinds.** `_StepRunner` (`generation_service.py`) holds what a
+  server-driven run is built from: `run_stage` (pause-on-failure ⟳ retry), `record`,
+  `run_still` (generate → auto face-detail → auto video) and `finish`.
+  `run_sequence_run` and `run_batch_run` both use it. Change it once, for both.
+- **Steps**: `{kind: t2i|t2v|i2v|face-detail, prompt, workflow?, label?, image?,
+  last_frame?, sourcePrompt?, videoMeta?}`. `app._parse_batch_run` resolves each one
+  (workflow allowlist per kind, image Paths) and validates each settings block (`t2i`,
+  `video`, `face`) only if a step needs it, so a bad request is a 400 before any job
+  starts. Capped at `BATCH_MAX_STEPS`.
+- **Prompts are built client-side** for explicit steps (`buildI2vSteps` /
+  `buildFaceDetailSteps` in `utils.js`, using the single-image buttons' helpers), which
+  keeps FL2VA end-frame prompts exact. Only the auto face-detail on a t2i step derives
+  its prompt server-side (`prompt_builders.py`).
+- **Recording**: i2v and face-detail results are stored against the *source* image's
+  prompt/meta, with the run prompt as the user line (`message_prompt`), as the
+  single-image buttons store them. A face-detail step keeps its source. Image reference
+  slot 1 is dropped for an i2v step whose source it is. `/getseed` pins the first
+  t2i/t2v/i2v step only.
+- **Client**: `runBatchJob` (`chat.js`) renders through `attachSequenceRunStream`. A
+  shot's `stage` picks its user-line prefix (`runStagePrefix`) and its `label` trails
+  its status lines. `isLiveRunKind` lets reload/`/session-load` rejoin `batch-run` jobs.
+  The promise resolves at the end of the batch, so macros awaiting a command still wait.
+- A typed prompt uses a batch only for `iterations > 1` or auto face-detail outside
+  `/t2v`; a single prompt keeps `runGeneration`. **Macros stay client-side**, and their
+  plain steps are now the only callers of `runGeneration`'s client auto face-detail
+  pass. `/upscale <N>` is still a client-side chain.
+
 ### Server status (`/server-status`, `server_status.py`)
 
 The app knew which ComfyUI servers existed (`servers.json` → `/api/servers` → the

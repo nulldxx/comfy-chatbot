@@ -6,7 +6,7 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
          WORKFLOW_VARIANT_SEP, progressPercent, progressCaption,
          archiveParentPath, archiveBreadcrumb, joinArchivePath,
-         fmtUptime } from '../../static/js/utils.js';
+         fmtUptime, runStagePrefix, buildI2vSteps, buildFaceDetailSteps } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -1100,5 +1100,118 @@ describe('fmtUptime', () => {
 
   test('never goes negative', () => {
     expect(fmtUptime(-5)).toBe('0s');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-side batch runs — stage labels and step builders
+// ---------------------------------------------------------------------------
+
+describe('runStagePrefix', () => {
+  test('labels the stages the single-run buttons label', () => {
+    expect(runStagePrefix('image2video')).toBe('Image2video: ');
+    expect(runStagePrefix('face-detail')).toBe('Face detail: ');
+  });
+
+  test('a still or text2video shot has no prefix', () => {
+    expect(runStagePrefix(undefined)).toBe('');
+    expect(runStagePrefix('text2video')).toBe('');
+  });
+});
+
+function batchState(overrides = {}) {
+  return {
+    imagePrompts: {}, imageVideoMeta: {},
+    image2videoOverridePrompt: null, image2videoReplacements: [],
+    lastFaceDetailPrompt: null, faceDetailReplacements: [],
+    lastFrameUrl: null,
+    currentVideoSettings: { audio: true, frames: 125, fps: 25, duration: 5 },
+    ...overrides,
+  };
+}
+
+describe('buildI2vSteps', () => {
+  test('builds each prompt as the 🎬 button would', () => {
+    const state = batchState({
+      imagePrompts: { '/images/a.png': 'a cat', '/images/b.png': 'a dog' },
+      imageVideoMeta: { '/images/b.png': { description: 'runs', soundscape: 'paws', music: '' } },
+      image2videoReplacements: [['cat', 'lion']],
+    });
+    const { steps, skippedVideos, missingPrompt } = buildI2vSteps(['/images/a.png', '/images/b.png'], state);
+    expect(skippedVideos).toBe(0);
+    expect(missingPrompt).toBeNull();
+    expect(steps).toEqual([
+      { kind: 'i2v', image: '/images/a.png', sourcePrompt: 'a cat',
+        prompt: buildVideoPrompt('a lion', undefined, videoPromptOpts(state, '/images/a.png')) },
+      { kind: 'i2v', image: '/images/b.png', sourcePrompt: 'a dog',
+        videoMeta: { description: 'runs', soundscape: 'paws', music: '' },
+        prompt: buildVideoPrompt('a dog', state.imageVideoMeta['/images/b.png'], videoPromptOpts(state, '/images/b.png')) },
+    ]);
+  });
+
+  test('carries the end frame, except onto itself', () => {
+    const state = batchState({
+      imagePrompts: { '/images/a.png': 'a', '/images/end.png': 'b' },
+      lastFrameUrl: '/images/end.png',
+    });
+    const { steps } = buildI2vSteps(['/images/a.png', '/images/end.png'], state);
+    expect(steps[0].last_frame).toBe('/images/end.png');
+    expect(steps[0].prompt).toContain('Picture 2');
+    expect(steps[1].last_frame).toBeUndefined();
+  });
+
+  test('the override prompt wins, even with no stored prompt', () => {
+    const state = batchState({ image2videoOverridePrompt: 'slow zoom' });
+    const { steps } = buildI2vSteps(['/images/a.png'], state);
+    expect(steps).toEqual([{ kind: 'i2v', prompt: 'slow zoom', image: '/images/a.png', sourcePrompt: '' }]);
+  });
+
+  test('stops at the first image with nothing to build from', () => {
+    const state = batchState({ imagePrompts: { '/images/a.png': 'a', '/images/c.png': 'c' } });
+    const { steps, missingPrompt } = buildI2vSteps(['/images/a.png', '/images/b.png', '/images/c.png'], state);
+    expect(steps.map(s => s.image)).toEqual(['/images/a.png']);
+    expect(missingPrompt).toBe('/images/b.png');
+  });
+
+  test('skips videos', () => {
+    const state = batchState({ imagePrompts: { '/images/a.png': 'a' } });
+    const { steps, skippedVideos } = buildI2vSteps(['/images/v.mp4', '/images/a.png'], state);
+    expect(skippedVideos).toBe(1);
+    expect(steps.map(s => s.image)).toEqual(['/images/a.png']);
+  });
+});
+
+describe('buildFaceDetailSteps', () => {
+  test('derives each prompt and applies replacements', () => {
+    const state = batchState({
+      imagePrompts: { '/images/a.png': 'a woman smiling <lora:her:0.8>' },
+      faceDetailReplacements: [['face', 'visage']],
+    });
+    const { steps, noPrompt } = buildFaceDetailSteps(['/images/a.png'], state);
+    expect(noPrompt).toBe(0);
+    expect(steps).toEqual([{
+      kind: 'face-detail', image: '/images/a.png',
+      prompt: "a woman's visage, smiling <lora:her:0.8>",
+      sourcePrompt: 'a woman smiling <lora:her:0.8>',
+    }]);
+  });
+
+  test('the pinned face prompt is used for every image', () => {
+    const state = batchState({ lastFaceDetailPrompt: 'a face <lora:x:1>' });
+    const { steps } = buildFaceDetailSteps(['/images/a.png', '/images/b.png'], state);
+    expect(steps.map(s => s.prompt)).toEqual(['a face <lora:x:1>', 'a face <lora:x:1>']);
+  });
+
+  test('skips images with no LoRA to derive from, and videos, and keeps going', () => {
+    const state = batchState({
+      imagePrompts: { '/images/a.png': 'a cat', '/images/b.png': 'a man <lora:him:1>' },
+      imageVideoMeta: { '/images/b.png': { description: 'waves' } },
+    });
+    const { steps, noPrompt, skippedVideos } =
+      buildFaceDetailSteps(['/images/a.png', '/images/v.mp4', '/images/b.png'], state);
+    expect(noPrompt).toBe(1);
+    expect(skippedVideos).toBe(1);
+    expect(steps.map(s => s.image)).toEqual(['/images/b.png']);
+    expect(steps[0].videoMeta).toEqual({ description: 'waves' });
   });
 });
