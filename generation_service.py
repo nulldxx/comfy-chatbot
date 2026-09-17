@@ -14,7 +14,7 @@ from config import (COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS,
                     COMFY_WS_PROGRESS, VIDEO_EXTS)
 from ComfyServer import ComfyServer, JobCancelled, JobRetry
 from comfy_progress import ProgressListener, node_titles_for, node_weights_for
-from catalogue import parse_loras_from_prompt, resolve_workflow_path
+from catalogue import parse_loras_from_prompt, resolve_workflow_path, server_auto_purge_enabled
 from persistence import append_session_image, append_session_note, rename_session
 from prompt_builders import apply_replacements, build_video_prompt, derive_face_detail_prompt
 from seed_store import forget as forget_seed, record_seeds
@@ -206,6 +206,11 @@ def _auto_purge(server_address):
         state = purge_state.get(server_address)
         if state:
             state["timer"] = None
+    # Re-checked at fire time: the flag may have been switched off while the
+    # timer was pending.
+    if not server_auto_purge_enabled(server_address):
+        print(f"Auto-purge skipped for {server_address}: disabled for this server", flush=True)
+        return
     try:
         ComfyServer(server_address).free_memory()
         print(f"Auto-purged GPU memory on {server_address} after {AUTO_PURGE_SECONDS}s idle", flush=True)
@@ -228,12 +233,16 @@ def purge_generation_started(server_address):
 
 
 def purge_generation_finished(server_address):
-    """Schedule a purge once the last running generation on this server ends."""
+    """Schedule a purge once the last running generation on this server ends,
+    unless auto-purge is switched off for this server in servers.json."""
+    enabled = server_auto_purge_enabled(server_address)  # file IO, kept outside the lock
     with purge_lock:
         state = purge_state.setdefault(server_address, {"timer": None, "active": 0})
         state["active"] = max(0, state["active"] - 1)
         if state["active"] == 0:
             _cancel_purge_timer_locked(state)
+            if not enabled:
+                return
             timer = threading.Timer(AUTO_PURGE_SECONDS, _auto_purge, args=(server_address,))
             timer.daemon = True
             timer.start()

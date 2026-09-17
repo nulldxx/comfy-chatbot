@@ -27,7 +27,7 @@ from catalogue import (
     list_upscaler_workflows, list_workflow_names,
     list_workflow_variants,
     load_loras_result, load_server_catalogue, parse_loras_from_prompt, resolve_workflow,
-    server_catalogue_with_default,
+    server_catalogue_with_default, set_server_auto_purge,
 )
 from ComfyServer import ComfyServer
 import server_status
@@ -469,6 +469,31 @@ def api_server_power():
     return jsonify({"server": address, "action": action, "tray": status})
 
 
+@app.route("/api/server-auto-purge", methods=["POST"])
+@login_required
+def api_server_auto_purge():
+    """Switch idle GPU auto-purge on or off for one catalogue server.
+
+    Stored as ``auto_purge`` on the server's servers.json entry (absent = on).
+    Like /api/server-power, only a server the catalogue names is accepted.
+    Switching it off also cancels a purge already pending for that server.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return jsonify({"error": "'enabled' must be true or false"}), 400
+    address = (data.get("server") or "").strip()
+    try:
+        entry = set_server_auto_purge(address, enabled)
+    except OSError as e:
+        return jsonify({"error": f"Could not save servers.json: {e}"}), 500
+    if entry is None:
+        return jsonify({"error": f"Unknown server: {address or '(none)'}"}), 404
+    if not enabled:
+        cancel_auto_purge(address)
+    return jsonify({"server": address, "auto_purge": enabled})
+
+
 @app.route("/api/add-server", methods=["POST"])
 @login_required
 def api_add_server():
@@ -494,6 +519,10 @@ def api_add_server():
     servers = load_server_catalogue()
 
     entry = {"name": name, "host": host, "port": port, "os": os_type}
+    # Re-adding a server by name keeps its auto-purge choice.
+    previous = next((s for s in servers if s.get("name") == name), None)
+    if previous is not None and isinstance(previous.get("auto_purge"), bool):
+        entry["auto_purge"] = previous["auto_purge"]
     servers = [s for s in servers if s.get("name") != name]
     servers.append(entry)
 
@@ -2399,7 +2428,10 @@ def _restore_servers(data):
             continue
         if not (1 <= port <= 65535):
             continue
-        clean.append({"name": sname, "host": host, "port": port, "os": os_type})
+        entry = {"name": sname, "host": host, "port": port, "os": os_type}
+        if isinstance(s.get("auto_purge"), bool):
+            entry["auto_purge"] = s["auto_purge"]
+        clean.append(entry)
     (COMFY_WORKFLOW_DIR / "servers.json").write_text(
         json.dumps({"servers": clean}, indent=2))
     return len(clean)

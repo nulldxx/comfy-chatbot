@@ -1087,6 +1087,8 @@ function renderServerStatusGrid(bubble, deps) {
       actions.appendChild(btn);
     }
 
+    actions.appendChild(buildAutoPurgeToggle(server));
+
     if (!isCur) {
       const useBtn = document.createElement('button');
       useBtn.className = 'sel-btn';
@@ -1101,6 +1103,45 @@ function renderServerStatusGrid(bubble, deps) {
     }
 
     return card;
+  }
+
+  // Per-server idle GPU purge (servers.json auto_purge, absent = on). Saved on
+  // change; a failed save puts the box back so it never shows a state the
+  // server does not have.
+  function buildAutoPurgeToggle(server) {
+    const label = document.createElement('label');
+    label.className = 'srv-auto-purge';
+    label.title = 'Free GPU memory on this server after it has been idle since its last generation';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = server.auto_purge !== false;
+    const text = document.createElement('span');
+    text.textContent = 'Auto-purge GPU memory';
+    const err = document.createElement('span');
+    err.className = 'srv-auto-purge-error';
+    label.append(box, text, err);
+
+    box.addEventListener('change', () => {
+      const enabled = box.checked;
+      box.disabled = true;
+      err.textContent = '';
+      fetch('/api/server-auto-purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ server: server.address, enabled }),
+      })
+        .then(parseJsonResponse)
+        .then(data => {
+          if (data && data.error) throw new Error(data.error);
+          server.auto_purge = enabled;
+        })
+        .catch(e => {
+          box.checked = !enabled;
+          err.textContent = `⚠ ${e.message || e}`;
+        })
+        .finally(() => { box.disabled = false; });
+    });
+    return label;
   }
 
   function power(server, action) {
@@ -2597,7 +2638,7 @@ export function makeCommandHandler(deps) {
         { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
         { sig: '/server', desc: 'choose a ComfyUI server' },
         { sig: '/server-add <name> <host:port:os>', desc: 'add a server', notes: 'OS types: <code>unix</code> (Linux/macOS) &nbsp;·&nbsp; <code>windows</code> (Windows path separators)<br>e.g. <code>/server-add mordor mordor:8000:windows</code><br>e.g. <code>/server-add mybox 192.168.1.50:8188:unix</code>' },
-        { sig: '/server-status', desc: 'health of every configured server — whether ComfyUI is running, and whether ComfyTray is there to start/stop it remotely', notes: 'ComfyUI is probed directly, so its state is reported for every server &nbsp;·&nbsp; <strong>ComfyTray</strong> (<code>COMFY_TRAY_PORT</code>, default <code>8765</code>, same host as ComfyUI) is what supplies the ▶/■ buttons; a server without one reads <em>unmanaged</em> and can only be reported on &nbsp;·&nbsp; starting is asynchronous — the panel keeps polling until ComfyUI actually answers &nbsp;·&nbsp; each row can also make its server the active one, like <code>/server</code>' },
+        { sig: '/server-status', desc: 'health of every configured server — whether ComfyUI is running, and whether ComfyTray is there to start/stop it remotely', notes: 'ComfyUI is probed directly, so its state is reported for every server &nbsp;·&nbsp; <strong>ComfyTray</strong> (<code>COMFY_TRAY_PORT</code>, default <code>8765</code>, same host as ComfyUI) is what supplies the ▶/■ buttons; a server without one reads <em>unmanaged</em> and can only be reported on &nbsp;·&nbsp; starting is asynchronous — the panel keeps polling until ComfyUI actually answers &nbsp;·&nbsp; each row can also make its server the active one, like <code>/server</code> &nbsp;·&nbsp; <strong>Auto-purge GPU memory</strong> (on by default) frees that server\'s GPU memory once it has been idle for <code>AUTO_PURGE_SECONDS</code> after a generation; untick it to keep models loaded' },
         { sig: '/settings', desc: 'open a menu of all configuration commands (image/video settings, denoise, iterations, workflows, server, save/restore/backup)' },
         { sig: '/chat-summary', desc: 'show a summary of all active settings (server, workflow, resolution, replacements, etc.)' },
         { sig: '/settings-backup', desc: 'download a ZIP of all server-side settings for backup — macros, prompt aliases, saved sessions and the server catalogue (<code>servers.json</code>)', notes: 'server-side files only; per-tab generation settings live in a saved session' },

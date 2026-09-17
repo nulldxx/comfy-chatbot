@@ -39,6 +39,43 @@ def server_catalogue_with_default():
              "port": int(port or 8000), "os": COMFY_SERVER_OS}]
 
 
+def _entry_address(entry):
+    return f"{entry.get('host')}:{entry.get('port')}"
+
+
+def server_auto_purge_enabled(address):
+    """Whether idle auto-purge applies to the server at ``host:port``.
+
+    Per-server flag in servers.json (``auto_purge``). Absent means on, and so does
+    an address the catalogue doesn't name or a catalogue that can't be read — the
+    flag only ever opts a known server *out*.
+    """
+    try:
+        for entry in server_catalogue_with_default():
+            if _entry_address(entry) == address:
+                return entry.get("auto_purge", True) is not False
+    except Exception:
+        pass
+    return True
+
+
+def set_server_auto_purge(address, enabled):
+    """Set ``auto_purge`` on the catalogue entry at ``host:port`` and save
+    servers.json. Returns the updated entry, or None if no entry matches.
+
+    Works from server_catalogue_with_default(), so toggling the synthesised
+    COMFY_SERVER default writes it out as a real servers.json entry.
+    """
+    servers = server_catalogue_with_default()
+    entry = next((e for e in servers if _entry_address(e) == address), None)
+    if entry is None:
+        return None
+    entry["auto_purge"] = bool(enabled)
+    (COMFY_WORKFLOW_DIR / "servers.json").write_text(
+        json.dumps({"servers": servers}, indent=2))
+    return entry
+
+
 def parse_strength(value, default=0.8):
     """Coerce a suggested_strength into a float.
 

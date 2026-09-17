@@ -27,6 +27,36 @@ def _drain(channel):
     return [json.loads(m) for m in channel.snapshot()]
 
 
+class AutoPurgeTimerTests(unittest.TestCase):
+    ADDR = "purge-test:8000"
+
+    def tearDown(self):
+        gs.cancel_auto_purge(self.ADDR)
+        gs.purge_state.pop(self.ADDR, None)
+
+    def _finish(self, enabled):
+        with patch.object(gs, "server_auto_purge_enabled", return_value=enabled), \
+             patch.object(gs.threading, "Timer") as timer:
+            gs.purge_generation_started(self.ADDR)
+            gs.purge_generation_finished(self.ADDR)
+        return timer
+
+    def test_timer_scheduled_when_enabled(self):
+        timer = self._finish(True)
+        timer.assert_called_once()
+        timer.return_value.start.assert_called_once()
+
+    def test_no_timer_when_disabled(self):
+        self._finish(False).assert_not_called()
+        self.assertIsNone(gs.purge_state[self.ADDR]["timer"])
+
+    def test_pending_purge_skipped_if_disabled_at_fire_time(self):
+        with patch.object(gs, "server_auto_purge_enabled", return_value=False), \
+             patch.object(gs, "ComfyServer") as server:
+            gs._auto_purge(self.ADDR)
+        server.assert_not_called()
+
+
 class RunGenerationWrapperTests(unittest.TestCase):
     """run_generation is now a thin wrapper over _run_generation_core; verify it
     still owns the terminal lifecycle (done/cancelled/error) correctly."""

@@ -203,6 +203,17 @@ class TestProbeAll(unittest.TestCase):
         self.assertTrue(all(r["comfy"]["reachable"] for r in results))
         self.assertTrue(all(not r["tray"]["reachable"] for r in results))
 
+    def test_auto_purge_passed_through_defaulting_on(self):
+        entries = [
+            {"name": "a", "host": "a", "port": 1},
+            {"name": "b", "host": "b", "port": 2, "auto_purge": False},
+        ]
+        unreachable = server_status._unreachable("x")
+        with patch.object(server_status, "probe_comfy", return_value=unreachable), \
+             patch.object(server_status, "probe_tray", return_value=unreachable):
+            results = server_status.probe_all(entries, timeout=1)
+        self.assertEqual([r["auto_purge"] for r in results], [True, False])
+
     def test_empty_catalogue_needs_no_pool(self):
         self.assertEqual(server_status.probe_all([]), [])
 

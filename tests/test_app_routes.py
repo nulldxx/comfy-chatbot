@@ -275,8 +275,13 @@ class TestAddServer(_AppFixture):
         self.wf_dir.mkdir()
         self._wf_patcher = patch.object(app_module, "COMFY_WORKFLOW_DIR", self.wf_dir)
         self._wf_patcher.start()
+        # api_add_server reads the existing list through catalogue.
+        import catalogue as catalogue_module
+        self._cat_patcher = patch.object(catalogue_module, "COMFY_WORKFLOW_DIR", self.wf_dir)
+        self._cat_patcher.start()
 
     def tearDown(self):
+        self._cat_patcher.stop()
         self._wf_patcher.stop()
         super().tearDown()
 
@@ -312,6 +317,25 @@ class TestAddServer(_AppFixture):
         resp = self._post(os="beos")
         self.assertEqual(resp.status_code, 400)
 
+    def test_re_adding_keeps_auto_purge_choice(self):
+        (self.wf_dir / "servers.json").write_text(json.dumps({"servers": [
+            {"name": "srv", "host": "old", "port": 1, "os": "unix", "auto_purge": False}]}))
+        self._post()
+        saved = json.loads((self.wf_dir / "servers.json").read_text())["servers"]
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["host"], "10.0.0.1")
+        self.assertIs(saved[0]["auto_purge"], False)
+
+    def test_restore_servers_keeps_bool_auto_purge(self):
+        n = app_module._restore_servers({"servers": [
+            {"name": "a", "host": "a", "port": 1, "os": "unix", "auto_purge": False},
+            {"name": "b", "host": "b", "port": 2, "os": "unix", "auto_purge": "no"},
+        ]})
+        self.assertEqual(n, 2)
+        saved = json.loads((self.wf_dir / "servers.json").read_text())["servers"]
+        self.assertIs(saved[0]["auto_purge"], False)
+        self.assertNotIn("auto_purge", saved[1])
+
     def test_saves_servers_json(self):
         self._post()
         servers_file = self.wf_dir / "servers.json"
@@ -328,6 +352,48 @@ _CATALOGUE = [
     {"name": "mordor", "host": "mordor", "port": 8000, "os": "windows"},
     {"name": "laptop", "host": "10.0.0.9", "port": 8188, "os": "unix"},
 ]
+
+
+class TestServerAutoPurgeEndpoint(_AppFixture):
+    def setUp(self):
+        super().setUp()
+        import catalogue as catalogue_module
+        self.wf_dir = Path(self.tmp) / "workflows"
+        self.wf_dir.mkdir()
+        (self.wf_dir / "servers.json").write_text(json.dumps({"servers": _CATALOGUE}))
+        self._wf_patcher = patch.object(catalogue_module, "COMFY_WORKFLOW_DIR", self.wf_dir)
+        self._wf_patcher.start()
+
+    def tearDown(self):
+        self._wf_patcher.stop()
+        super().tearDown()
+
+    def _post(self, payload):
+        return self.client.post("/api/server-auto-purge", json=payload)
+
+    def test_non_bool_enabled_is_400(self):
+        resp = self._post({"server": "mordor:8000", "enabled": "false"})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unknown_server_is_404(self):
+        resp = self._post({"server": "evil:1", "enabled": False})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_disable_saves_and_cancels_pending_purge(self):
+        with patch.object(app_module, "cancel_auto_purge") as cancel:
+            resp = self._post({"server": "mordor:8000", "enabled": False})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"server": "mordor:8000", "auto_purge": False})
+        saved = json.loads((self.wf_dir / "servers.json").read_text())["servers"]
+        self.assertIs(saved[0]["auto_purge"], False)
+        self.assertNotIn("auto_purge", saved[1])
+        cancel.assert_called_once_with("mordor:8000")
+
+    def test_enable_does_not_cancel(self):
+        with patch.object(app_module, "cancel_auto_purge") as cancel:
+            resp = self._post({"server": "10.0.0.9:8188", "enabled": True})
+        self.assertEqual(resp.status_code, 200)
+        cancel.assert_not_called()
 
 
 class TestServerStatusEndpoints(_AppFixture):

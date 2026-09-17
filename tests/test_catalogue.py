@@ -39,6 +39,44 @@ class TestLoadServerCatalogue(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TestServerAutoPurge(unittest.TestCase):
+    SERVERS = [
+        {"name": "a", "host": "a", "port": 8000, "os": "unix"},
+        {"name": "b", "host": "b", "port": 8188, "os": "unix", "auto_purge": False},
+    ]
+
+    def _dir(self, d):
+        (Path(d) / "servers.json").write_text(json.dumps({"servers": self.SERVERS}))
+        return patch.object(catalogue, "COMFY_WORKFLOW_DIR", Path(d))
+
+    def test_absent_flag_means_on(self):
+        with tempfile.TemporaryDirectory() as d, self._dir(d):
+            self.assertTrue(catalogue.server_auto_purge_enabled("a:8000"))
+
+    def test_explicit_false_is_off(self):
+        with tempfile.TemporaryDirectory() as d, self._dir(d):
+            self.assertFalse(catalogue.server_auto_purge_enabled("b:8188"))
+
+    def test_unknown_address_means_on(self):
+        with tempfile.TemporaryDirectory() as d, self._dir(d):
+            self.assertTrue(catalogue.server_auto_purge_enabled("nowhere:1"))
+
+    def test_set_writes_the_flag(self):
+        with tempfile.TemporaryDirectory() as d, self._dir(d):
+            entry = catalogue.set_server_auto_purge("a:8000", False)
+            self.assertEqual(entry["auto_purge"], False)
+            saved = json.loads((Path(d) / "servers.json").read_text())["servers"]
+            self.assertIs(saved[0]["auto_purge"], False)
+            self.assertIs(saved[1]["auto_purge"], False)
+            self.assertFalse(catalogue.server_auto_purge_enabled("a:8000"))
+
+    def test_set_unknown_returns_none_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d, self._dir(d):
+            before = (Path(d) / "servers.json").read_text()
+            self.assertIsNone(catalogue.set_server_auto_purge("nowhere:1", False))
+            self.assertEqual((Path(d) / "servers.json").read_text(), before)
+
+
 class TestLoadLoras(unittest.TestCase):
     def test_missing_file_returns_empty(self):
         with patch.object(catalogue, "COMFY_LORAS_FILE", Path("/no/such/loras-new.json")):

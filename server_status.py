@@ -175,6 +175,7 @@ def probe_one(entry, timeout=None):
         "port": port,
         "os": entry.get("os", "unix"),
         "address": address,
+        "auto_purge": entry.get("auto_purge", True) is not False,
         "comfy": probe_comfy(address, timeout),
         "tray": probe_tray(host, timeout),
     }

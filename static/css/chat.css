@@ -1300,6 +1300,15 @@ header a:hover { color: #a78bfa; }
   margin-top: 8px;
 }
 .srv-card-actions:empty { margin-top: 0; }
+.srv-auto-purge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+.srv-auto-purge-error { color: #f87171; }
 .srv-dot {
   display: inline-block;
   width: 8px;

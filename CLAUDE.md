@@ -454,6 +454,14 @@ card per catalogue server and can start or stop ComfyUI remotely. See
 - **Reaching the tray from another machine needs an inbound firewall rule** the tray's
   per-user MSI cannot add; its About box prints the `netsh` command. A tray that is up but
   firewalled is indistinguishable from no tray — the row reads *unmanaged*.
+- **Per-server auto-purge** (`ADR/per-server-auto-purge.md`): each card has an
+  *Auto-purge GPU memory* checkbox, saved as `auto_purge` on the `servers.json` entry
+  (**absent = on**; an address the catalogue doesn't name is also on). It POSTs
+  `{server, enabled}` to `@login_required POST /api/server-auto-purge` (catalogue-only,
+  **404** otherwise; switching off cancels a pending purge). `purge_generation_finished`
+  skips scheduling the idle timer when `catalogue.server_auto_purge_enabled()` is false,
+  and `_auto_purge` re-checks at fire time. `/server-add` re-adding a name and
+  `_restore_servers` both keep the flag. Manual `/purge` ignores it.
 - **Not covered**: no restart button (stop-then-start would have to straddle the
   asynchronous start), and ComfyTray's API has **no authentication** by design, so this
   is only safe on a trusted network.
