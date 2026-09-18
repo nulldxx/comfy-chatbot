@@ -68,7 +68,7 @@ from persistence import (
     aliases_file, default_macro_file, delete_session, list_sessions,
     load_aliases, load_default_macro, load_macros, load_session, macros_file,
     save_aliases, save_default_macro, save_macros,
-    save_session, sessions_dir, slugify,
+    save_session, session_delete_preview, sessions_dir, slugify,
 )
 import seed_store
 import auth_store
@@ -3545,18 +3545,51 @@ def api_chat_load(name):
     return jsonify(data)
 
 
-@app.route("/api/chats/<name>", methods=["DELETE"])
+@app.route("/api/chats/<name>/delete-preview")
 @login_required
 @requires_output_storage
-def api_chat_delete(name):
+def api_chat_delete_preview(name):
+    """How much media deleting this chat would actually destroy.
+
+    The sidebar asks on the 🗑 click so its confirm strip can quote a true number
+    before an irreversible action; the list's own image_count can't, being
+    len(sessionImages) with no disk check.
+    """
     safe = secure_filename(name)
     if not safe or safe != name:
         return jsonify({"error": "Invalid chat name"}), 400
     try:
-        delete_session(safe)
+        return jsonify(session_delete_preview(safe))
     except FileNotFoundError:
         return jsonify({"error": "Chat not found"}), 404
-    return jsonify({"ok": True})
+
+
+@app.route("/api/chats/<name>", methods=["DELETE"])
+@login_required
+@requires_output_storage
+def api_chat_delete(name):
+    """Delete a chat, and with ``?media=1`` the media it generated.
+
+    Media still referenced by another chat is kept, and already-archived media is
+    a no-op (archiving unlinks the gallery original). seed_store is pruned here
+    rather than in persistence: seed_store imports persistence, so the reverse
+    would be a circular import.
+    """
+    safe = secure_filename(name)
+    if not safe or safe != name:
+        return jsonify({"error": "Invalid chat name"}), 400
+    delete_media = request.args.get("media") == "1"
+    try:
+        result = delete_session(safe, delete_media=delete_media)
+    except FileNotFoundError:
+        return jsonify({"error": "Chat not found"}), 404
+    for filename in result["deleted_media"]:
+        seed_store.forget(filename)
+    return jsonify({
+        "ok": True,
+        "deleted_media": len(result["deleted_media"]),
+        "kept_shared": result["kept_shared"],
+    })
 
 
 # ---------------------------------------------------------------------------

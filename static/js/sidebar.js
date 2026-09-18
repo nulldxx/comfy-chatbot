@@ -104,7 +104,7 @@ export function initSidebar(deps) {
     delBtn.innerHTML = '🗑';
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      deleteChat(row, s.name, delBtn);
+      deleteChat(row, s.name);
     });
 
     row.appendChild(btn);
@@ -125,20 +125,66 @@ export function initSidebar(deps) {
       .catch(() => {});
   }
 
-  function deleteChat(row, name, delBtn) {
-    delBtn.disabled = true;
-    delBtn.style.opacity = '0.4';
-    fetch('/api/chats/' + encodeURIComponent(name), { method: 'DELETE' })
+  // Delete is two-step: the row turns into a confirm strip quoting how many
+  // media files go with the chat. Deleting a chat now unlinks the images and
+  // videos it generated (server side, skipping any another chat still lists),
+  // which is not something one stray click should be able to do.
+  function deleteChat(row, name) {
+    if (row.querySelector('.sidebar-confirm-label')) return;
+
+    const label = document.createElement('div');
+    label.className = 'sidebar-confirm-label';
+    label.textContent = 'Delete chat?';
+
+    const yesBtn = document.createElement('button');
+    yesBtn.className = 'sel-del-btn sidebar-confirm-btn';
+    yesBtn.title = 'Confirm delete';
+    yesBtn.innerHTML = '✓';
+
+    const noBtn = document.createElement('button');
+    noBtn.className = 'sel-rename-btn sidebar-confirm-btn';
+    noBtn.title = 'Cancel';
+    noBtn.innerHTML = '✕';
+
+    row.innerHTML = '';
+    row.append(label, yesBtn, noBtn);
+    yesBtn.focus();
+
+    // The list's image_count is len(sessionImages) with no disk check, so it
+    // overstates once anything has been archived or deleted. Ask for the real
+    // number; leave the plain wording if it can't be had.
+    fetch('/api/chats/' + encodeURIComponent(name) + '/delete-preview')
       .then(parseJsonResponse)
       .then(data => {
-        if (data.error) throw new Error(data.error);
-        row.remove();
-        if (!listEl.querySelector('.sel-row')) renderEmpty();
+        if (!data || data.error || !data.media) return;
+        label.textContent = `Delete + ${data.media} media?`;
       })
-      .catch(() => {
-        delBtn.disabled = false;
-        delBtn.style.opacity = '';
-      });
+      .catch(() => {});
+
+    const cancel = () => refreshChatList();
+    noBtn.addEventListener('click', (e) => { e.stopPropagation(); cancel(); });
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+
+    yesBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      yesBtn.disabled = true;
+      noBtn.disabled = true;
+      yesBtn.style.opacity = '0.4';
+      fetch('/api/chats/' + encodeURIComponent(name) + '?media=1', { method: 'DELETE' })
+        .then(parseJsonResponse)
+        .then(data => {
+          if (data.error) throw new Error(data.error);
+          // The open chat's images are now gone; leaving it on screen would just
+          // show a wall of broken media.
+          if (name === getRecordingName()) newChat();
+          row.remove();
+          if (!listEl.querySelector('.sel-row')) renderEmpty();
+          document.dispatchEvent(new CustomEvent('chats-changed'));
+        })
+        .catch(() => { cancel(); });
+    });
   }
 
   // Inline rename: swap the row's main button for a text input.

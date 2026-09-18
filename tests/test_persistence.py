@@ -279,6 +279,133 @@ class TestSessions(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             persistence.delete_session("nope")
 
+    # --- session media deletion ---
+
+    def _media(self, *names):
+        for n in names:
+            (Path(self.tmp) / n).write_bytes(b"x")
+
+    def _doc(self, *urls, messages=None, references=None):
+        doc: dict = {"sessionImages": list(urls)}
+        if messages is not None:
+            doc["messages"] = messages
+        if references is not None:
+            doc["settings"] = {"references": {"images": references}}
+        return doc
+
+    def test_media_filenames_from_images_and_messages(self):
+        doc = self._doc(
+            "/images/a.png",
+            messages=[
+                {"role": "user", "prompt": "hi"},
+                {"role": "bot", "images": ["/images/b.mp4"], "text": ""},
+            ],
+        )
+        self.assertEqual(persistence.session_media_filenames(doc), {"a.png", "b.mp4"})
+
+    def test_media_filenames_rejects_traversal_and_non_media(self):
+        doc = self._doc("/images/../../etc/passwd", "/images/notes.json", "/images/ok.png")
+        self.assertEqual(persistence.session_media_filenames(doc), {"ok.png"})
+
+    def test_media_filenames_ignores_references(self):
+        # A reference points at another chat's file; it is not this chat's media.
+        doc = self._doc("/images/a.png", references=["/images/ref.png"])
+        self.assertEqual(persistence.session_media_filenames(doc), {"a.png"})
+
+    def test_delete_session_without_media_keeps_files(self):
+        d = self._sessions_dir()
+        self._media("a.png")
+        (d / "s.json").write_text(json.dumps(self._doc("/images/a.png")))
+        result = persistence.delete_session("s")
+        self.assertEqual(result, {"deleted_media": [], "kept_shared": 0})
+        self.assertTrue((Path(self.tmp) / "a.png").exists())
+
+    def test_delete_session_with_media_removes_files(self):
+        d = self._sessions_dir()
+        self._media("a.png", "b.mp4")
+        (d / "s.json").write_text(json.dumps(self._doc("/images/a.png", "/images/b.mp4")))
+        result = persistence.delete_session("s", delete_media=True)
+        self.assertEqual(result["deleted_media"], ["a.png", "b.mp4"])
+        self.assertFalse((Path(self.tmp) / "a.png").exists())
+        self.assertFalse((Path(self.tmp) / "b.mp4").exists())
+        self.assertFalse((d / "s.json").exists())
+
+    def test_delete_session_keeps_media_another_session_lists(self):
+        d = self._sessions_dir()
+        self._media("shared.png", "mine.png")
+        (d / "a.json").write_text(json.dumps(self._doc("/images/shared.png", "/images/mine.png")))
+        (d / "b.json").write_text(json.dumps(self._doc("/images/shared.png")))
+        result = persistence.delete_session("a", delete_media=True)
+        self.assertEqual(result["deleted_media"], ["mine.png"])
+        self.assertEqual(result["kept_shared"], 1)
+        self.assertTrue((Path(self.tmp) / "shared.png").exists())
+
+    def test_delete_session_keeps_media_another_session_references(self):
+        d = self._sessions_dir()
+        self._media("pinned.png")
+        (d / "a.json").write_text(json.dumps(self._doc("/images/pinned.png")))
+        (d / "b.json").write_text(json.dumps(self._doc(references=["/images/pinned.png"])))
+        result = persistence.delete_session("a", delete_media=True)
+        self.assertEqual(result["deleted_media"], [])
+        self.assertEqual(result["kept_shared"], 1)
+        self.assertTrue((Path(self.tmp) / "pinned.png").exists())
+
+    def test_delete_session_keeps_media_a_legacy_ref_slot_pins(self):
+        d = self._sessions_dir()
+        self._media("old-ref.png")
+        (d / "a.json").write_text(json.dumps(self._doc("/images/old-ref.png")))
+        (d / "b.json").write_text(json.dumps(
+            {"settings": {"refImageUrl": "/images/old-ref.png"}}))
+        result = persistence.delete_session("a", delete_media=True)
+        self.assertEqual(result["deleted_media"], [])
+        self.assertTrue((Path(self.tmp) / "old-ref.png").exists())
+
+    def test_delete_session_tolerates_already_archived_media(self):
+        # Archiving unlinks the gallery original, so the file is simply absent.
+        d = self._sessions_dir()
+        (d / "s.json").write_text(json.dumps(self._doc("/images/gone.png")))
+        result = persistence.delete_session("s", delete_media=True)
+        self.assertEqual(result["deleted_media"], ["gone.png"])
+        self.assertFalse((d / "s.json").exists())
+
+    def test_delete_session_skips_unreadable_neighbour(self):
+        d = self._sessions_dir()
+        self._media("a.png")
+        (d / "s.json").write_text(json.dumps(self._doc("/images/a.png")))
+        (d / "broken.json").write_text("{not json")
+        result = persistence.delete_session("s", delete_media=True)
+        self.assertEqual(result["deleted_media"], ["a.png"])
+
+    def test_delete_session_removes_json_even_if_unlink_fails(self):
+        d = self._sessions_dir()
+        self._media("a.png", "b.png")
+        (d / "s.json").write_text(json.dumps(self._doc("/images/a.png", "/images/b.png")))
+        real_unlink = Path.unlink
+
+        def flaky(self_path, *args, **kwargs):
+            if self_path.name == "a.png":
+                raise OSError("busy")
+            return real_unlink(self_path, *args, **kwargs)
+
+        with patch.object(Path, "unlink", flaky):
+            result = persistence.delete_session("s", delete_media=True)
+        self.assertEqual(result["deleted_media"], ["b.png"])
+
+    # --- session_delete_preview ---
+
+    def test_delete_preview_counts_only_existing_unshared(self):
+        d = self._sessions_dir()
+        self._media("here.png", "shared.png")
+        (d / "a.json").write_text(json.dumps(
+            self._doc("/images/here.png", "/images/shared.png", "/images/archived.png")))
+        (d / "b.json").write_text(json.dumps(self._doc("/images/shared.png")))
+        self.assertEqual(persistence.session_delete_preview("a"), {"media": 1, "shared": 1})
+
+    def test_delete_preview_not_found(self):
+        self._sessions_dir()
+        with self.assertRaises(FileNotFoundError):
+            persistence.session_delete_preview("nope")
+
 
 class TestAliases(unittest.TestCase):
     def setUp(self):

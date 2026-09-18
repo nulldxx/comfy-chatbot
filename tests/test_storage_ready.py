@@ -61,7 +61,7 @@ class TestStorageReadyGuard(unittest.TestCase):
     def test_reads_refused_while_unmounted(self):
         self._auth()
         for path in ("/api/macros", "/api/aliases", "/api/default-macro",
-                     "/api/chats", "/api/images"):
+                     "/api/chats", "/api/chats/c/delete-preview", "/api/images"):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 503)
 

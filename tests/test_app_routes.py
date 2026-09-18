@@ -1519,6 +1519,89 @@ class TestChatEndpoints(_AppFixture):
         resp = self.client.delete("/api/chats/nope")
         self.assertEqual(resp.status_code, 404)
 
+
+class TestChatDeleteMedia(_AppFixture):
+    """DELETE /api/chats/<name>?media=1 — the chat's images/videos go with it."""
+
+    def setUp(self):
+        super().setUp()
+        self._patcher_seeds = patch.object(
+            seed_store_module, "SEEDS_FILE", self.images_dir / ".seeds.json"
+        )
+        self._patcher_seeds.start()
+        self._patcher_seeds_dir = patch.object(
+            seed_store_module, "IMAGES_DIR", self.images_dir
+        )
+        self._patcher_seeds_dir.start()
+
+    def tearDown(self):
+        self._patcher_seeds.stop()
+        self._patcher_seeds_dir.stop()
+        super().tearDown()
+
+    def _save_chat(self, name, images, references=None):
+        body = {"name": name, "messages": [], "sessionImages": images}
+        if references is not None:
+            body["settings"] = {"references": {"images": references}}
+        self.client.post("/api/chats", json=body)
+
+    def test_delete_without_media_flag_keeps_images(self):
+        self._make_image("keep.png")
+        self._save_chat("c", ["/images/keep.png"])
+        resp = self.client.delete("/api/chats/c")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["deleted_media"], 0)
+        self.assertTrue((self.images_dir / "keep.png").exists())
+
+    def test_delete_with_media_flag_removes_images_and_seed(self):
+        self._make_image("gone.png")
+        seed_store_module.record_seeds(["gone.png"], 42)
+        self._save_chat("c", ["/images/gone.png"])
+        resp = self.client.delete("/api/chats/c?media=1")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["deleted_media"], 1)
+        self.assertFalse((self.images_dir / "gone.png").exists())
+        self.assertIsNone(seed_store_module.get_seed("gone.png"))
+
+    def test_delete_keeps_image_another_chat_lists(self):
+        self._make_image("shared.png")
+        self._make_image("mine.png")
+        self._save_chat("a", ["/images/shared.png", "/images/mine.png"])
+        self._save_chat("b", ["/images/shared.png"])
+        resp = self.client.delete("/api/chats/a?media=1")
+        data = resp.get_json()
+        self.assertEqual(data["deleted_media"], 1)
+        self.assertEqual(data["kept_shared"], 1)
+        self.assertTrue((self.images_dir / "shared.png").exists())
+        self.assertFalse((self.images_dir / "mine.png").exists())
+
+    def test_delete_keeps_image_another_chat_references(self):
+        self._make_image("pinned.png")
+        self._save_chat("a", ["/images/pinned.png"])
+        self._save_chat("b", [], references=["/images/pinned.png"])
+        resp = self.client.delete("/api/chats/a?media=1")
+        self.assertEqual(resp.get_json()["kept_shared"], 1)
+        self.assertTrue((self.images_dir / "pinned.png").exists())
+
+    def test_delete_preview_counts_files_that_still_exist(self):
+        # "archived.png" was archived (moved off and unlinked), so it must not be
+        # counted even though the chat still lists it.
+        self._make_image("here.png")
+        self._save_chat("a", ["/images/here.png", "/images/archived.png"])
+        resp = self.client.get("/api/chats/a/delete-preview")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"media": 1, "shared": 0})
+
+    def test_delete_preview_not_found(self):
+        self.assertEqual(
+            self.client.get("/api/chats/nope/delete-preview").status_code, 404
+        )
+
+    def test_delete_preview_invalid_name(self):
+        self.assertEqual(
+            self.client.get("/api/chats/my%20chat/delete-preview").status_code, 400
+        )
+
     def test_chat_rename(self):
         self.client.post("/api/chats", json={"name": "temp-1", "messages": []})
         resp = self.client.post("/api/chats/rename", json={"from": "temp-1", "to": "Sunsets"})

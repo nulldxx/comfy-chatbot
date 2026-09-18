@@ -1021,6 +1021,44 @@ the mtime (`api_archive`'s mount→copy→unmount ends in `handle_unmount`). Tog
 size+mtime backup (plain `rsync`, tar `--newer-mtime`) will never re-copy it — use a
 content-aware backup (`rsync -c`, `restic`, `borg`) if the archive must be backed up.
 
+### Deleting a chat deletes its media (sidebar 🗑)
+
+Deleting a chat from the sidebar used to unlink the session JSON and leave every image
+and video it generated orphaned in `IMAGES_DIR`. It now deletes them too. See
+`ADR/chat-delete-removes-media.md`.
+
+- **Opt-in on the wire, always on in the UI**: `DELETE /api/chats/<name>?media=1`. The
+  bare route still deletes only the JSON, so nothing else changed meaning.
+- **Archived media needs no special case.** `/api/archive` *moves* — copy, verify,
+  `src.unlink()` the original — so an archived file is already absent and
+  `unlink(missing_ok=True)` over it is a no-op. There is no archived-file marker to
+  check (and a session archive renames on the way in, so the archived copy doesn't even
+  keep the name the session knows).
+- **Media another chat references is kept** (`_session_media_in_use`, `persistence.py`),
+  because one file really can belong to several chats and nothing reference-counts:
+  `/review`'s *🫳 Import into this session*, `/jobs`' `pullAssetsIntoChat`, a tab
+  reattached to a run recording into a different `recording_name`, and
+  `_restore_session` under a new name all duplicate a URL. Skipped files are reported as
+  `kept_shared`.
+- **`settings.references.images` (and the legacy `settings.refImageUrl`) count as a live
+  use**, but are *not* part of a chat's own media (`session_media_filenames`). A
+  reference is a file the chat points at, not one it made — and unlike `sessionImages`,
+  `load_session` never filters references to files that still exist, so a dangling one
+  wouldn't self-heal.
+- **The chat JSON is unlinked first**, then each media file in its own `try/except
+  OSError`: deleting the chat is what was asked for and must not be lost to one busy
+  file. `seed_store.forget()` runs in `app.py`, not `persistence.py` — `seed_store`
+  imports `persistence`, so the reverse is circular.
+- **Two-step confirm in the row** (`.sidebar-confirm-label` + ✓/✕), modelled on the
+  inline rename beside it. There is no `window.confirm` in this codebase, and the y/n
+  `state.pendingConfirm` idiom is tied to the chat input box. Confirming the *open* chat
+  also calls `newChat()`, or it would sit there full of broken media.
+- **`GET /api/chats/<name>/delete-preview`** gives the strip a true count, fetched on the
+  🗑 click only. The sidebar's `image_count` can't: it is `len(sessionImages)` with no
+  disk check, so it overstates as soon as anything has been archived.
+- **No undo.** Archive first if it matters — that is now the real difference between the
+  two commands.
+
 ## Browsing the archive (`/archive-explore`)
 
 Archiving is one-way: `/archive-session` & friends copy media to the encrypted archive
