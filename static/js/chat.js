@@ -1349,10 +1349,20 @@ function scheduleRecordSave() {
 // dismissed user prompt does not reappear when the session is reloaded.
 document.addEventListener('message-dismissed', scheduleRecordSave);
 
+// Save now rather than after the debounce. A server-side run becomes the sole
+// writer of the session the moment it starts and only appends its own shots, so
+// anything still unsaved — the /sequence (or batch) command line that started it,
+// an image whose debounced save hasn't fired — would otherwise never reach disk.
+// Always resolves; a failed save must not stop the run.
+function flushRecordSave() {
+  clearTimeout(recordSaveTimer);
+  return doRecordSave();
+}
+
 function doRecordSave() {
-  if (!state.recordingName) return;
-  if (state.liveRunSession) return;
-  fetch('/api/chats', {
+  if (!state.recordingName) return Promise.resolve();
+  if (state.liveRunSession) return Promise.resolve();
+  return fetch('/api/chats', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1956,7 +1966,7 @@ function runSequenceRunJob(master, count, opts = {}) {
     cancelBtn.disabled = true;
     statusBubble.appendChild(cancelBtn);
 
-    fetch('/api/sequence-run', {
+    flushRecordSave().then(() => fetch('/api/sequence-run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1994,7 +2004,7 @@ function runSequenceRunJob(master, count, opts = {}) {
           },
         } : {}),
       }),
-    })
+    }))
     .then(parseJsonResponse)
     .then(data => {
       if (data.error) throw new Error(data.error);
@@ -2060,7 +2070,7 @@ function runBatchJob(steps) {
     cancelBtn.disabled = true;
     statusBubble.appendChild(cancelBtn);
 
-    fetch('/api/batch-run', {
+    flushRecordSave().then(() => fetch('/api/batch-run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2095,7 +2105,7 @@ function runBatchJob(steps) {
         ...autoFaceDetailPayload(),
         ...(seedToUse != null ? { seed: seedToUse } : {}),
       }),
-    })
+    }))
     .then(parseJsonResponse)
     .then(data => {
       if (data.error) throw new Error(data.error);
