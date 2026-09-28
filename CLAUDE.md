@@ -312,6 +312,20 @@ ever offer the *most recent* seed, which is rarely the image you are looking at.
   fire `contextmenu`, iOS Safari does not, and a synthetic touch-hold would collide with
   the pinch/swipe handlers in `lightbox.js` and the drag-sort in `grids.js`.
 
+### Privacy mode (`/privacy`, `privacy.js`)
+
+`/privacy` toggles a `privacy-mode` class on `<body>`; CSS in `chat.css` then covers every
+`.img-wrap`, `.review-thumb` and `.composite-cell` with an opaque `::after` panel that
+lifts on `:hover` (`pointer-events: none`, so clicks, drags and the right-click menu still
+work). See `ADR/privacy-mode.md`.
+
+- **Per browser, not per chat**: `localStorage['privacy-mode']`. It is deliberately **not**
+  in session save/restore, the `/settings-save` stack or `newChat`.
+- The inline script in `templates/index.html` applies the class before `chat.js` renders
+  media, so nothing flashes on reload. The header shows `🙈 privacy` while it is on.
+- A new inline media container needs adding to the CSS selector list to be masked. The
+  lightbox and slideshow are intentionally left unmasked.
+
 ### Generation progress bars (`comfy_progress.py`)
 
 The generation bubble used to show an indeterminate marquee for the whole render.

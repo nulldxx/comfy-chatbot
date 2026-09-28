@@ -19,6 +19,7 @@ import { openMaskEditor, buildComparisonSlider, buildFaceSuperTiles, openCropEdi
 import { makeCommandHandler } from './commands.js';
 import { initSidebar } from './sidebar.js';
 import { initMediaMenu } from './mediamenu.js';
+import { initPrivacyMode, isPrivacyMode } from './privacy.js';
 
 // ---------------------------------------------------------------------------
 // LoRA catalogue and alias catalogue — populated from server on load
@@ -120,8 +121,10 @@ function updateHeaderStatus() {
     ? (state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW || 'text2video')
     : (state.currentWorkflow || DEFAULT_WORKFLOW);
   const mode = state.t2vMode ? '  ·  🎬 t2v' : '';
-  document.getElementById('header-status').textContent = `${srv}  ·  ${wf}${mode}`;
+  const privacy = isPrivacyMode() ? '  ·  🙈 privacy' : '';
+  document.getElementById('header-status').textContent = `${srv}  ·  ${wf}${mode}${privacy}`;
 }
+initPrivacyMode();
 updateHeaderStatus();
 
 // ---------------------------------------------------------------------------

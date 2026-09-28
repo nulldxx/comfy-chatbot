@@ -290,6 +290,21 @@ header a:hover { color: #a78bfa; }
 }
 .img-wrap:hover .img-del { opacity: 1; }
 .img-del:hover { border-color: #f87171; color: #f87171; }
+
+/* /privacy: an opaque mask over every inline media container, lifted on hover.
+   pointer-events: none so clicks, drags and right-click still reach the media;
+   the hover buttons only show on hover, when the mask is already gone. */
+body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell)::after {
+  content: '\1F648';
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  background: #0f172a; color: #475569; font-size: 28px;
+  border-radius: 10px;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+body.privacy-mode :is(.review-thumb, .composite-cell)::after { border-radius: 8px; }
+body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell):hover::after { opacity: 0; }
 @media (hover: none) {
   .img-del { opacity: 0.6; }
 }

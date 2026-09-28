@@ -47,6 +47,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/i2v-workflow',                 desc: 'choose an image2video workflow (no arg = picker)',                                   args: ' ' },
   { cmd: '/i2v-workflow-reset',           desc: 'reset the image2video workflow to its default',                                       args: ''  },
   { cmd: '/t2v',                          desc: 'toggle text-to-video mode (plain prompts generate video)',                            args: ''  },
+  { cmd: '/privacy',                      desc: 'toggle privacy mode (media hidden until hovered)',                                     args: ''  },
   { cmd: '/t2v-workflow',                 desc: 'choose a text2video workflow (no arg = picker)',                                      args: ' ' },
   { cmd: '/t2v-workflow-reset',           desc: 'reset the text2video workflow to its default',                                        args: ''  },
   { cmd: '/image-settings',               desc: 'set image resolution & generation steps (presets, flip, use workflow default)',     args: ''  },

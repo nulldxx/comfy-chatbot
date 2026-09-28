@@ -12,6 +12,7 @@ import { messagesEl, sendBtn, addMessage, clearBubble, scrollBottom, deleteImage
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
 import { renderArchiveBrowser } from './archive.js';
+import { isPrivacyMode, setPrivacyMode } from './privacy.js';
 
 // Fetch the alternate models a workflow offers. `kind` names its directory family
 // (see WORKFLOW_KIND_DIRS server-side); a workflow with no alternates — and any failure —
@@ -578,6 +579,13 @@ function showChatSummary() {
     label: 'Text-to-video mode',
     value: state.t2vMode
       ? `<span style="color:#a78bfa">ON</span> <span style="color:#475569">— prompts generate video</span>`
+      : `<span style="color:#475569">off</span>`,
+  });
+
+  rows.push({
+    label: 'Privacy mode',
+    value: isPrivacyMode()
+      ? `<span style="color:#a78bfa">ON</span> <span style="color:#475569">— media hidden until hovered (this browser)</span>`
       : `<span style="color:#475569">off</span>`,
   });
 
@@ -1665,6 +1673,7 @@ export function makeCommandHandler(deps) {
       { label: 'Iterations per prompt',               cmd: '/iterations',            mode: 'insert' },
       { label: 'Add-prompt (append to every gen)',    cmd: '/generation-add-prompt', mode: 'insert' },
       { label: 'Text-to-video mode (toggle)',         cmd: '/t2v',                   mode: 'run'    },
+      { label: 'Privacy mode (toggle)',               cmd: '/privacy',               mode: 'run'    },
       { label: 'References (images/video/audio)',     cmd: '/references',            mode: 'run'    },
     ]},
     { group: 'Workflows & server', items: [
@@ -2215,6 +2224,18 @@ export function makeCommandHandler(deps) {
       return;
     }
 
+    if (cmd === '/privacy') {
+      addMessage('user', escapeHtml(raw), raw);
+      setPrivacyMode(!isPrivacyMode());
+      deps.updateHeaderStatus();
+      if (isPrivacyMode()) {
+        addMessage('bot', 'Privacy mode <strong style="color:#a78bfa">ON</strong> — images and videos are hidden until you hover over them. Remembered in this browser only; type <code>/privacy</code> again to turn it off.');
+      } else {
+        addMessage('bot', 'Privacy mode <strong>OFF</strong> — images and videos are shown again.');
+      }
+      return;
+    }
+
     if (cmd === '/t2v-workflow') {
       const wfArg = raw.slice('/t2v-workflow'.length).trim();
       if (wfArg) {
@@ -2625,6 +2646,7 @@ export function makeCommandHandler(deps) {
         { sig: '/macro-list', desc: 'list all defined macros with a delete button for each' },
         { sig: '/macro-set-default', desc: 'choose a default macro for the 🤖 button on images — clicking 🤖 runs that macro with the image URL substituted for <code>&lt;PARAM&gt;</code>', notes: 'pass a name (e.g. <code>/macro-set-default warmup</code>) to set it directly without the picker' },
         { sig: '/multi-prompt', desc: 'generate images for multiple prompts; paste one prompt per line (Shift+Enter between lines)', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
+        { sig: '/privacy', desc: 'toggle privacy mode — covers every image and video in the chat and its grids with an opaque panel that lifts while the mouse is over it; type it again to turn it off', notes: 'remembered per browser, not per chat &nbsp;·&nbsp; the lightbox and slideshow are not masked &nbsp;·&nbsp; on touch screens a tap reveals an item' },
         { sig: '/purge', desc: 'free GPU memory on the active ComfyUI server' },
         { sig: '/review <n>', desc: 'grid of the last N images, oldest first' },
         { sig: '/review-all', desc: 'grid of every image, oldest first (tap to view, trash to delete)' },
