@@ -614,3 +614,92 @@ export function joinArchivePath(base, name) {
   if (parts.includes('..')) return null;
   return parts.concat(archiveSegments(child)).join('/');
 }
+
+// --- right-click "Inspect" (mediamenu.js) ------------------------------------
+
+export function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+  return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
+}
+
+function fmtMtime(seconds) {
+  const d = new Date(Number(seconds) * 1000);
+  if (isNaN(d)) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+         `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+const META_SECTION_HEADINGS = { prompt: 'Prompts', sampling: 'Sampling', model: 'Models', size: 'Size' };
+
+// Build the Inspect table from GET /api/image-metadata/<name>. Returns the HTML plus
+// `copies`, the text behind each 📋 button: a button carries only data-copy-idx, so
+// a multi-megabyte workflow never lands in a DOM attribute. Every value is escaped.
+export function renderMetadataTable(data) {
+  const copies = [];
+  const copyBtn = text => {
+    copies.push(String(text));
+    return `<button class="meta-copy" data-copy-idx="${copies.length - 1}" title="Copy">📋</button>`;
+  };
+  const row = (label, valueHtml, copyText, cls = '') =>
+    `<tr${cls ? ` class="${cls}"` : ''}><th>${label}</th><td>${valueHtml}</td>` +
+    `<td class="meta-copy-cell">${copyText == null ? '' : copyBtn(copyText)}</td></tr>`;
+  const heading = text => `<tr class="meta-heading"><th colspan="3">${escapeHtml(text)}</th></tr>`;
+  const pre = text => `<pre class="meta-text">${escapeHtml(text)}</pre>`;
+
+  const file = data.file || {};
+  const rows = [heading('File')];
+  rows.push(row('Name', escapeHtml(file.name || ''), file.name || ''));
+  rows.push(row('Size', escapeHtml(fmtBytes(file.size)), null));
+  if (file.mtime != null) rows.push(row('Modified', escapeHtml(fmtMtime(file.mtime)), null));
+  if (data.seed != null) rows.push(row('Recorded seed', `<code>${escapeHtml(data.seed)}</code>`, data.seed));
+
+  let section = null;
+  for (const r of data.summary || []) {
+    if (r.section !== section) {
+      section = r.section;
+      rows.push(heading(META_SECTION_HEADINGS[section] || section));
+    }
+    // The node title is what tells two CLIPTextEncode prompts apart ("Positive" /
+    // "Negative"); the class is only worth repeating when the title hides it.
+    const origin = r.title && r.title !== r.class_type ? `${r.title} · ${r.class_type}` : r.class_type;
+    const label = `${escapeHtml(r.label)}<div class="meta-node">#${escapeHtml(r.node)} ${escapeHtml(origin || '')}</div>`;
+    const value = r.section === 'prompt' ? pre(r.value) : `<code>${escapeHtml(r.value)}</code>`;
+    rows.push(row(label, value, r.value));
+  }
+
+  const other = Object.entries(data.other || {});
+  if (other.length) {
+    rows.push(heading('Other metadata'));
+    for (const [k, v] of other) rows.push(row(escapeHtml(k), pre(v), v));
+  }
+
+  const graphs = [['prompt', 'Prompt graph (API)'], ['workflow', 'Workflow (UI)']]
+    .filter(([k]) => data[k] != null);
+  if (graphs.length) {
+    rows.push(heading('Graphs'));
+    for (const [k, label] of graphs) {
+      // Compact JSON on the clipboard (pastes straight into ComfyUI), pretty in view.
+      const pretty = JSON.stringify(data[k], null, 2);
+      const count = Array.isArray(data[k]) ? data[k].length
+        : Array.isArray(data[k].nodes) ? data[k].nodes.length : Object.keys(data[k]).length;
+      rows.push(row(escapeHtml(label),
+        `<details><summary>${count} node${count === 1 ? '' : 's'} · ${escapeHtml(fmtBytes(pretty.length))}</summary>${pre(pretty)}</details>`,
+        JSON.stringify(data[k])));
+    }
+  }
+
+  const empty = !(data.summary || []).length && !other.length && !graphs.length;
+  const note = empty
+    ? '<div class="meta-empty">No ComfyUI metadata is embedded in this file.</div>'
+    : '';
+  return {
+    html: `<div class="meta-title">🔎 ${escapeHtml(file.name || '')}</div>${note}` +
+          `<table class="meta-table">${rows.join('')}</table>`,
+    copies,
+  };
+}

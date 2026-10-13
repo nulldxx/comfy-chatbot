@@ -259,7 +259,7 @@ sends the browser to `/login`. It is the same `app._lock_down()` the idle watchd
 ### Media right-click menu & per-image seeds (`mediamenu.js`, `seed_store.py`)
 
 Right-clicking any generated image or video opens an in-app menu — **Save**, **Copy**,
-**Copy seed** — instead of the browser's. Two motivations: `.img-wrap` had run out of
+**Copy seed**, **Inspect…** — instead of the browser's. Two motivations: `.img-wrap` had run out of
 edges (twelve `img-*` hover buttons, one per corner and side), and `/getseed` could only
 ever offer the *most recent* seed, which is rarely the image you are looking at.
 
@@ -307,6 +307,16 @@ ever offer the *most recent* seed, which is rarely the image you are looking at.
   accepted, so it inherits the same scope — **t2i / i2v / t2v only** — and
   `/getseed-reset` clears it. `newChat()` now resets it too (it previously did not, so a
   pin leaked into the next chat).
+- **Inspect…** (`media_metadata.py`, `GET /api/image-metadata/<filename>`,
+  `renderMetadataTable` in `utils.js`) posts the file's embedded ComfyUI metadata as a
+  table in the chat, with a 📋 per row. It is pure Python with no Pillow: PNG
+  `tEXt`/`zTXt`/`iTXt` chunks, WEBP EXIF (`Prompt:`/`Workflow:`), and video container
+  tags via `ffprobe`, including VHS's packed JSON `comment`. Readers are best-effort and
+  never raise. Prompts, sampling, models and size are summarised via the `SUMMARY_INPUTS`
+  allow-list, with seeds as strings. The graph rows copy **compact** JSON, which pastes
+  into ComfyUI. Copy goes through `copyText` (`mediamenu.js`), which falls back to
+  `execCommand('copy')` outside a secure context. Copy address uses it too. See
+  `ADR/media-inspect-metadata.md`.
 - **Not retroactive**, and **archived images lose their seed**: the map is a convenience
   index, not provenance. iOS long-press is unsupported — desktop and Android Chrome both
   fire `contextmenu`, iOS Safari does not, and a synthetic touch-hold would collide with

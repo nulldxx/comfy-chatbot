@@ -71,6 +71,7 @@ from persistence import (
     save_session, session_delete_preview, sessions_dir, slugify,
 )
 import seed_store
+import media_metadata
 import auth_store
 import idle_lock
 import archive_browse
@@ -2642,6 +2643,34 @@ def api_image_seed(filename):
     if Path(safe).suffix.lower() not in MEDIA_EXTS:
         return jsonify({"error": "Invalid filename"}), 400
     return jsonify({"seed": seed_store.get_seed(safe)})
+
+
+@app.route("/api/image-metadata/<filename>")
+@login_required
+@requires_output_storage
+def api_image_metadata(filename):
+    """Return the generation metadata ComfyUI embedded in one gallery file.
+
+    Backs the right-click "Inspect" menu item. ``summary`` lists the interesting
+    literal inputs of the API graph (prompts, sampling, models, size); ``prompt``
+    and ``workflow`` are the graphs themselves; ``other`` is any further text key.
+    A file with nothing embedded (a JPG, say) is a 200 with an empty summary — the
+    recorded ``seed`` from seed_store may still answer the usual question.
+    """
+    safe = secure_filename(filename)
+    if not safe or safe != filename:
+        return jsonify({"error": "Invalid filename"}), 400
+    if Path(safe).suffix.lower() not in MEDIA_EXTS:
+        return jsonify({"error": "Invalid filename"}), 400
+    path = IMAGES_DIR / safe
+    try:
+        st = path.stat()
+    except OSError:
+        return jsonify({"error": "Not found"}), 404
+    data = media_metadata.inspect_file(path)
+    data["file"] = {"name": safe, "size": st.st_size, "mtime": st.st_mtime}
+    data["seed"] = seed_store.get_seed(safe)
+    return jsonify(data)
 
 
 @app.route("/api/images")

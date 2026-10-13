@@ -42,6 +42,7 @@ COPY grok.py .
 COPY gunicorn.conf.py .
 COPY idle_lock.py .
 COPY image_store.py .
+COPY media_metadata.py .
 COPY persistence.py .
 COPY profanity.py .
 COPY prompt_builders.py .

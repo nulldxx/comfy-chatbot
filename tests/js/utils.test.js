@@ -6,7 +6,8 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
          WORKFLOW_VARIANT_SEP, progressPercent, progressCaption,
          archiveParentPath, archiveBreadcrumb, joinArchivePath,
-         fmtUptime, runStagePrefix, buildI2vSteps, buildFaceDetailSteps } from '../../static/js/utils.js';
+         fmtUptime, runStagePrefix, buildI2vSteps, buildFaceDetailSteps,
+         renderMetadataTable, fmtBytes } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -1213,5 +1214,70 @@ describe('buildFaceDetailSteps', () => {
     expect(skippedVideos).toBe(1);
     expect(steps.map(s => s.image)).toEqual(['/images/b.png']);
     expect(steps[0].videoMeta).toEqual({ description: 'waves' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderMetadataTable — the right-click "Inspect" table
+// ---------------------------------------------------------------------------
+
+describe('renderMetadataTable', () => {
+  const full = {
+    file: { name: 'a.png', size: 2048, mtime: 0 },
+    seed: '18446744073709551615',
+    summary: [
+      { section: 'prompt', label: 'Prompt', value: 'a <b>cat</b>', node: '6',
+        class_type: 'CLIPTextEncode', title: 'Positive' },
+      { section: 'sampling', label: 'Steps', value: '20', node: '3',
+        class_type: 'KSampler', title: 'KSampler' },
+    ],
+    prompt: { 3: { class_type: 'KSampler', inputs: {} } },
+    workflow: { nodes: [{ id: 3 }, { id: 4 }], links: [] },
+    other: { parameters: 'x & y' },
+  };
+
+  test('escapes every value', () => {
+    const { html } = renderMetadataTable(full);
+    expect(html).toContain('a &lt;b&gt;cat&lt;/b&gt;');
+    expect(html).toContain('x &amp; y');
+    expect(html).not.toContain('<b>cat</b>');
+  });
+
+  test('sections in order, node title shown', () => {
+    const { html } = renderMetadataTable(full);
+    const order = ['File', 'Prompts', 'Sampling', 'Other metadata', 'Graphs']
+      .map(h => html.indexOf(`<th colspan="3">${h}</th>`));
+    expect(order.every(i => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).toContain('#6 Positive · CLIPTextEncode');
+    expect(html).toContain('2 nodes');
+  });
+
+  test('copy texts are raw values and compact JSON, not in attributes', () => {
+    const { html, copies } = renderMetadataTable(full);
+    expect(copies).toContain('a <b>cat</b>');
+    expect(copies).toContain('18446744073709551615');
+    expect(copies).toContain(JSON.stringify(full.workflow));
+    expect(html).not.toContain(JSON.stringify(full.workflow));  // pretty in view only
+    expect(html.match(/data-copy-idx=/g).length).toBe(copies.length);
+  });
+
+  test('empty file says so but still shows file and seed', () => {
+    const { html, copies } = renderMetadataTable({
+      file: { name: 'a.jpg', size: 10 }, seed: '7', summary: [], prompt: null, workflow: null, other: {},
+    });
+    expect(html).toContain('No ComfyUI metadata');
+    expect(html).toContain('Recorded seed');
+    expect(html).not.toContain('Graphs');
+    expect(copies).toEqual(['a.jpg', '7']);
+  });
+});
+
+describe('fmtBytes', () => {
+  test('units', () => {
+    expect(fmtBytes(500)).toBe('500 B');
+    expect(fmtBytes(2048)).toBe('2.0 KB');
+    expect(fmtBytes(5 * 1024 * 1024)).toBe('5.0 MB');
+    expect(fmtBytes(300 * 1024)).toBe('300 KB');
   });
 });

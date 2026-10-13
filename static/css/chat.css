@@ -1507,3 +1507,58 @@ body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell):hover::after { 
 .media-menu-item.media-menu-fail {
   color: #f87171;
 }
+
+/* Right-click → Inspect: the embedded ComfyUI metadata table (renderMetadataTable). */
+.meta-title { font-weight: 600; margin-bottom: 6px; word-break: break-all; }
+.meta-empty { color: #94a3b8; margin-bottom: 6px; }
+.meta-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.meta-table th, .meta-table td {
+  padding: 4px 6px;
+  border-top: 1px solid #1e293b;
+  vertical-align: top;
+  text-align: left;
+}
+.meta-table th { width: 9.5em; color: #94a3b8; font-weight: 500; }
+.meta-table td { color: #e2e8f0; overflow-wrap: anywhere; }
+.meta-table td.meta-copy-cell { width: 2.2em; text-align: center; }
+.meta-table tr.meta-heading th {
+  width: auto;
+  padding-top: 10px;
+  color: #a78bfa;
+  font-weight: 600;
+  border-top: none;
+}
+.meta-node { color: #475569; font-size: 0.7rem; overflow-wrap: anywhere; }
+.meta-text {
+  margin: 0;
+  max-height: 16em;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+.meta-table details pre.meta-text {
+  max-height: 24em;
+  margin-top: 4px;
+  padding: 6px;
+  background: #0f172a;
+  border-radius: 5px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+.meta-table summary { cursor: pointer; color: #94a3b8; }
+.meta-copy {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+.meta-copy:hover { opacity: 1; }

@@ -180,8 +180,8 @@ class TestLastSeed(_AppFixture):
         self.assertEqual(resp.get_json(), {"seed": str(big)})
 
 
-class TestImageSeed(_AppFixture):
-    """GET /api/image-seed/<filename> — the per-file seed behind "Copy seed"."""
+class _SeedStoreFixture(_AppFixture):
+    """_AppFixture with seed_store pointed at the temp IMAGES_DIR."""
 
     def setUp(self):
         super().setUp()
@@ -198,6 +198,10 @@ class TestImageSeed(_AppFixture):
         self._patcher_seeds.stop()
         self._patcher_seeds_dir.stop()
         super().tearDown()
+
+
+class TestImageSeed(_SeedStoreFixture):
+    """GET /api/image-seed/<filename> — the per-file seed behind "Copy seed"."""
 
     def test_returns_recorded_seed_as_string(self):
         # As with /api/last-seed, a full 64-bit seed must come back as a string or
@@ -244,6 +248,51 @@ class TestImageSeed(_AppFixture):
         self.assertEqual(self.client.delete("/api/images").status_code, 200)
         self.assertEqual(self.client.get("/api/image-seed/a.png").get_json(),
                          {"seed": None})
+
+
+class TestImageMetadata(_SeedStoreFixture):
+    """GET /api/image-metadata/<filename> — the right-click "Inspect" table."""
+
+    def test_png_with_embedded_graph(self):
+        from tests.test_media_metadata import API_GRAPH, UI_GRAPH, make_png
+        (self.images_dir / "a.png").write_bytes(make_png([
+            (b"tEXt", b"prompt\x00" + json.dumps(API_GRAPH).encode()),
+            (b"tEXt", b"workflow\x00" + json.dumps(UI_GRAPH).encode()),
+        ]))
+        seed_store_module.record_seeds(["a.png"], 7)
+        resp = self.client.get("/api/image-metadata/a.png")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["prompt"], API_GRAPH)
+        self.assertEqual(data["workflow"], UI_GRAPH)
+        self.assertEqual(data["seed"], "7")
+        self.assertEqual(data["file"]["name"], "a.png")
+        self.assertIn({"Prompt": "a cat on a mat"},
+                      [{r["label"]: r["value"]} for r in data["summary"]])
+
+    def test_file_without_metadata(self):
+        self._make_image("a.jpg")
+        seed_store_module.record_seeds(["a.jpg"], 42)
+        data = self.client.get("/api/image-metadata/a.jpg").get_json()
+        self.assertEqual(data["summary"], [])
+        self.assertIsNone(data["prompt"])
+        self.assertEqual(data["seed"], "42")
+
+    def test_missing_file_404(self):
+        self.assertEqual(self.client.get("/api/image-metadata/nope.png").status_code, 404)
+
+    def test_rejects_non_media_extension(self):
+        self.assertEqual(self.client.get("/api/image-metadata/.seeds.json").status_code, 400)
+
+    def test_rejects_traversal(self):
+        resp = self.client.get("/api/image-metadata/..%2F..%2Fetc%2Fpasswd.png")
+        self.assertIn(resp.status_code, (400, 404))
+
+    def test_requires_login(self):
+        with self.client.session_transaction() as sess:
+            sess.clear()
+        resp = self.client.get("/api/image-metadata/a.png")
+        self.assertIn(resp.status_code, (302, 401))
 
 
 class TestParseSeed(unittest.TestCase):

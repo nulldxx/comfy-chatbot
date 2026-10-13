@@ -2,7 +2,7 @@
 //
 // The .img-wrap hover buttons ran out of edges long ago (twelve of them, pinned to
 // every corner), while the browser's own context menu sat unused over every piece of
-// gallery media. This reclaims it for Save / Copy / Copy seed.
+// gallery media. This reclaims it for Save / Copy / Copy seed / Inspect.
 //
 // Attached ONCE, delegated on document, rather than wired per render site: the
 // /images/ URL is already the identity key everywhere in this app, so a single
@@ -12,8 +12,9 @@
 // over mask/crop editor canvases, /references thumbs and /references-file/ previews.
 
 import { state } from './state.js';
-import { isVideoUrl, clampMenuPosition, escapeHtml } from './utils.js';
-import { addMessage } from './dom.js';
+import { isVideoUrl, clampMenuPosition, escapeHtml, renderMetadataTable } from './utils.js';
+import { addMessage, clearBubble } from './dom.js';
+import { isLightboxOpen, closeLightbox } from './lightbox.js';
 
 // Copying an image (as opposed to its address) needs navigator.clipboard.write,
 // which browsers expose only in a secure context — HTTPS or localhost. The
@@ -71,8 +72,64 @@ function copyImage(url) {
   ]);
 }
 
+// navigator.clipboard is absent outside a secure context (plain HTTP on a LAN
+// address — the usual way in), so fall back to the old execCommand('copy') over a
+// hidden textarea, which still works inside a click handler.
+export function copyText(text) {
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    ta.remove();
+    ok ? resolve() : reject(new Error('copy failed'));
+  });
+}
+
 function copyAddress(url) {
-  return navigator.clipboard.writeText(new URL(url, window.location.href).href);
+  return copyText(new URL(url, window.location.href).href);
+}
+
+// Post the file's embedded ComfyUI metadata (GET /api/image-metadata) as a table in
+// the chat, each section with a 📋 that copies its full value.
+function inspectMedia(url) {
+  const name = url.split('/').pop();
+  // The table goes in the chat, which the lightbox would otherwise hide.
+  if (isLightboxOpen()) closeLightbox();
+  const bubble = addMessage('bot', `🔎 Reading metadata from <code>${escapeHtml(name)}</code>…`);
+  const show = html => {
+    clearBubble(bubble);
+    bubble.insertAdjacentHTML('afterbegin', html);
+  };
+  fetch('/api/image-metadata/' + encodeURIComponent(name))
+    .then(async r => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      return data;
+    })
+    .then(data => {
+      const { html, copies } = renderMetadataTable(data);
+      show(html);
+      bubble.querySelectorAll('.meta-copy').forEach(btn => {
+        btn.addEventListener('click', e => {
+          e.stopPropagation();
+          copyText(copies[Number(btn.dataset.copyIdx)])
+            .then(() => { btn.textContent = '✓'; })
+            .catch(() => { btn.textContent = '✗'; })
+            .finally(() => setTimeout(() => { btn.textContent = '📋'; }, 1200));
+        });
+      });
+    })
+    .catch(err => show(`❌ Could not read metadata from <code>${escapeHtml(name)}</code>: ` +
+                       `${escapeHtml(err.message)}`));
 }
 
 // --- menu ------------------------------------------------------------------
@@ -162,6 +219,8 @@ function openMediaMenu(url, x, y) {
       };
     })
     .catch(() => { seedRow.textContent = 'Seed unavailable'; });
+
+  row('Inspect…', () => { dismiss(); inspectMedia(url); });
 
   document.body.appendChild(menu);
   const pos = clampMenuPosition(x, y, menu.offsetWidth, menu.offsetHeight,
