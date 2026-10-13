@@ -2662,14 +2662,20 @@ def api_image_metadata(filename):
         return jsonify({"error": "Invalid filename"}), 400
     if Path(safe).suffix.lower() not in MEDIA_EXTS:
         return jsonify({"error": "Invalid filename"}), 400
-    path = IMAGES_DIR / safe
+    return _media_metadata_response(IMAGES_DIR / safe, seed_store.get_seed(safe))
+
+
+def _media_metadata_response(path, seed):
+    """The Inspect payload for one media file, or a 404 if it is gone."""
     try:
         st = path.stat()
     except OSError:
         return jsonify({"error": "Not found"}), 404
+    if not path.is_file():
+        return jsonify({"error": "Not found"}), 404
     data = media_metadata.inspect_file(path)
-    data["file"] = {"name": safe, "size": st.st_size, "mtime": st.st_mtime}
-    data["seed"] = seed_store.get_seed(safe)
+    data["file"] = {"name": path.name, "size": st.st_size, "mtime": st.st_mtime}
+    data["seed"] = seed
     return jsonify(data)
 
 
@@ -3446,6 +3452,24 @@ def api_archive_browse_status():
         "open": archive_browse.is_open(),
         "host_mounted": _host_mount_active(),
     })
+
+
+@app.route("/api/archive-metadata/<path:rel>")
+@login_required
+def api_archive_metadata(rel):
+    """The right-click Inspect payload for a file in the archive browser.
+
+    Same shape as /api/image-metadata, but resolved through _archive_path and the
+    browse lease rather than IMAGES_DIR. ``seed`` is always None: seed_store is
+    keyed on gallery filenames and archiving renames, so an archived file has
+    lost its recorded seed (whatever ComfyUI embedded in the file still shows)."""
+    err = _archive_browse_open()
+    if err:
+        return err
+    path = _archive_path(rel)
+    if path is None or path == ARCHIVE_MOUNT_DIR or path.suffix.lower() not in MEDIA_EXTS:
+        return jsonify({"error": "Invalid path"}), 400
+    return _media_metadata_response(path, None)
 
 
 @app.route("/archive-file/<path:rel>")

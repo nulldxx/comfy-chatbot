@@ -8,8 +8,10 @@
 // /images/ URL is already the identity key everywhere in this app, so a single
 // listener covers chat bubbles, the /review-all and sequence-review grids
 // (grids.js), the slideshow and the lightbox — including the renderers that bypass
-// appendChatImage. Gating on the /images/ prefix leaves the native menu in place
-// over mask/crop editor canvases, /references thumbs and /references-file/ previews.
+// appendChatImage. /archive-file/ URLs (the /archive-explore grid, and the
+// lightbox/slideshow it opens) get the same menu minus Copy seed. Gating on those
+// two prefixes leaves the native menu in place over mask/crop editor canvases,
+// /references thumbs and /references-file/ previews.
 
 import { state } from './state.js';
 import { isVideoUrl, clampMenuPosition, escapeHtml, renderMetadataTable } from './utils.js';
@@ -26,6 +28,31 @@ function canCopyImages() {
 }
 
 let openMenu = null;
+
+const ARCHIVE_PREFIX = '/archive-file/';
+
+function isArchiveUrl(url) {
+  return url.startsWith(ARCHIVE_PREFIX);
+}
+
+// The server builds /archive-file/ URLs from raw paths, so a segment is usually
+// unencoded — but a src that went through the browser may not be. A stray '%'
+// makes decodeURIComponent throw; the raw segment is then the right answer.
+function safeDecode(seg) {
+  try { return decodeURIComponent(seg); } catch (_) { return seg; }
+}
+
+// Gallery files are addressed by name; archive files by their path inside the
+// volume (staging/<folder>/<file>), each segment encoded on its own so the
+// slashes survive for the <path:> converter.
+function metadataEndpoint(url) {
+  if (isArchiveUrl(url)) {
+    const rel = url.slice(ARCHIVE_PREFIX.length).split('/')
+      .map(seg => encodeURIComponent(safeDecode(seg))).join('/');
+    return '/api/archive-metadata/' + rel;
+  }
+  return '/api/image-metadata/' + encodeURIComponent(url.split('/').pop());
+}
 
 export function closeMediaMenu() {
   if (openMenu) { openMenu(); openMenu = null; }
@@ -109,7 +136,7 @@ function inspectMedia(url) {
     clearBubble(bubble);
     bubble.insertAdjacentHTML('afterbegin', html);
   };
-  fetch('/api/image-metadata/' + encodeURIComponent(name))
+  fetch(metadataEndpoint(url))
     .then(async r => {
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
@@ -195,30 +222,36 @@ function openMediaMenu(url, x, y) {
         btn => run(btn, copyAddress(url), 'Copied ✓'));
   }
 
-  // Fetched on open so the row can say up front whether there is a seed to take,
-  // rather than failing after the click.
-  const seedRow = row('Copy seed…', () => {}, { enabled: false });
-  fetch('/api/image-seed/' + encodeURIComponent(url.split('/').pop()))
-    .then(r => r.ok ? r.json() : Promise.reject(new Error('unavailable')))
-    .then(data => {
-      if (data.seed == null) { seedRow.textContent = 'No seed recorded'; return; }
-      const shown = data.seed.length > 12 ? data.seed.slice(0, 12) + '…' : data.seed;
-      seedRow.textContent = 'Copy seed ' + shown;
-      seedRow.title = data.seed;
-      seedRow.disabled = false;
-      seedRow.onclick = () => {
-        // Same one-shot pin /getseed sets: consumed by the next t2i / i2v / t2v
-        // run in runGeneration, then cleared. Kept a string all the way to the
-        // server — a 64-bit seed does not survive a JS Number.
-        state.reuseSeed = data.seed;
-        dismiss();
-        addMessage('bot', `🎲 The next generation (t2i, i2v or t2v) will reuse seed ` +
-          `<code>${escapeHtml(data.seed)}</code> from ` +
-          `<code>${escapeHtml(url.split('/').pop())}</code>. ` +
-          `It reverts to random seeds afterwards.`);
-      };
-    })
-    .catch(() => { seedRow.textContent = 'Seed unavailable'; });
+  if (isArchiveUrl(url)) {
+    // seed_store is keyed on gallery filenames, and archiving renames — so an
+    // archived file never has a recorded seed. Say so rather than asking.
+    row('No seed (archived)', () => {}, { enabled: false });
+  } else {
+    // Fetched on open so the row can say up front whether there is a seed to take,
+    // rather than failing after the click.
+    const seedRow = row('Copy seed…', () => {}, { enabled: false });
+    fetch('/api/image-seed/' + encodeURIComponent(url.split('/').pop()))
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('unavailable')))
+      .then(data => {
+        if (data.seed == null) { seedRow.textContent = 'No seed recorded'; return; }
+        const shown = data.seed.length > 12 ? data.seed.slice(0, 12) + '…' : data.seed;
+        seedRow.textContent = 'Copy seed ' + shown;
+        seedRow.title = data.seed;
+        seedRow.disabled = false;
+        seedRow.onclick = () => {
+          // Same one-shot pin /getseed sets: consumed by the next t2i / i2v / t2v
+          // run in runGeneration, then cleared. Kept a string all the way to the
+          // server — a 64-bit seed does not survive a JS Number.
+          state.reuseSeed = data.seed;
+          dismiss();
+          addMessage('bot', `🎲 The next generation (t2i, i2v or t2v) will reuse seed ` +
+            `<code>${escapeHtml(data.seed)}</code> from ` +
+            `<code>${escapeHtml(url.split('/').pop())}</code>. ` +
+            `It reverts to random seeds afterwards.`);
+        };
+      })
+      .catch(() => { seedRow.textContent = 'Seed unavailable'; });
+  }
 
   row('Inspect…', () => { dismiss(); inspectMedia(url); });
 
@@ -250,7 +283,7 @@ export function initMediaMenu() {
     const el = e.target.closest && e.target.closest('img, video');
     if (!el) return;
     const url = el.getAttribute('src');
-    if (!url || !url.startsWith('/images/')) return;
+    if (!url || !(url.startsWith('/images/') || isArchiveUrl(url))) return;
     e.preventDefault();
     openMediaMenu(url, e.clientX, e.clientY);
   });

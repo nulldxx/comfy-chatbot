@@ -60,8 +60,9 @@ value.
 
 ## Not covered
 
-- **Media outside `/images/`** gets no Inspect row, because the menu is gated on that
-  prefix. That covers archive-explore files, `/references-file/` uploads and so on.
+- **Media outside `/images/` and `/archive-file/`** gets no menu. That covers
+  `/references-file/` uploads and so on. Archive files were added later: they use
+  `GET /api/archive-metadata/<path>`, and their seed row reads *No seed (archived)*.
 - **JPG EXIF** (e.g. a custom node's `UserComment`) is not read.
 - The summary is a flat allow-list of input names. A node pack using a different name
   for its prompt shows up only in the raw graph.

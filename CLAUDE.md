@@ -317,6 +317,11 @@ ever offer the *most recent* seed, which is rarely the image you are looking at.
   into ComfyUI. Copy goes through `copyText` (`mediamenu.js`), which falls back to
   `execCommand('copy')` outside a secure context. Copy address uses it too. See
   `ADR/media-inspect-metadata.md`.
+- **Archive media gets the menu too.** `/archive-file/` URLs (the `/archive-explore`
+  grid and the lightbox/slideshow it opens) are accepted alongside `/images/`. Inspect
+  goes to `GET /api/archive-metadata/<path>`, which resolves through `_archive_path`
+  and renews the browse lease. Copy seed becomes a disabled *No seed (archived)* row,
+  because `seed_store` is keyed on gallery filenames and archiving renames files.
 - **Not retroactive**, and **archived images lose their seed**: the map is a convenience
   index, not provenance. iOS long-press is unsupported — desktop and Android Chrome both
   fire `contextmenu`, iOS Safari does not, and a synthetic touch-hold would collide with

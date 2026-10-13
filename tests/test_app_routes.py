@@ -295,6 +295,62 @@ class TestImageMetadata(_SeedStoreFixture):
         self.assertIn(resp.status_code, (302, 401))
 
 
+class TestArchiveMetadata(_SeedStoreFixture):
+    """GET /api/archive-metadata/<path> — Inspect in the /archive-explore grid."""
+
+    def setUp(self):
+        super().setUp()
+        self.archive_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.archive_dir, ignore_errors=True)
+        for target, value in (("ARCHIVE_MOUNT_DIR", self.archive_dir),
+                              ("_archive_browse_open", lambda: None)):
+            patcher = patch.object(app_module, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_png_in_subfolder(self):
+        from tests.test_media_metadata import API_GRAPH, make_png
+        folder = self.archive_dir / "staging" / "my folder"
+        folder.mkdir(parents=True)
+        (folder / "a 001.png").write_bytes(make_png([
+            (b"tEXt", b"prompt\x00" + json.dumps(API_GRAPH).encode()),
+        ]))
+        resp = self.client.get("/api/archive-metadata/staging/my%20folder/a%20001.png")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["prompt"], API_GRAPH)
+        self.assertEqual(data["file"]["name"], "a 001.png")
+        self.assertIsNone(data["seed"])
+
+    def test_missing_file_404(self):
+        self.assertEqual(
+            self.client.get("/api/archive-metadata/staging/nope.png").status_code, 404)
+
+    def test_rejects_hidden_and_non_media(self):
+        (self.archive_dir / ".marker.png").write_bytes(b"x")
+        (self.archive_dir / "notes.txt").write_text("x")
+        self.assertEqual(
+            self.client.get("/api/archive-metadata/.marker.png").status_code, 400)
+        self.assertEqual(
+            self.client.get("/api/archive-metadata/notes.txt").status_code, 400)
+
+    def test_rejects_traversal(self):
+        resp = self.client.get("/api/archive-metadata/..%2F..%2Fetc%2Fpasswd.png")
+        self.assertIn(resp.status_code, (400, 404))
+
+    def test_lease_refusal_passes_through(self):
+        with patch.object(app_module, "_archive_browse_open",
+                          lambda: (app_module.jsonify({"error": "busy"}), 409)):
+            resp = self.client.get("/api/archive-metadata/a.png")
+        self.assertEqual(resp.status_code, 409)
+
+    def test_requires_login(self):
+        with self.client.session_transaction() as sess:
+            sess.clear()
+        resp = self.client.get("/api/archive-metadata/a.png")
+        self.assertIn(resp.status_code, (302, 401))
+
+
 class TestParseSeed(unittest.TestCase):
     def test_none_when_absent(self):
         self.assertEqual(app_module._parse_seed({}), (None, None))
