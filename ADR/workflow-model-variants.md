@@ -105,8 +105,6 @@ model.
 - A **UI-format** template shows no alternates in the picker even though generation would
   collapse them — listing needs `class_type`. Same API-format requirement the rest of the
   node surgery has.
-- `/t2i-workflow-iterate` passes bare names, so each iterated workflow runs its default
-  model. Not changed.
 - A model filename containing a comma can't be used.
 - A stale pick (template edited to drop a model) fails the job with a readable error
   rather than rendering the wrong model; fixed by re-picking in `/workflows`.
@@ -120,3 +118,9 @@ model.
 `generation_service.py` (`_run_generation_core`), `static/js/utils.js`,
 `static/js/commands.js`. Tests in `tests/test_workflow.py`, `tests/test_catalogue.py`,
 `tests/test_generation_service.py`, `tests/test_app_routes.py`, `tests/js/utils.test.js`.
+
+## Follow-up
+
+`/t2i-workflow-iterate` originally passed bare names, so each iterated workflow ran its
+default model. It now offers one tick box per model — see
+`ADR/t2i-workflow-iterate-models.md`.

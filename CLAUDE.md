@@ -940,8 +940,13 @@ more level (type → workflow → model) to pick one:
   can't silently drop a model the table set. The first alternate is captioned
   `(default)` and stores the **bare** name, keeping the wire format byte-identical to
   before for anyone who never touches it.
-- **Not covered:** `/t2i-workflow-iterate` passes bare names, so each iterated workflow
-  runs its default model. A model filename containing a comma can't be used.
+- **`/t2i-workflow-iterate` ticks models, not just workflows**: on open it fetches every
+  t2i workflow's variants in parallel and expands each multi-model workflow into a header
+  plus one tick box per model (`expandWorkflowVariants` in `utils.js`), so one prompt can
+  be compared across models. Each ticked box becomes a batch step whose `workflow` is the
+  wire name (bare for the default), which `resolve_workflow` already accepts. See
+  `ADR/t2i-workflow-iterate-models.md`.
+- **Not covered:** a model filename containing a comma can't be used.
 
 ### Text-to-video (`/t2v`)
 

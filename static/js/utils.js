@@ -366,6 +366,26 @@ export function joinWorkflowVariant(name, variant) {
   return variant ? `${name}${WORKFLOW_VARIANT_SEP}${variant}` : name;
 }
 
+// Expand workflows into one entry per selectable model, for tick lists that run
+// several at once (/t2i-workflow-iterate). `variantsByWf` is parallel to `workflows`
+// (each an array from /api/workflow-variants). A workflow offering fewer than two models
+// is a single entry with model null. Otherwise there is one entry per model, the first
+// being the template's default and so stored bare, as renderVariantButtons does.
+export function expandWorkflowVariants(workflows, variantsByWf) {
+  const out = [];
+  workflows.forEach((wf, i) => {
+    const variants = Array.isArray(variantsByWf && variantsByWf[i]) ? variantsByWf[i] : [];
+    if (variants.length < 2) {
+      out.push({ wire: wf, workflow: wf, model: null, isDefault: false });
+      return;
+    }
+    variants.forEach((v, j) => {
+      out.push({ wire: joinWorkflowVariant(wf, j === 0 ? null : v), workflow: wf, model: v, isDefault: j === 0 });
+    });
+  });
+  return out;
+}
+
 // Render a possibly-suffixed workflow name: the workflow, then its model dimmed.
 export function workflowLabelHtml(name) {
   const { name: base, variant } = splitWorkflowVariant(name);

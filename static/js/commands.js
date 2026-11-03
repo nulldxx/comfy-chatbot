@@ -1,7 +1,7 @@
 import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements, upsertReplacement,
   isVideoUrl, fmtDuration, fmtUptime, clampVideo, recomputeVideo,
-  splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml,
+  splitWorkflowVariant, joinWorkflowVariant, workflowLabelHtml, expandWorkflowVariants,
   formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, BASE_VIDEO_STEPS,
   activeAccelerator, videoOptsPayload, normalizeVideoMeta,
@@ -2458,15 +2458,35 @@ export function makeCommandHandler(deps) {
       fetch('/api/workflows').then(r => r.json()).then(workflows => {
         if (!workflows.length) {
           bubble.innerHTML = 'No workflows available.';
-          return;
+          return null;
         }
+        // Each workflow may offer several models; ask for them all at once so the
+        // list can show one tick box per model. A failure yields [] (bare workflow).
+        bubble.innerHTML = '<div class="status-text">Loading models\u2026</div>';
+        return Promise.all(workflows.map(wf => fetchWorkflowVariants('generation', wf)))
+          .then(variants => ({ workflows, variants }));
+      }).then(loaded => {
+        if (!loaded) return;
+        const entries = expandWorkflowVariants(loaded.workflows, loaded.variants);
+        const rowStyle = 'display:flex;align-items:center;gap:8px;font-size:0.9rem;color:#cbd5e1;cursor:pointer';
         let html = `<strong>Run against which workflows?</strong>
           <div style="font-size:0.8rem;color:#94a3b8;margin:4px 0 8px">Prompt: <code>${escapeHtml(master)}</code></div>
           <div class="sel-list">`;
-        workflows.forEach((wf, i) => {
-          html += `<label class="wfi-row" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;color:#cbd5e1;cursor:pointer">
-                     <input type="checkbox" class="wfi-check" value="${escapeHtml(wf)}" id="wfi-${i}">
-                     ${escapeHtml(wf)}
+        entries.forEach((e, i) => {
+          if (e.model === null) {
+            html += `<label class="wfi-row" style="${rowStyle}">
+                       <input type="checkbox" class="wfi-check" value="${escapeHtml(e.wire)}" id="wfi-${i}">
+                       ${escapeHtml(e.workflow)}
+                     </label>`;
+            return;
+          }
+          // A multi-model workflow: a header naming it, then an indented row per model.
+          if (e.isDefault) {
+            html += `<div class="wfi-group" style="font-size:0.9rem;color:#cbd5e1">${escapeHtml(e.workflow)}</div>`;
+          }
+          html += `<label class="wfi-row" style="${rowStyle};padding-left:22px">
+                     <input type="checkbox" class="wfi-check" value="${escapeHtml(e.wire)}" data-label="${escapeHtml(`${e.workflow}@${e.model}`)}" id="wfi-${i}">
+                     ${escapeHtml(e.model)}${e.isDefault ? ' <span style="color:#475569;font-size:0.85em">(default)</span>' : ''}
                    </label>`;
         });
         html += `</div>
@@ -2475,7 +2495,10 @@ export function makeCommandHandler(deps) {
 
         const goBtn = bubble.querySelector('.wfi-go');
         goBtn.addEventListener('click', () => {
-          const selected = [...bubble.querySelectorAll('.wfi-check:checked')].map(c => c.value);
+          // The label names the model even for a default (bare-wire) pick, so runs of
+          // the same workflow are distinguishable in the chat.
+          const selected = [...bubble.querySelectorAll('.wfi-check:checked')]
+            .map(c => ({ wire: c.value, label: c.dataset.label || c.value }));
           if (!selected.length) {
             if (!bubble.querySelector('.wfi-warn')) {
               const warn = document.createElement('div');
@@ -2490,11 +2513,11 @@ export function makeCommandHandler(deps) {
           const warn = bubble.querySelector('.wfi-warn');
           if (warn) warn.remove();
           bubble.insertAdjacentHTML('beforeend',
-            `<div class="status-text" style="margin-top:8px">Generating <strong style="color:#a78bfa">${selected.length}</strong> workflow(s)…</div>`);
+            `<div class="status-text" style="margin-top:8px">Generating <strong style="color:#a78bfa">${selected.length}</strong> run(s)…</div>`);
 
-          deps.runBatchJob(selected.map((wf, i) => ({
-            kind: 't2i', prompt: master, workflow: wf,
-            label: ` — ${wf} (${i + 1}/${selected.length})`,
+          deps.runBatchJob(selected.map((sel, i) => ({
+            kind: 't2i', prompt: master, workflow: sel.wire,
+            label: ` — ${sel.label} (${i + 1}/${selected.length})`,
           })));
         });
         scrollBottom();
@@ -2680,7 +2703,7 @@ export function makeCommandHandler(deps) {
         { sig: '/video-sequence-auto-reset', desc: 'stop auto-running image2video on <code>/video-sequence</code> shots' },
         { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio for a silent clip (<code>overall_soundscape</code> &amp; <code>non_diegetic_music</code> sent as N/A) &nbsp;·&nbsp; the five <em>Optimisations</em> boxes bypass the matching <code>[opt:&hellip;]</code> nodes in the video workflow (all on = fast, lower-quality preview) &nbsp;·&nbsp; ticking <em>Turbo 4-step LoRA</em> sets Steps to 4, unticking it returns them to the workflow default' },
         { sig: '/t2i-workflow [name]', desc: 'choose an image generation workflow template (no arg = picker)' },
-        { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows, then run the prompt against each one', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
+        { sig: '/t2i-workflow-iterate <prompt>', desc: 'tick several image generation workflows (or models within one), then run the prompt against each one', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },
         { sig: '/t2i-workflow-reset', desc: 'reset the main generation workflow to its default' },
         { sig: '/t2v', desc: 'toggle text-to-video mode — while on, a plain prompt generates a video with the text2video workflow instead of an image; type it again to turn it off', notes: 'uses <code>/video-settings</code> for duration/fps/resolution &nbsp;·&nbsp; also applies to <code>#macro</code> steps, but <em>not</em> to <code>/sequence-run</code> or <code>/multi-prompt</code>' },
         { sig: '/t2v-workflow [name]', desc: 'choose which text2video workflow <code>/t2v</code> uses (no arg = picker)' },

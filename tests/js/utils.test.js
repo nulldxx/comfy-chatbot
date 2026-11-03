@@ -7,7 +7,7 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          WORKFLOW_VARIANT_SEP, progressPercent, progressCaption,
          archiveParentPath, archiveBreadcrumb, joinArchivePath,
          fmtUptime, runStagePrefix, buildI2vSteps, buildFaceDetailSteps,
-         renderMetadataTable, fmtBytes } from '../../static/js/utils.js';
+         renderMetadataTable, fmtBytes, expandWorkflowVariants } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -1279,5 +1279,31 @@ describe('fmtBytes', () => {
     expect(fmtBytes(2048)).toBe('2.0 KB');
     expect(fmtBytes(5 * 1024 * 1024)).toBe('5.0 MB');
     expect(fmtBytes(300 * 1024)).toBe('300 KB');
+  });
+});
+
+describe('expandWorkflowVariants', () => {
+  test('a workflow with no variants is a single bare entry', () => {
+    expect(expandWorkflowVariants(['flux'], [[]])).toEqual([
+      { wire: 'flux', workflow: 'flux', model: null, isDefault: false },
+    ]);
+  });
+
+  test('a single variant is not a choice', () => {
+    expect(expandWorkflowVariants(['flux'], [['flux_fp8']])).toEqual([
+      { wire: 'flux', workflow: 'flux', model: null, isDefault: false },
+    ]);
+  });
+
+  test('alternates expand to one entry each, the first stored bare as the default', () => {
+    expect(expandWorkflowVariants(['h3'], [['int8', 'fp16']])).toEqual([
+      { wire: 'h3', workflow: 'h3', model: 'int8', isDefault: true },
+      { wire: 'h3@fp16', workflow: 'h3', model: 'fp16', isDefault: false },
+    ]);
+  });
+
+  test('mixed workflows keep their order; missing variant arrays read as none', () => {
+    const out = expandWorkflowVariants(['a', 'b', 'c'], [[], ['x', 'y', 'z']]);
+    expect(out.map(e => e.wire)).toEqual(['a', 'b', 'b@y', 'b@z', 'c']);
   });
 });
