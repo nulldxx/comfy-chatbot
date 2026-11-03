@@ -1115,13 +1115,18 @@ body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell):hover::after { 
 }
 @keyframes ss-fill { from { width: 0% } to { width: 100% } }
 
-.ss-fullscreen-btn {
+.ss-fullscreen-btn,
+.ss-bare-btn {
   background: #0f172a; border: 1px solid #334155; color: #a78bfa;
   border-radius: 8px; padding: 4px 10px; font-size: 1rem;
   cursor: pointer; line-height: 1; flex-shrink: 0;
   transition: background 0.15s, border-color 0.15s;
 }
-.ss-fullscreen-btn:hover { background: #1e293b; border-color: #7c3aed; }
+.ss-fullscreen-btn:hover,
+.ss-bare-btn:hover { background: #1e293b; border-color: #7c3aed; }
+/* Hide-controls button only makes sense in fullscreen. */
+.ss-bare-btn { display: none; }
+.slideshow.ss-fs .ss-bare-btn { display: inline-block; }
 
 /* Narrow screens: let bubbles use the full width and slim the slideshow
    controls so their minimum width fits inside the bubble. */
@@ -1129,7 +1134,8 @@ body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell):hover::after { 
   .message { max-width: 100%; }
   .ss-controls { gap: 4px; }
   .ss-btn { padding: 4px 10px; }
-  .ss-fullscreen-btn { padding: 4px 8px; }
+  .ss-fullscreen-btn,
+  .ss-bare-btn { padding: 4px 8px; }
 }
 
 /* Fullscreen state — JS keeps .ss-fs in sync for both native fullscreen
@@ -1165,6 +1171,13 @@ body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell):hover::after { 
 .slideshow.ss-fs .ss-bar-wrap {
   width: 100%; max-width: 600px;
 }
+/* Bare fullscreen: nothing but the media, edge to edge. */
+.slideshow.ss-fs.ss-bare { padding: 0; }
+.slideshow.ss-fs.ss-bare .ss-controls,
+.slideshow.ss-fs.ss-bare .ss-bar-wrap { display: none; }
+.slideshow.ss-fs.ss-bare .ss-img-wrap { border-radius: 0; cursor: none; }
+.slideshow.ss-fs.ss-bare .ss-image,
+.slideshow.ss-fs.ss-bare .ss-video { border-radius: 0; }
 
 #bottom {
   background: #16213e;

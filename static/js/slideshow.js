@@ -26,6 +26,7 @@ export function createSlideshow(bubble, images, { deleteMedia = deleteImageFile 
         <button class="ss-btn ss-delete" title="Delete image">&#128465;&#xFE0E;</button>
         <span class="ss-counter"></span>
         <button class="ss-btn ss-next">&#8250;</button>
+        <button class="ss-bare-btn" title="Hide controls (tap the picture to bring them back)">&#x2922;&#xFE0E;</button>
         <button class="ss-fullscreen-btn" title="Toggle fullscreen">&#x26F6;</button>
       </div>
       <div class="ss-bar-wrap"><div class="ss-bar"></div></div>
@@ -191,9 +192,16 @@ export function createSlideshow(bubble, images, { deleteMedia = deleteImageFile 
         || document.webkitFullscreenElement === ssEl
         || ssEl.classList.contains('ss-faux-fullscreen');
   }
+  // Bare = fullscreen with no chrome at all: controls, progress bar and padding
+  // hidden. Only reachable from fullscreen; a tap on the media or leaving
+  // fullscreen brings the UI back.
+  function isBare() { return ssEl.classList.contains('ss-bare'); }
+  function setBare(on) { ssEl.classList.toggle('ss-bare', on); }
+
   function syncFsState() {
     const isFs = isFsActive();
     ssEl.classList.toggle('ss-fs', isFs);
+    if (!isFs) setBare(false);
     fsBtn.innerHTML = isFs ? '&#x2715;' : '&#x26F6;';
     fsBtn.title     = isFs ? 'Exit fullscreen' : 'Toggle fullscreen';
   }
@@ -211,6 +219,7 @@ export function createSlideshow(bubble, images, { deleteMedia = deleteImageFile 
       syncFsState();
     }
   });
+  bubble.querySelector('.ss-bare-btn').addEventListener('click', () => setBare(true));
   document.addEventListener('fullscreenchange', syncFsState);
   document.addEventListener('webkitfullscreenchange', syncFsState);
 
@@ -227,12 +236,14 @@ export function createSlideshow(bubble, images, { deleteMedia = deleteImageFile 
     suppressClick = true;
     if (Math.abs(dx) > 40) { navigate(dx < 0 ? 1 : -1); }
     else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      if (isBare()) { setBare(false); return; }
       const url = currentUrl();
       if (!isVideoUrl(url)) openLightbox(url, images.slice());
     }
   });
   wrap.addEventListener('click', () => {
     if (suppressClick) { suppressClick = false; return; }
+    if (isBare()) { setBare(false); return; }
     const url = currentUrl();
     if (isVideoUrl(url)) {
       // Tap a video to toggle play/pause without leaving the slideshow — the
