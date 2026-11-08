@@ -18,28 +18,21 @@ def _shot(prompt, description="", soundscape="", music="N/A"):
 class ParseVideoPromptsTests(unittest.TestCase):
     def test_full_objects(self):
         content = (
-            '{"music": "Soft piano.", "prompts": ['
+            '{"prompts": ['
             '{"prompt": "a cat", "description": "it leaps", "soundscape": "a thud"},'
             '{"prompt": "a dog", "description": "it runs", "soundscape": "panting"}'
             ']}'
         )
         out = _parse_video_prompts(content)
         self.assertEqual(out, [
-            _shot("a cat", "it leaps", "a thud", "Soft piano."),
-            _shot("a dog", "it runs", "panting", "Soft piano."),
+            _shot("a cat", "it leaps", "a thud"),
+            _shot("a dog", "it runs", "panting"),
         ])
 
-    def test_shared_music_is_copied_onto_every_shot(self):
-        content = '{"music": "Low strings.", "prompts": [{"prompt": "a"}, {"prompt": "b"}]}'
-        self.assertEqual([s["music"] for s in _parse_video_prompts(content)], ["Low strings."] * 2)
-
-    def test_per_shot_music_overrides_shared(self):
+    def test_music_is_always_na(self):
+        # Score is left to the user: any music the model volunteers is ignored.
         content = '{"music": "Low strings.", "prompts": [{"prompt": "a", "music": "Drums."}, {"prompt": "b"}]}'
-        self.assertEqual([s["music"] for s in _parse_video_prompts(content)], ["Drums.", "Low strings."])
-
-    def test_missing_or_blank_music_is_na(self):
-        self.assertEqual(_parse_video_prompts('{"prompts": [{"prompt": "a"}]}')[0]["music"], "N/A")
-        self.assertEqual(_parse_video_prompts('{"music": "  ", "prompts": [{"prompt": "a"}]}')[0]["music"], "N/A")
+        self.assertEqual([s["music"] for s in _parse_video_prompts(content)], ["N/A", "N/A"])
 
     def test_missing_description_and_soundscape_default_to_empty(self):
         self.assertEqual(_parse_video_prompts('{"prompts": [{"prompt": "a lone cat"}]}'), [_shot("a lone cat")])
@@ -49,8 +42,8 @@ class ParseVideoPromptsTests(unittest.TestCase):
         self.assertEqual(out, [_shot("x")])
 
     def test_strips_whitespace(self):
-        content = '{"music": " piano ", "prompts": [{"prompt": "  a cat  ", "description": " leaps ", "soundscape": " thud "}]}'
-        self.assertEqual(_parse_video_prompts(content), [_shot("a cat", "leaps", "thud", "piano")])
+        content = '{"prompts": [{"prompt": "  a cat  ", "description": " leaps ", "soundscape": " thud "}]}'
+        self.assertEqual(_parse_video_prompts(content), [_shot("a cat", "leaps", "thud")])
 
     def test_items_without_prompt_are_skipped(self):
         content = '{"prompts": ["a string", {"description": "x"}, {"prompt": "", "description": "y"}, {"prompt": "ok"}]}'
@@ -92,10 +85,14 @@ class GenerateVideoPromptSequenceTests(unittest.TestCase):
         user = mock_chat.call_args[0][0][1]["content"]
         self.assertIn("a busker on a bridge", user)
         self.assertIn("exactly 3", user)
-        for needle in ('"description"', '"soundscape"', '"music"', "<d>[English]", "(S1)",
-                       "with small amplitude", "off-screen voiceover"):
+        for needle in ('"description"', '"soundscape"', "<d>[English]", "(S1)",
+                       "off-screen voiceover", "what happens next", "NEVER describe their appearance"):
             self.assertIn(needle, user)
         self.assertNotIn('"action"', user)
+        # The score is left to the user, so Grok isn't asked for one.
+        self.assertNotIn('"music"', user)
+        # The old first-frame anchor made descriptions read like image prompts.
+        self.assertNotIn("anchor the first frame", user)
 
     def test_falls_back_to_second_model_on_corrupt_first(self):
         good = '{"prompts": [{"prompt": "a cat"}]}'

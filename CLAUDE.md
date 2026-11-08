@@ -734,10 +734,12 @@ written:
 Raw markdown for either is at the same path with `/raw/` in place of `/blob/`.
 
 - **Per-image `videoMeta` is `{ description, soundscape, music }`.** Grok
-  (`generate_video_prompt_sequence`) writes a description (style, first-frame anchor,
-  camera move, action, `(S1) says: <d>[English] …</d>`) and a soundscape per shot, plus
-  **one** top-level `music` line that `_parse_video_prompts` copies onto every shot
-  (blank → `N/A`). Each clip is a **single shot** — no `[Shot 2]` cuts.
+  (`generate_video_prompt_sequence`) writes a short description of **what happens next**
+  — action, reaction, `(S1) says: <d>[English] …</d>` — and a soundscape per shot. The
+  description deliberately does **not** restate appearance, setting, lighting or style:
+  H3 sees the still, and re-describing it crowded out the action. **Music is always
+  `N/A`** (`_parse_video_prompts` ignores any the model sends); the score is left to the
+  user. Each clip is a **single shot** — no `[Shot 2]` cuts.
 - **The prompt is assembled client-side at send time** by `buildVideoPrompt(base, meta,
   videoPromptOpts(state, image))`: the I2VA instruction line, or the FL2VA one (with
   `frames / fps` to two decimals and an appended "settles into… Picture 2" sentence) when

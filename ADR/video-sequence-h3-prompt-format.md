@@ -75,3 +75,26 @@ dialogue into one `audio` string, and had nowhere to put a score.
   - `/sequence-run` in t2v mode.
 - **Untested against the model:** the assembled I2VA and FL2VA prompts still need
   test-rendering through `minimax-h3-i2v.json`.
+
+## Revision: descriptions say what happens next, music left to the user
+
+The first version asked Grok to open each description with style + shot size and then
+"anchor the first frame" by restating appearance, clothing, position and setting. In
+practice the description came back as a second image prompt — lens, lighting, sweatpants
+— and said almost nothing about what happens, which is the only thing H3 needs to be told:
+it is given the still as Picture 1 and can see everything else.
+
+- **The description is now 1–3 plain sentences of action, reaction and dialogue.** Grok is
+  told the video model sees the still and must not describe appearance, clothing, setting,
+  lighting, style or lens. People are referred to simply ("the man", "the woman"). When
+  the master prompt implies speech, Grok writes the actual lines (`(S1)`/`(S2)` +
+  `<d>[English] …</d>` are kept — H3 needs them to lip-sync). Camera moves are mentioned
+  only when they matter, so the full camera vocabulary was dropped from the instructions.
+- **Music is always `N/A`.** Grok is no longer asked for a score, and
+  `_parse_video_prompts` ignores any it volunteers. The score is the user's call, set in
+  the metadata editor.
+- The still-image `prompt` rules are unchanged, apart from a new line requiring every
+  person the master prompt implies ("they sit together" ⇒ two people).
+- The worked example is now a two-person dialogue shot on a sofa rather than the guide's
+  train example.
+
