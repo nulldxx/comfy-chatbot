@@ -513,9 +513,25 @@ function openVideoMetaEditor(url, wrap) {
   };
 
   const promptInput = mkRow('Prompt', state.imagePrompts[url], 'image generation prompt', true);
-  const descriptionInput = mkRow('Description', meta.description, 'style, first frame, camera move, action — speech as (S1) says: <d>[English] …</d>', true);
+  // Explains the dimmed Prompt row: buildVideoPrompt only falls back to the still
+  // prompt when there is no description, so a filled description makes it unused
+  // for the video. Still editable — the prompt also drives re-generation and face-detail.
+  const promptNote = document.createElement('div');
+  promptNote.textContent = 'Not used for the video — the Description below replaces it. Clear the Description to fall back to this prompt.';
+  promptNote.style.cssText = 'margin:-4px 0 0 92px;font-size:0.75rem;color:#64748b;font-style:italic';
+  box.appendChild(promptNote);
+  const descriptionInput = mkRow('Description', meta.description, 'what happens next — action, reaction, speech as (S1) says: <d>[English] …</d>', true);
   const soundscapeInput  = mkRow('Soundscape',  meta.soundscape,  'ambient & physical sound (no dialogue or music)', true);
   const musicInput       = mkRow('Music',       meta.music,       'background score, or N/A');
+
+  const syncPromptUse = () => {
+    const unused = descriptionInput.value.trim() !== '';
+    promptInput.parentElement.style.opacity = unused ? '0.45' : '';
+    promptInput.title = unused ? 'Not used for the video while the Description has text' : '';
+    promptNote.style.display = unused ? '' : 'none';
+  };
+  descriptionInput.addEventListener('input', syncPromptUse);
+  syncPromptUse();
 
   const refreshTooltip = () => {
     const i2v = wrap && wrap.querySelector('.img-i2v');
@@ -538,7 +554,7 @@ function openVideoMetaEditor(url, wrap) {
     return { prompt, description, soundscape, music };
   };
 
-  // Clone — refill the three fields from the last video that was actually generated
+  // Clone — refill the three video fields from the last video that was actually generated
   // (state.lastVideoMeta, recorded in runImage2Video). It only fills the inputs; nothing
   // is committed until Apply or Start, so a cloned prompt that doesn't suit this image
   // can be edited or simply ignored.
@@ -551,11 +567,13 @@ function openVideoMetaEditor(url, wrap) {
     cloneBtn.addEventListener('click', () => {
       const last = state.lastVideoMeta || {};
       const lastMeta = normalizeVideoMeta(last, last.prompt);
-      promptInput.value      = last.prompt || '';
+      // Video fields only: the still prompt belongs to this image (re-generation,
+      // face-detail), so cloning another video's metadata must not replace it.
       descriptionInput.value = lastMeta.description;
       soundscapeInput.value  = lastMeta.soundscape;
       musicInput.value       = lastMeta.music;
-      promptInput.focus();
+      syncPromptUse();
+      descriptionInput.focus();
     });
   } else {
     cloneBtn.disabled = true;
@@ -618,7 +636,7 @@ function openVideoMetaEditor(url, wrap) {
   const header = document.createElement('div');
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding-right:26px';
   const title = document.createElement('div');
-  title.innerHTML = '<strong>Edit metadata</strong> <span style="color:#475569">(prompt · image2video action / audio)</span>';
+  title.innerHTML = '<strong>Edit metadata</strong> <span style="color:#475569">(still prompt · image2video description / sound)</span>';
   header.appendChild(title);
   header.appendChild(cloneBtn);
   bubble.appendChild(header);
