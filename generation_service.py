@@ -1015,18 +1015,24 @@ class _StepRunner:
                 self.failed[:] = [f for f in self.failed
                                   if (f.get("index"), f.get("stage")) != (i, stage)]
 
-    def record(self, url, prompt, video_meta, i, total, message_prompt=None, stage=None):
-        """Persist one finished asset to the session and stream it to the browser."""
+    def record(self, url, prompt, video_meta, i, total, message_prompt=None, stage=None,
+               video_source=None):
+        """Persist one finished asset to the session and stream it to the browser.
+
+        ``video_source`` (videos only) is what the asset was generated from, kept so
+        the video's ↺ button can re-run it — see persistence.append_session_image.
+        """
         self.all_urls.append(url)
         try:
             append_image_to_recording(
                 self.job_id, url, prompt, video_meta, self.gen_settings,
-                message_prompt=message_prompt,
+                message_prompt=message_prompt, video_source=video_source,
             )
         except Exception as e:
             self.send("progress", message=f"Warning: could not persist to session: {e}")
         self.send("image", url=url, prompt=prompt, videoMeta=video_meta, index=i, total=total,
-                  **({"stage": stage} if stage else {}))
+                  **({"stage": stage} if stage else {}),
+                  **({"videoSource": video_source} if video_source else {}))
 
     def run_still(self, i, total, item_prompt, video_meta, urls):
         """Record freshly generated ``urls`` for shot ``i``, running the auto passes.
@@ -1103,7 +1109,8 @@ class _StepRunner:
                 # stores a video; the user line shows the prompt it ran with.
                 for v in videos:
                     self.record(v, item_prompt, video_meta, i, total,
-                                message_prompt=v_prompt, stage="image2video")
+                                message_prompt=v_prompt, stage="image2video",
+                                video_source={"kind": "i2v", "prompt": v_prompt, "image": still})
 
     def finish(self, status, error=None, **done_extra):
         """Mark the job terminal and emit the matching SSE event."""
@@ -1411,10 +1418,15 @@ def run_batch_run(job_id, steps, settings, auto=None, seed=None):
                     if kind == "i2v":
                         # Stored against the source image's prompt and meta, as
                         # runImage2Video stores a video; the user line is the i2v prompt.
+                        source = {"kind": "i2v", "prompt": prompt, "image": step.get("image_url")}
+                        if step.get("last_frame_url"):
+                            source["lastFrame"] = step["last_frame_url"]
                         run.record(url, step.get("source_prompt") or "", step.get("video_meta"),
-                                   i, total, message_prompt=prompt, stage=stage)
+                                   i, total, message_prompt=prompt, stage=stage,
+                                   video_source=source if source["image"] else None)
                     else:
-                        run.record(url, prompt, None, i, total, stage=stage)
+                        run.record(url, prompt, None, i, total, stage=stage,
+                                   video_source={"kind": "t2v", "prompt": prompt})
 
             elif kind == "face-detail":
                 clean, loras = parse_loras_from_prompt(prompt)
@@ -1461,7 +1473,8 @@ def start_batch_run_job(steps, settings, recording_name, auto=None, seed=None):
     )
 
 
-def append_image_to_recording(job_id, url, prompt, video_meta, settings, message_prompt=None):
+def append_image_to_recording(job_id, url, prompt, video_meta, settings, message_prompt=None,
+                              video_source=None):
     """Append one image to whatever session this job is currently recording to.
 
     Reads jobs[job_id]["recording_name"] and performs the append to persistence
@@ -1475,6 +1488,8 @@ def append_image_to_recording(job_id, url, prompt, video_meta, settings, message
         name = rec.get("recording_name") if rec else None
         if name:
             extra = {"message_prompt": message_prompt} if message_prompt else {}
+            if video_source:
+                extra["video_source"] = video_source
             append_session_image(name, url, prompt, video_meta, settings=settings, **extra)
 
 

@@ -771,6 +771,26 @@ currentVideoSettings)`. No stills — the user brings the opening image. See
 - `/video-story-review` re-shows the table (it isn't persisted as a chat message);
   `/video-story-reset` clears the story.
 
+### Regenerating a video (↺ on a video)
+
+Videos get a ↺ beside ⏭ in `.img-topleft` (5px gap from the holder). It opens the same
+Regenerate dialog as images (prompt + steps) and re-runs the job **in place**, deleting
+the old video, as an image's ↺ does (`runVideoDoOver` in `chat.js`).
+
+- **`state.videoSources[url] = {kind: 'i2v'|'t2v', prompt, image?, lastFrame?}`** — the
+  prompt actually sent and the source still/end frame. Before this nothing recorded what
+  a video was made from (`imagePrompts[video]` is the *still's* prompt). Session-persisted
+  as `videoSources`, cleared in `newChat`/`restoreSession`, pruned by `removeImageFromChat`
+  and filtered to existing files by `load_session`.
+- **Server-side runs record it too**: `_StepRunner.record(video_source=…)` →
+  `append_session_image` → the session's `videoSources`, and the `image` SSE event carries
+  `videoSource`. Batch i2v/t2v steps and `/video-sequence-auto` shots both set it.
+- **Re-run uses the current** video workflow, `/video-settings` and references; only the
+  prompt, source still and end frame come from the record. Steps left at the dialog's
+  default send no override when `/video-settings` has none, so the template's count holds.
+- **Hidden when there is no record** — videos made before this existed, or pulled in
+  from elsewhere.
+
 ### Auto passes in sequence runs (`/video-sequence-auto`, `/face-detail-auto`)
 
 `/video-sequence-auto` (`state.autoVideoSequence`) turns every `/video-sequence` shot into

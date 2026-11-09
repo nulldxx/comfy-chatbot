@@ -332,6 +332,19 @@ class RunBatchRunTests(unittest.TestCase):
         image = [m for m in msgs if m["type"] == "image"][0]
         self.assertEqual(image["stage"], "image2video")
 
+    def test_video_steps_record_their_source_for_regenerate(self):
+        msgs = self.run_batch([
+            self.i2v(image_url="/images/src.png", last_frame_url="/images/end.png"),
+            {"kind": "t2v", "prompt": "a storm", "workflow": "t2v-wf",
+             "workflow_dir": Path("/wf/t2v"), "label": ""},
+        ])
+        i2v_src = {"kind": "i2v", "prompt": "she waves", "image": "/images/src.png",
+                   "lastFrame": "/images/end.png"}
+        t2v_src = {"kind": "t2v", "prompt": "a storm"}
+        self.assertEqual([k["video_source"] for _, k in self.appended], [i2v_src, t2v_src])
+        images = [m for m in msgs if m["type"] == "image"]
+        self.assertEqual([m["videoSource"] for m in images], [i2v_src, t2v_src])
+
     def test_i2v_drops_reference_slot_1_when_it_is_the_source(self):
         src = self.images / "src.png"
         refs = dict(self.REFS, input_reference_images=[src, self.images / "r2.png"] + [None] * 7)

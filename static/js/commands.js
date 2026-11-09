@@ -1381,6 +1381,7 @@ export function makeCommandHandler(deps) {
     state.sessionImages.length = 0;
     for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
     for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
+    for (const k of Object.keys(state.videoSources)) delete state.videoSources[k];
     state.lastSequence = null;
     state.videoStory = null;
     document.dispatchEvent(new CustomEvent('video-story-changed'));

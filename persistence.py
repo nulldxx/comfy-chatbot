@@ -73,7 +73,8 @@ def save_session(name, body):
     return path
 
 
-def append_session_image(name, url, prompt, video_meta=None, settings=None, message_prompt=None):
+def append_session_image(name, url, prompt, video_meta=None, settings=None, message_prompt=None,
+                         video_source=None):
     """Append one completed image to a session file, creating it if needed.
 
     Used by the server-side sequence run (generation_service.run_sequence_run) so
@@ -87,6 +88,10 @@ def append_session_image(name, url, prompt, video_meta=None, settings=None, mess
     ``message_prompt``, when given, is the user line's text in place of ``prompt``.
     An auto image2video stores the still's prompt against the video (as the client's
     i2v does) but shows the video prompt it was actually run with.
+
+    ``video_source``, for a video, is what it was generated from — ``{kind, prompt,
+    image?, lastFrame?}`` — stored under ``videoSources`` so the video's ↺ button
+    can re-run it (the client's ``state.videoSources``).
     """
     path = sessions_dir() / f"{name}.json"
     with sessions_write_lock:
@@ -113,6 +118,8 @@ def append_session_image(name, url, prompt, video_meta=None, settings=None, mess
         doc["imagePrompts"][url] = prompt
         if video_meta is not None:
             doc["imageVideoMeta"][url] = video_meta
+        if video_source is not None:
+            doc.setdefault("videoSources", {})[url] = video_source
 
         doc["messages"].append({"role": "user", "prompt": message_prompt or prompt})
         doc["messages"].append({"role": "bot", "images": [url], "text": ""})
@@ -191,7 +198,7 @@ def load_session(safe_name):
         raise FileNotFoundError(safe_name)
     data = json.loads(path.read_text())
 
-    # Filter sessionImages, imagePrompts and imageVideoMeta to files that still
+    # Filter sessionImages, imagePrompts, imageVideoMeta and videoSources to files that still
     # exist on disk.
     valid = set()
     for url in data.get("sessionImages", []):
@@ -205,6 +212,7 @@ def load_session(safe_name):
     data["sessionImages"] = [u for u in data.get("sessionImages", []) if u in valid]
     data["imagePrompts"] = {k: v for k, v in data.get("imagePrompts", {}).items() if k in valid}
     data["imageVideoMeta"] = {k: v for k, v in data.get("imageVideoMeta", {}).items() if k in valid}
+    data["videoSources"] = {k: v for k, v in data.get("videoSources", {}).items() if k in valid}
 
     filtered = []
     for msg in data.get("messages", []):

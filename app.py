@@ -2084,6 +2084,8 @@ def _parse_batch_run(data):
             if err:
                 return None, err
             step["input_image"] = image_path
+            # The URLs, not just the Paths, so a video's ↺ can re-run it (videoSources).
+            step["image_url"] = image_url
             step["source_prompt"] = str(raw.get("sourcePrompt") or "")
             step["video_meta"] = _parse_batch_video_meta(raw.get("videoMeta"))
             if kind == "face-detail":
@@ -2096,6 +2098,7 @@ def _parse_batch_run(data):
                     if err:
                         return None, err
                     step["input_last_frame"] = last_frame_path
+                    step["last_frame_url"] = last_frame_url
         steps.append(step)
 
     auto, err = _parse_auto_face(data) if "t2i" in kinds else ({}, None)

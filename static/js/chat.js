@@ -1037,6 +1037,38 @@ function runDoOver(url, imgWrap, promptOverride, stepsOverride) {
   return runGeneration(prompt, '', null, { replaceWrap: imgWrap, preserveMtimeFrom: url, videoMeta, stepsOverride });
 }
 
+// ↺ on a video: re-run the i2v/t2v job that made it (state.videoSources) with the
+// current video workflow, /video-settings and references, replacing it in place —
+// the video counterpart of runDoOver. The end frame is the one it was made with,
+// not whatever 🎞️ is set now.
+function runVideoDoOver(url, wrap, prompt, stepsOverride) {
+  const src = state.videoSources[url];
+  if (!src) return Promise.resolve(false);
+  state.iterationsFromSequence = false;
+  sendBtn.disabled = true;
+  const opts = src.kind === 't2v'
+    ? { text2video: {
+          references: referencesForRun(null),
+          workflow: state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW,
+        } }
+    : { image2video: {
+          image: src.image, lastFrame: src.lastFrame || null,
+          references: referencesForRun(src.image),
+          workflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW,
+        } };
+  return runGeneration(prompt, '', null, { ...opts, replaceWrap: wrap, stepsOverride })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
+// Hidden when there's no record of how the video was made (videos generated before
+// videoSources existed, or uploads), like ⏭ with no story shot left.
+function syncVideoRedoButton(btn) {
+  const has = !!state.videoSources[btn.dataset.url];
+  btn.hidden = !has;
+  btn.disabled = !has;
+  btn.title = 'Regenerate this video';
+}
+
 // ---------------------------------------------------------------------------
 // Last-frame toggle (🎞 button for image2video end-frame interpolation)
 // ---------------------------------------------------------------------------
@@ -1134,10 +1166,33 @@ function appendChatImage(container, url) {
       runStoryNext(url, storyNext);
     });
 
+    // ↺ follows ⏭ (or ✂ when ⏭ is hidden), 5px along via the holder's gap.
+    const vredo = document.createElement('button');
+    vredo.className = 'img-video-redo';
+    vredo.dataset.url = url;
+    vredo.innerHTML = '&#x21BA;&#xFE0E;';
+    syncVideoRedoButton(vredo);
+    vredo.addEventListener('click', e => {
+      e.stopPropagation();
+      const src = state.videoSources[url];
+      if (vredo.disabled || sendBtn.disabled || !src) return;
+      vredo.disabled = true;
+      // Leaving the slider at the default sends no override, so a session that never
+      // set video steps keeps the template's own count.
+      const defaultSteps = state.currentVideoSteps != null ? state.currentVideoSteps : 20;
+      showRegenDialog(wrap, src.prompt || '', defaultSteps)
+        .then(({ prompt, steps }) => {
+          const override = (state.currentVideoSteps == null && steps === defaultSteps) ? null : steps;
+          runVideoDoOver(url, wrap, prompt, override).finally(() => syncVideoRedoButton(vredo));
+        })
+        .catch(() => syncVideoRedoButton(vredo));
+    });
+
     const topLeft = document.createElement('div');
     topLeft.className = 'img-topleft';
     topLeft.appendChild(cut);
     topLeft.appendChild(storyNext);
+    topLeft.appendChild(vredo);
 
     wrap.appendChild(media);
     wrap.appendChild(del);
@@ -1497,6 +1552,7 @@ function doRecordSave() {
       sessionImages: state.sessionImages.slice(),
       imagePrompts: Object.assign({}, state.imagePrompts),
       imageVideoMeta: Object.assign({}, state.imageVideoMeta),
+      videoSources: Object.assign({}, state.videoSources),
       lastSequence: state.lastSequence,
       videoStory: state.videoStory,
       promptHistory: state.history.slice(),
@@ -1521,6 +1577,7 @@ function restoreSession(data) {
   state.sessionImages.length = 0;
   for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
   for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
+  for (const k of Object.keys(state.videoSources)) delete state.videoSources[k];
   state.lastSequence = null;
   state.videoStory = null;
   state.references = newReferences();
@@ -1572,6 +1629,7 @@ function restoreSession(data) {
   for (const url of (data.sessionImages || [])) state.sessionImages.push(url);
   Object.assign(state.imagePrompts, data.imagePrompts || {});
   Object.assign(state.imageVideoMeta, data.imageVideoMeta || {});
+  Object.assign(state.videoSources, data.videoSources || {});
   state.lastSequence = data.lastSequence || null;
   state.videoStory = data.videoStory || null;
   for (const entry of (data.promptHistory || [])) state.history.push(entry);
@@ -2003,6 +2061,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
         state.sessionImages.push(url);
         if (msg.prompt) state.imagePrompts[url] = msg.prompt;
         if (msg.videoMeta) state.imageVideoMeta[url] = msg.videoMeta;
+        if (msg.videoSource) state.videoSources[url] = msg.videoSource;
         // As runImage2Video does, remember what a video was made from for the
         // metadata editor's Clone button.
         if (msg.stage === 'image2video') {
@@ -2344,7 +2403,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video || text2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
       ...(image2video || text2video ? { video_opts: videoOptsPayload(state.currentVideoSettings) } : {}),
-      ...((image2video || text2video) && state.currentVideoSteps !== null ? { steps: state.currentVideoSteps } : {}),
+      ...((image2video || text2video) && (stepsOverride != null || state.currentVideoSteps !== null) ? { steps: stepsOverride != null ? stepsOverride : state.currentVideoSteps } : {}),
       ...(image2video && image2video.lastFrame ? { last_frame: image2video.lastFrame } : {}),
       ...(image2video && image2video.references ? { references: image2video.references } : {}),
       ...(text2video && text2video.references ? { references: text2video.references } : {}),
@@ -2393,6 +2452,11 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
                            : job ? (state.imagePrompts[job.image] || '')
                            : (raw || '');
         const originVideoMeta = videoMeta || (job && !text2video ? state.imageVideoMeta[job.image] : null);
+        // What a video was made from, so its ↺ button can re-run it.
+        const videoSource = image2video
+          ? { kind: 'i2v', prompt: raw || '', image: image2video.image,
+              ...(image2video.lastFrame ? { lastFrame: image2video.lastFrame } : {}) }
+          : text2video ? { kind: 't2v', prompt: raw || '' } : null;
 
         if (superTileReplace && superTileReplace.parentNode && msg.images.length >= 1) {
           const oldUrl = superTileReplace.querySelector('img').getAttribute('src');
@@ -2503,16 +2567,19 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         msg.images.forEach((url, i) => {
           if (originPrompt) state.imagePrompts[url] = originPrompt;
           if (originVideoMeta) state.imageVideoMeta[url] = originVideoMeta;
+          if (videoSource && isVideoUrl(url)) state.videoSources[url] = videoSource;
           if (inpaint && inpaint.maskB64) {
             state.imageMasks[url] = { maskB64: inpaint.maskB64, prompt: inpaint.prompt, denoise: inpaint.denoise };
           }
           if (i === 0 && replaceWrap && replaceWrap.parentNode) {
-            const oldImg = replaceWrap.querySelector('img');
+            // 'video' too: a video's ↺ replaces it in place just as an image's does.
+            const oldImg = replaceWrap.querySelector('img, video');
             const oldSrc = oldImg ? oldImg.getAttribute('src') : null;
             if (oldSrc) {
               deleteImageFile(oldSrc).catch(() => {});
               delete state.imagePrompts[oldSrc];
               delete state.imageVideoMeta[oldSrc];
+              delete state.videoSources[oldSrc];
             }
             const oldIdx = oldSrc ? state.sessionImages.indexOf(oldSrc) : -1;
             if (oldIdx !== -1) state.sessionImages.splice(oldIdx, 1, url);

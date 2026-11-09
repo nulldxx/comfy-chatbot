@@ -216,6 +216,9 @@ export const state = {
   imagePrompts:                {},
   imageMasks:                  {},
   imageVideoMeta:              {},
+  // videoUrl → what it was generated from ({kind: 'i2v'|'t2v', prompt, image?,
+  // lastFrame?}), so the video's ↺ button can re-run it. Session-persisted.
+  videoSources:                {},
 
   // Catalogues (populated via fetch on startup)
   ALIASES:                     {},

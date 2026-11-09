@@ -99,6 +99,23 @@ class TestSessions(unittest.TestCase):
 
     # --- load_session ---
 
+    def test_append_session_image_records_video_source(self):
+        src = {"kind": "t2v", "prompt": "a storm"}
+        doc = persistence.append_session_image("s", "/images/v.mp4", "a storm", video_source=src)
+        self.assertEqual(doc["videoSources"], {"/images/v.mp4": src})
+        doc = persistence.append_session_image("s", "/images/a.png", "a cat")
+        self.assertEqual(list(doc["videoSources"]), ["/images/v.mp4"])
+
+    def test_load_session_filters_video_sources_to_existing_files(self):
+        d = self._sessions_dir()
+        (Path(self.tmp) / "v.mp4").write_bytes(b"x")
+        src = {"kind": "t2v", "prompt": "p"}
+        (d / "s.json").write_text(json.dumps({
+            "sessionImages": ["/images/v.mp4", "/images/gone.mp4"],
+            "videoSources": {"/images/v.mp4": src, "/images/gone.mp4": src},
+        }))
+        self.assertEqual(persistence.load_session("s")["videoSources"], {"/images/v.mp4": src})
+
     def test_load_session_not_found(self):
         with self.assertRaises(FileNotFoundError):
             persistence.load_session("nonexistent")

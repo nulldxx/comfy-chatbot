@@ -94,4 +94,5 @@ export function removeImageFromChat(url) {
   delete state.imagePrompts[url];
   delete state.imageMasks[url];
   delete state.imageVideoMeta[url];
+  delete state.videoSources[url];
 }

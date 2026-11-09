@@ -344,6 +344,22 @@ body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell):hover::after { 
 @media (hover: none) {
   .img-story-next { opacity: 0.6; }
 }
+/* ↺ on a video: third in the top-left holder, after ✂ and ⏭. */
+.img-video-redo {
+  background: rgba(15,23,42,0.75); border: 1px solid #334155;
+  color: #cbd5e1; border-radius: 8px;
+  padding: 5px 8px; font-size: 0.85rem;
+  cursor: pointer; line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.img-video-redo[hidden] { display: none; }
+.img-wrap:hover .img-video-redo { opacity: 1; }
+.img-video-redo:hover { border-color: #a78bfa; color: #a78bfa; }
+.img-wrap:hover .img-video-redo:disabled { cursor: default; opacity: 0.4; }
+@media (hover: none) {
+  .img-video-redo { opacity: 0.6; }
+}
 /* /video-story table */
 .story-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 0.85rem; }
 .story-table th { text-align: left; color: #94a3b8; font-weight: normal; padding: 4px; }
