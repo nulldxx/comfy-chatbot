@@ -5,13 +5,14 @@ import {
   formatFscheckResult, DEFAULT_VIDEO_SETTINGS, VIDEO_LIMITS,
   COMFY_URL_DND_TYPE, VIDEO_OPTIMIZATIONS, BASE_VIDEO_STEPS,
   activeAccelerator, videoOptsPayload, normalizeVideoMeta,
-  buildI2vSteps, buildFaceDetailSteps,
+  buildI2vSteps, buildFaceDetailSteps, videoStoryCount, videoClipSeconds,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, RESOLUTION_PRESETS, VIDEO_RESOLUTION_PRESETS, newReferences, cloneReferences, REFERENCE_MAX_FILES, REFERENCE_TRACK_DEFAULT, countReferenceFiles, referenceSlotCost } from './state.js';
 import { messagesEl, sendBtn, addMessage, clearBubble, scrollBottom, deleteImageFile, removeImageFromChat, inputEl } from './dom.js';
 import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
 import { renderArchiveBrowser } from './archive.js';
+import { renderVideoStoryTable, notifyVideoStoryChanged } from './story.js';
 import { isPrivacyMode, setPrivacyMode } from './privacy.js';
 
 // Fetch the alternate models a workflow offers. `kind` names its directory family
@@ -1381,6 +1382,8 @@ export function makeCommandHandler(deps) {
     for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
     for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
     state.lastSequence = null;
+    state.videoStory = null;
+    document.dispatchEvent(new CustomEvent('video-story-changed'));
     state.fauxFullscreenEls.clear();
     document.body.style.overflow = '';
     state.currentServer = null;
@@ -1913,6 +1916,76 @@ export function makeCommandHandler(deps) {
         await deps.runSequenceRunJob(master, count, { video: true });
         sendBtn.disabled = false;
       })();
+    }
+
+    if (cmd === '/video-story') {
+      const master = expandAliases(raw.slice('/video-story'.length).trim(), state.ALIASES);
+      addMessage('user', escapeHtml(raw), raw);
+      if (!master) {
+        addMessage('bot', '<span style="color:#f87171">⚠ Provide a story prompt, e.g. <code>/video-story two friends get lost hiking and find a hidden lake</code></span>');
+        return;
+      }
+      const count = videoStoryCount(state.iterations);
+      const clipSeconds = videoClipSeconds(state.currentVideoSettings) || 5;
+      const bubble = addMessage('bot', `<div class="status-text">Writing a ${count}-clip story…</div>`);
+      return fetch('/api/video-story', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: master, count, clip_seconds: clipSeconds }),
+      })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => new Promise((resolve, reject) => {
+          if (!ok || data.error || !data.job_id) throw new Error(data.error || 'Could not start the story');
+          const es = new EventSource(`/api/progress/${data.job_id}`);
+          es.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'progress') {
+              bubble.innerHTML = `<div class="status-text">${escapeHtml(msg.message)}</div>`;
+              scrollBottom();
+            } else if (msg.type === 'done') {
+              es.close();
+              resolve(msg);
+            } else if (msg.type === 'error') {
+              es.close();
+              reject(new Error(msg.message || 'unknown error'));
+            }
+          };
+          es.onerror = () => { es.close(); reject(new Error('Lost connection to the story job.')); };
+        }))
+        .then(msg => {
+          state.videoStory = {
+            master,
+            clipSeconds: Number(msg.clip_seconds) || clipSeconds,
+            items: (msg.items || []).map(it => ({
+              description: it.description || '', soundscape: it.soundscape || '', music: it.music || 'N/A',
+            })),
+            cursor: -1,
+          };
+          renderVideoStoryTable(bubble);
+          notifyVideoStoryChanged();
+        })
+        .catch(err => {
+          bubble.innerHTML = `<span style="color:#f87171">⚠ Video story failed: ${escapeHtml(err.message)}</span>`;
+          scrollBottom();
+        });
+    }
+
+    if (cmd === '/video-story-review') {
+      addMessage('user', escapeHtml(raw), raw);
+      if (!state.videoStory) {
+        addMessage('bot', '<span style="color:#f87171">⚠ No video story in this chat — use <code>/video-story &lt;prompt&gt;</code> first.</span>');
+        return;
+      }
+      renderVideoStoryTable(addMessage('bot', ''));
+      return;
+    }
+
+    if (cmd === '/video-story-reset') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.videoStory = null;
+      notifyVideoStoryChanged();
+      addMessage('bot', 'Video story cleared.');
+      return;
     }
 
     if (cmd === '/video-sequence-auto') {
@@ -2699,6 +2772,9 @@ export function makeCommandHandler(deps) {
         { sig: '/upscale-workflow [name]', desc: 'choose which upscaler workflow the <code>/upscale</code> command and ⬆ button use (no arg = picker)' },
         { sig: '/upscale-workflow-reset', desc: 'reset the upscaler workflow to its default' },
         { sig: '/video-sequence <master prompt>', desc: 'like <code>/sequence</code>, but Grok also writes a MiniMax H3 video description &amp; soundscape per shot, plus one background score for the run; turning an image into a video assembles them into an H3 prompt (<code>integrated_multimodal_description</code> / <code>overall_soundscape</code> / <code>non_diegetic_music</code>), with the first-and-last-frame instruction when a 🎞️ end frame is set' },
+        { sig: '/video-story <prompt>', desc: 'Grok writes one continuous story as <code>/iterations</code> video clips (5 if unset), each picking up where the last clip ends and sized to the <code>/video-settings</code> length; shows an editable table — 📋 on a row copies it for the metadata editor\'s Clone button, and ⏭ on a video cuts its last frame and starts the next shot' },
+        { sig: '/video-story-review', desc: 'show the current video story table again' },
+        { sig: '/video-story-reset', desc: 'clear the video story (hides the ⏭ buttons)' },
         { sig: '/video-sequence-auto', desc: 'turn every <code>/video-sequence</code> shot into a video automatically as soon as its still is ready (after <code>/face-detail-auto</code>, if on); runs server-side, so it carries on if the browser closes' },
         { sig: '/video-sequence-auto-reset', desc: 'stop auto-running image2video on <code>/video-sequence</code> shots' },
         { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio for a silent clip (<code>overall_soundscape</code> &amp; <code>non_diegetic_music</code> sent as N/A) &nbsp;·&nbsp; the five <em>Optimisations</em> boxes bypass the matching <code>[opt:&hellip;]</code> nodes in the video workflow (all on = fast, lower-quality preview) &nbsp;·&nbsp; ticking <em>Turbo 4-step LoRA</em> sets Steps to 4, unticking it returns them to the workflow default' },

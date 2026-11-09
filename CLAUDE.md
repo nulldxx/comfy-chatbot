@@ -752,6 +752,25 @@ Raw markdown for either is at the same path with `/raw/` in place of `/blob/`.
 - Any new reader of `imageVideoMeta`, `lastVideoMeta` or `lastSequence.items` must go
   through `normalizeVideoMeta`, or old sessions will show blank fields.
 
+### Continuous video stories (`/video-story`, `story.js`)
+
+`/video-story <prompt>` asks Grok (`grok.generate_video_story`, `POST /api/video-story`,
+a background job) for `/iterations` clips (5 if unset) of one continuous story, each
+starting from the previous clip's last frame and sized to `videoClipSeconds(
+currentVideoSettings)`. No stills — the user brings the opening image. See
+`ADR/video-story.md`.
+
+- **`state.videoStory = { master, clipSeconds, items, cursor }`** — session-persisted,
+  reset by `newChat`, not in `/settings-save`. Changes dispatch `video-story-changed`,
+  which `chat.js` turns into a save + ⏭ refresh.
+- **📋 on a table row** sets `state.lastVideoMeta` (what the metadata editor's Clone
+  reads) and moves the cursor to that row.
+- **⏭ on a video** (`.img-story-next`, beside ✂ in `.img-topleft`) shows while
+  `videoStoryNext()` has a row: cut last frame → set that still's `imageVideoMeta` to the
+  next row → advance cursor → `startImage2VideoFor`.
+- `/video-story-review` re-shows the table (it isn't persisted as a chat message);
+  `/video-story-reset` clears the story.
+
 ### Auto passes in sequence runs (`/video-sequence-auto`, `/face-detail-auto`)
 
 `/video-sequence-auto` (`state.autoVideoSequence`) turns every `/video-sequence` shot into

@@ -245,8 +245,39 @@ export function videoPromptOpts(state, image) {
   return {
     audio: vs.audio !== false,
     lastFrame: !!(state.lastFrameUrl && state.lastFrameUrl !== image),
-    duration: vs.fps ? vs.frames / vs.fps : (vs.duration || 0),
+    duration: videoClipSeconds(vs),
   };
+}
+
+// The clip length /video-settings will produce, in seconds. Frames and fps drive the
+// output (duration is only the human-facing value and may round), so prefer them.
+export function videoClipSeconds(vs) {
+  vs = vs || {};
+  return vs.fps ? vs.frames / vs.fps : (Number(vs.duration) || 0);
+}
+
+// ---------------------------------------------------------------------------
+// /video-story — one continuous story, each clip starting from the last frame of
+// the one before. state.videoStory is { master, clipSeconds, items, cursor }, where
+// cursor is the row last used (-1 = none yet).
+// ---------------------------------------------------------------------------
+
+// Number of story clips to ask for. /iterations at its default of 1 means "not set"
+// (as /sequence reads it), and a one-clip story is pointless, so it gets a default.
+export const VIDEO_STORY_DEFAULT_COUNT = 5;
+export function videoStoryCount(iterations) {
+  const n = Math.floor(Number(iterations) || 0);
+  return n > 1 ? n : VIDEO_STORY_DEFAULT_COUNT;
+}
+
+// The row after the cursor, as { index, item }, or null when there is no story or
+// every row has been used.
+export function videoStoryNext(story) {
+  if (!story || !Array.isArray(story.items)) return null;
+  const cursor = Number.isInteger(story.cursor) ? story.cursor : -1;
+  const index = Math.max(-1, cursor) + 1;
+  if (index >= story.items.length) return null;
+  return { index, item: story.items[index] };
 }
 
 // ---------------------------------------------------------------------------

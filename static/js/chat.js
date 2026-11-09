@@ -2,7 +2,7 @@ import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
   buildVideoPrompt, i2vTooltip, normalizeVideoMeta, videoPromptOpts, COMFY_URL_DND_TYPE, videoOptsPayload,
-  progressPercent, progressCaption, runStagePrefix,
+  progressPercent, progressCaption, runStagePrefix, videoStoryNext,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
 import {
@@ -462,6 +462,7 @@ function importSettingsFile(file) {
     });
 }
 
+// Resolves to the new still's URL, or null if the cut failed (the bubble says why).
 function extractLastFrame(url) {
   const bubble = addMessage('bot', '<div class="status-text">Cutting last frame…</div>');
   return fetch('/api/extract-last-frame', {
@@ -478,10 +479,66 @@ function extractLastFrame(url) {
       state.sessionImages.push(data.url);
       appendChatImage(bubble, data.url);
       scrollBottom();
+      return data.url;
     })
     .catch(err => {
       bubble.innerHTML = `<span style="color:#f87171">⚠ Could not cut last frame: ${escapeHtml(err.message)}</span>`;
+      return null;
     });
+}
+
+// ---------------------------------------------------------------------------
+// /video-story ⏭ — cut the last frame, give it the next story shot, start the video
+// ---------------------------------------------------------------------------
+
+function storyNextTitle() {
+  const next = videoStoryNext(state.videoStory);
+  if (!next) return '';
+  const d = (next.item.description || '').trim();
+  const excerpt = d.length > 120 ? d.slice(0, 117) + '…' : d;
+  return `Next story shot ${next.index + 1}/${state.videoStory.items.length}: cut the last frame and start it` +
+    (excerpt ? ` — ${excerpt}` : '');
+}
+
+function syncStoryNextButton(btn) {
+  const next = videoStoryNext(state.videoStory);
+  btn.style.display = next ? '' : 'none';
+  btn.title = storyNextTitle();
+}
+
+function refreshStoryNextButtons() {
+  document.querySelectorAll('.img-story-next').forEach(syncStoryNextButton);
+}
+
+document.addEventListener('video-story-changed', () => {
+  refreshStoryNextButtons();
+  scheduleRecordSave();
+});
+
+async function runStoryNext(videoUrl, btn) {
+  if (sendBtn.disabled) {
+    addMessage('bot', '<span style="color:#f87171">Busy — wait for the current generation to finish.</span>');
+    scrollBottom();
+    return;
+  }
+  const story = state.videoStory;
+  const next = videoStoryNext(story);
+  if (!next) return;
+  btn.disabled = true;
+  try {
+    const stillUrl = await extractLastFrame(videoUrl);
+    // The story may have been reset or replaced while the frame was being cut.
+    if (!stillUrl || state.videoStory !== story) return;
+    // Overwrites the metadata extractLastFrame copied over from the video. If the video
+    // then fails, the still keeps this shot, so 🎬 / Start retries it without skipping.
+    state.imageVideoMeta[stillUrl] = { ...next.item };
+    story.cursor = next.index;
+    document.dispatchEvent(new CustomEvent('video-story-changed'));
+    const run = startImage2VideoFor(stillUrl, null);
+    if (run) await run;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,9 +1123,25 @@ function appendChatImage(container, url) {
       extractLastFrame(url).finally(() => { cut.disabled = false; });
     });
 
+    // ⏭ sits beside ✂ while a /video-story has a shot left; hidden otherwise.
+    const storyNext = document.createElement('button');
+    storyNext.className = 'img-story-next';
+    storyNext.innerHTML = '&#9197;&#xFE0E;';
+    syncStoryNextButton(storyNext);
+    storyNext.addEventListener('click', e => {
+      e.stopPropagation();
+      if (storyNext.disabled) return;
+      runStoryNext(url, storyNext);
+    });
+
+    const topLeft = document.createElement('div');
+    topLeft.className = 'img-topleft';
+    topLeft.appendChild(cut);
+    topLeft.appendChild(storyNext);
+
     wrap.appendChild(media);
     wrap.appendChild(del);
-    wrap.appendChild(cut);
+    wrap.appendChild(topLeft);
     container.appendChild(wrap);
     scheduleRecordSave();
     return;
@@ -1425,6 +1498,7 @@ function doRecordSave() {
       imagePrompts: Object.assign({}, state.imagePrompts),
       imageVideoMeta: Object.assign({}, state.imageVideoMeta),
       lastSequence: state.lastSequence,
+      videoStory: state.videoStory,
       promptHistory: state.history.slice(),
       messages: captureSessionMessages(),
     }),
@@ -1448,6 +1522,7 @@ function restoreSession(data) {
   for (const k of Object.keys(state.imagePrompts)) delete state.imagePrompts[k];
   for (const k of Object.keys(state.imageVideoMeta)) delete state.imageVideoMeta[k];
   state.lastSequence = null;
+  state.videoStory = null;
   state.references = newReferences();
   state.reuseSeed = null;
   state.fauxFullscreenEls.clear();
@@ -1498,6 +1573,7 @@ function restoreSession(data) {
   Object.assign(state.imagePrompts, data.imagePrompts || {});
   Object.assign(state.imageVideoMeta, data.imageVideoMeta || {});
   state.lastSequence = data.lastSequence || null;
+  state.videoStory = data.videoStory || null;
   for (const entry of (data.promptHistory || [])) state.history.push(entry);
 
   const validImages = new Set(data.sessionImages || []);

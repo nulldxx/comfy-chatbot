@@ -199,6 +199,10 @@ export const state = {
   // Replacement & override state
   sequenceReplacements:        [],
   lastSequence:                null,
+  // /video-story: { master, clipSeconds, items: [{description, soundscape, music}],
+  // cursor } — cursor is the row last used (-1 = none). null = no story active, which
+  // also hides the ⏭ next-clip button on videos. Chat content, like lastSequence.
+  videoStory:                  null,
   image2imageReplacements:     [],
   image2imageOverridePrompt:   null,
   image2videoReplacements:     [],

@@ -7,7 +7,8 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          WORKFLOW_VARIANT_SEP, progressPercent, progressCaption,
          archiveParentPath, archiveBreadcrumb, joinArchivePath,
          fmtUptime, runStagePrefix, buildI2vSteps, buildFaceDetailSteps,
-         renderMetadataTable, fmtBytes, expandWorkflowVariants } from '../../static/js/utils.js';
+         renderMetadataTable, fmtBytes, expandWorkflowVariants,
+         videoClipSeconds, videoStoryCount, videoStoryNext, VIDEO_STORY_DEFAULT_COUNT } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -1305,5 +1306,46 @@ describe('expandWorkflowVariants', () => {
   test('mixed workflows keep their order; missing variant arrays read as none', () => {
     const out = expandWorkflowVariants(['a', 'b', 'c'], [[], ['x', 'y', 'z']]);
     expect(out.map(e => e.wire)).toEqual(['a', 'b', 'b@y', 'b@z', 'c']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /video-story helpers
+// ---------------------------------------------------------------------------
+
+describe('videoClipSeconds', () => {
+  test('derives from frames / fps', () => {
+    expect(videoClipSeconds({ frames: 120, fps: 24, duration: 9 })).toBe(5);
+  });
+  test('falls back to duration without fps', () => {
+    expect(videoClipSeconds({ duration: 7 })).toBe(7);
+    expect(videoClipSeconds(null)).toBe(0);
+  });
+});
+
+describe('videoStoryCount', () => {
+  test('uses /iterations when set', () => {
+    expect(videoStoryCount(4)).toBe(4);
+  });
+  test('1 (unset) or garbage gives the default', () => {
+    expect(videoStoryCount(1)).toBe(VIDEO_STORY_DEFAULT_COUNT);
+    expect(videoStoryCount(undefined)).toBe(VIDEO_STORY_DEFAULT_COUNT);
+  });
+});
+
+describe('videoStoryNext', () => {
+  const items = [{ description: 'a' }, { description: 'b' }];
+  test('no story is null', () => {
+    expect(videoStoryNext(null)).toBeNull();
+  });
+  test('fresh story starts at row 0', () => {
+    expect(videoStoryNext({ items, cursor: -1 })).toEqual({ index: 0, item: items[0] });
+    expect(videoStoryNext({ items })).toEqual({ index: 0, item: items[0] });
+  });
+  test('moves on from the cursor', () => {
+    expect(videoStoryNext({ items, cursor: 0 })).toEqual({ index: 1, item: items[1] });
+  });
+  test('null after the last row', () => {
+    expect(videoStoryNext({ items, cursor: 1 })).toBeNull();
   });
 });

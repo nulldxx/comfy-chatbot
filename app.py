@@ -76,6 +76,7 @@ import auth_store
 import idle_lock
 import archive_browse
 import profanity
+import grok
 from auth_store import save_password_hash, verify_password
 from crypto_key import derive_passphrase, effective_passphrase as _effective_passphrase
 app = Flask(__name__)
@@ -1877,6 +1878,44 @@ def _parse_sequence_auto(data, video):
         }
 
     return auto, None
+
+
+VIDEO_STORY_MIN_SECONDS = 0.5
+VIDEO_STORY_MAX_SECONDS = 60.0
+
+
+@app.route("/api/video-story", methods=["POST"])
+@login_required
+def api_video_story():
+    """Ask Grok for a /video-story: `count` consecutive clip prompts, each picking up
+    where the previous clip's last frame leaves off, sized to `clip_seconds`.
+
+    Grok only — nothing is generated. Runs as a background job (two Grok attempts can
+    outlast the gunicorn worker timeout); the terminal "done" event carries `items`.
+    """
+    data = request.get_json(force=True) or {}
+    try:
+        master, count, _ = _parse_sequence_request(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    raw = data.get("clip_seconds", 5)
+    try:
+        clip_seconds = float(raw)
+    except (ValueError, TypeError):
+        return jsonify({"error": "clip_seconds must be a number"}), 400
+    if not (VIDEO_STORY_MIN_SECONDS <= clip_seconds <= VIDEO_STORY_MAX_SECONDS):
+        return jsonify({"error": f"clip_seconds must be between {VIDEO_STORY_MIN_SECONDS:g} "
+                                 f"and {VIDEO_STORY_MAX_SECONDS:g}"}), 400
+
+    def job(emit):
+        emit(f"Asking Grok for a {count}-clip story…")
+        items = grok.generate_video_story(master, count, clip_seconds)
+        return {"items": items, "master": master, "clip_seconds": clip_seconds}
+
+    summary = "Video story: " + (master[:60] + ("…" if len(master) > 60 else ""))
+    job_id = start_background_job(job, kind="task", summary=summary)
+    return jsonify({"job_id": job_id})
 
 
 @app.route("/api/sequence-run", methods=["POST"])
