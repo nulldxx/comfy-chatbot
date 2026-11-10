@@ -203,6 +203,7 @@ export const state = {
   // cursor } — cursor is the row last used (-1 = none). null = no story active, which
   // also hides the ⏭ next-clip button on videos. Chat content, like lastSequence.
   videoStory:                  null,
+  videoStoryAuto:              false,   // /video-story-auto: press ⏭ automatically while rows remain
   image2imageReplacements:     [],
   image2imageOverridePrompt:   null,
   image2videoReplacements:     [],

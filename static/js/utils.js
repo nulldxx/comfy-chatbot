@@ -280,6 +280,13 @@ export function videoStoryNext(story) {
   return { index, item: story.items[index] };
 }
 
+// /video-story-auto: after a single-image i2v run, should ⏭ be pressed on its result?
+// Only for a successful run that produced a video, with the toggle on and a story row
+// still left after the cursor.
+export function shouldAutoStoryNext({ auto, story, ok, url }) {
+  return !!auto && !!ok && !!url && isVideoUrl(url) && !!videoStoryNext(story);
+}
+
 function storyCursor(story) {
   return Number.isInteger(story.cursor) ? Math.max(-1, story.cursor) : -1;
 }

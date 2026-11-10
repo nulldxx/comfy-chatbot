@@ -8,7 +8,7 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          archiveParentPath, archiveBreadcrumb, joinArchivePath,
          fmtUptime, runStagePrefix, buildI2vSteps, buildFaceDetailSteps,
          renderMetadataTable, fmtBytes, expandWorkflowVariants,
-         videoClipSeconds, videoStoryCount, videoStoryNext, VIDEO_STORY_DEFAULT_COUNT,
+         videoClipSeconds, videoStoryCount, videoStoryNext, shouldAutoStoryNext, VIDEO_STORY_DEFAULT_COUNT,
          videoStoryInsert, videoStoryDelete, videoStorySetCursor } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
@@ -1405,5 +1405,30 @@ describe('videoStorySetCursor', () => {
     expect(st.cursor).toBe(-1);
     videoStorySetCursor(st, 5);
     expect(st.cursor).toBe(-1);
+  });
+});
+
+describe('shouldAutoStoryNext', () => {
+  const story = (cursor, n = 3) => ({ items: Array.from({ length: n }, () => ({ description: 'x' })), cursor });
+  const base = { auto: true, story: story(0), ok: true, url: '/images/clip.mp4' };
+
+  test('presses ⏭ on a finished video while rows remain', () => {
+    expect(shouldAutoStoryNext(base)).toBe(true);
+  });
+  test('off when the toggle is off', () => {
+    expect(shouldAutoStoryNext({ ...base, auto: false })).toBe(false);
+  });
+  test('stops on a failed or cancelled run', () => {
+    expect(shouldAutoStoryNext({ ...base, ok: false })).toBe(false);
+  });
+  test('needs a video result', () => {
+    expect(shouldAutoStoryNext({ ...base, url: null })).toBe(false);
+    expect(shouldAutoStoryNext({ ...base, url: '/images/still.png' })).toBe(false);
+  });
+  test('stops after the last row', () => {
+    expect(shouldAutoStoryNext({ ...base, story: story(2) })).toBe(false);
+  });
+  test('no story, no press', () => {
+    expect(shouldAutoStoryNext({ ...base, story: null })).toBe(false);
   });
 });

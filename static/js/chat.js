@@ -2,7 +2,7 @@ import {
   escapeHtml, parseJsonResponse, expandAliases, applyReplacements,
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
   buildVideoPrompt, i2vTooltip, normalizeVideoMeta, videoPromptOpts, COMFY_URL_DND_TYPE, videoOptsPayload,
-  progressPercent, progressCaption, runStagePrefix, videoStoryNext,
+  progressPercent, progressCaption, runStagePrefix, videoStoryNext, shouldAutoStoryNext,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
 import {
@@ -525,7 +525,14 @@ async function runStoryNext(videoUrl, btn) {
   const story = state.videoStory;
   const next = videoStoryNext(story);
   if (!next) return;
-  btn.disabled = true;
+  // An automatic press (/video-story-auto) has no button: disable the video's own ⏭ so
+  // a manual click can't fire the same shot a second time.
+  if (!btn) {
+    const wrap = [...document.querySelectorAll('.img-wrap')]
+      .find(w => { const v = w.querySelector('video'); return v && v.getAttribute('src') === videoUrl; });
+    btn = wrap ? wrap.querySelector('.img-story-next') : null;
+  }
+  if (btn) btn.disabled = true;
   try {
     const stillUrl = await extractLastFrame(videoUrl);
     // The story may have been reset or replaced while the frame was being cut.
@@ -538,7 +545,7 @@ async function runStoryNext(videoUrl, btn) {
     const run = startImage2VideoFor(stillUrl, null);
     if (run) await run;
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -959,14 +966,25 @@ function runImage2Video(prompt, image) {
   }
   sendBtn.disabled = true;
   const lastFrame = (state.lastFrameUrl && state.lastFrameUrl !== image) ? state.lastFrameUrl : null;
+  let videoUrl = null;
   return runGeneration(prompt, '', null, {
     image2video: {
       image, lastFrame,
       references: referencesForRun(image),
       workflow: state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW,
     },
+    onResult: urls => { videoUrl = (urls || []).find(isVideoUrl) || null; },
   })
-    .finally(() => { sendBtn.disabled = false; });
+    .finally(() => { sendBtn.disabled = false; })
+    .then(ok => {
+      // /video-story-auto: press ⏭ on the new video. Scheduled rather than awaited, so
+      // this run's promise settles (and its button re-enables) before the next starts,
+      // and the chain doesn't nest one promise inside another per clip.
+      if (shouldAutoStoryNext({ auto: state.videoStoryAuto, story: state.videoStory, ok, url: videoUrl })) {
+        setTimeout(() => runStoryNext(videoUrl, null), 0);
+      }
+      return ok;
+    });
 }
 
 // Build the references payload for a video run. Slot 1 keeps the historic behaviour
@@ -1541,6 +1559,7 @@ function doRecordSave() {
         faceSuperN: state.faceSuperN,
         autoFaceDetail: state.autoFaceDetail,
         autoVideoSequence: state.autoVideoSequence,
+        videoStoryAuto: state.videoStoryAuto,
         lastFaceDetailPrompt: state.lastFaceDetailPrompt,
         lastVideoMeta: state.lastVideoMeta,
         lastInpaintingPrompt: state.lastInpaintingPrompt,
@@ -1616,6 +1635,8 @@ function restoreSession(data) {
   // Default OFF, like t2vMode: a mode that queues a video per shot mustn't leak in
   // from whatever the previous chat had.
   state.autoVideoSequence = !!s.autoVideoSequence;
+  // Default OFF too: it launches renders by itself.
+  state.videoStoryAuto = !!s.videoStoryAuto;
   if (s.lastFaceDetailPrompt    !== undefined) state.lastFaceDetailPrompt    = s.lastFaceDetailPrompt;
   if (s.lastVideoMeta           !== undefined) state.lastVideoMeta           = s.lastVideoMeta;
   if (s.lastInpaintingPrompt    !== undefined) state.lastInpaintingPrompt    = s.lastInpaintingPrompt;
@@ -2342,6 +2363,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const superTileReplace = opts.superTileReplace || null;
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
   const stepsOverride = opts.stepsOverride != null ? opts.stepsOverride : null;
+  const onResult = typeof opts.onResult === 'function' ? opts.onResult : null;
   const inPlaceWrap = sliderReplace || superTileReplace || replaceWrap;
   // text2video counts as a "job" despite having no source image: that keeps the
   // still-image params (width/height/steps/extraPrompt) and the auto-face-detail
@@ -2615,6 +2637,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         } else {
           scrollBottom();
         }
+        if (onResult) onResult(msg.images.slice());
         if (autoPasses.length) {
           // Run the queued face-detail passes one after another, then resolve —
           // keeps the sendMessage iterations loop sequential and settles this

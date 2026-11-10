@@ -659,6 +659,10 @@ function showChatSummary() {
     rows.push({ label: 'Auto video-sequence', value: '<span style="color:#4ade80">on</span> <span style="color:#475569">— every /video-sequence shot becomes a video</span>' });
   }
 
+  if (state.videoStoryAuto) {
+    rows.push({ label: 'Auto video-story', value: '<span style="color:#4ade80">on</span> <span style="color:#475569">— ⏭ is pressed automatically while story shots remain</span>' });
+  }
+
   if (state.lastFaceDetailPrompt) {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(state.lastFaceDetailPrompt)}</code>` });
   }
@@ -1422,6 +1426,7 @@ export function makeCommandHandler(deps) {
     state.faceSuperN = 1;
     state.autoFaceDetail = false;
     state.autoVideoSequence = false;
+    state.videoStoryAuto = false;
     // Recording is always on: start the new chat recording into a fresh
     // temporary name rather than continuing to append to the previous one.
     // Detach (without cancelling) any sequence run this tab was watching —
@@ -1989,6 +1994,17 @@ export function makeCommandHandler(deps) {
       state.videoStory = null;
       notifyVideoStoryChanged();
       addMessage('bot', 'Video story cleared.');
+      return;
+    }
+
+    if (cmd === '/video-story-auto') {
+      addMessage('user', escapeHtml(raw), raw);
+      state.videoStoryAuto = !state.videoStoryAuto;
+      addMessage('bot', state.videoStoryAuto
+        ? 'Auto video-story <b>on</b> — whenever a video finishes and the <code>/video-story</code> has a shot left after the cursor, ⏭ is pressed for you, so the story runs clip after clip. Press ⏭ on a video (or 🎬 the opening still) to start. Stops at the last row, on a failed or cancelled clip, or when toggled off.'
+        : 'Auto video-story <b>off</b> — the current clip finishes, but no further shots start.');
+      deps.updateHeaderStatus();
+      document.dispatchEvent(new CustomEvent('video-story-changed'));
       return;
     }
 
@@ -2779,6 +2795,7 @@ export function makeCommandHandler(deps) {
         { sig: '/video-story <prompt>', desc: 'Grok writes one continuous story as <code>/iterations</code> video clips (5 if unset), each picking up where the last clip ends and sized to the <code>/video-settings</code> length; shows an editable table — click a row to make it the current shot, ➕/🗑 under the table insert a blank shot after it or delete it, 📋 on a row copies it for the metadata editor\'s Clone button, and ⏭ on a video cuts its last frame and starts the next shot' },
         { sig: '/video-story-review', desc: 'show the current video story table again' },
         { sig: '/video-story-reset', desc: 'clear the video story (hides the ⏭ buttons)' },
+        { sig: '/video-story-auto', desc: 'toggle (default off): when a video finishes and the story has a shot left after the cursor, press its ⏭ automatically — runs the whole story clip after clip; stops at the last row or on a failed/cancelled clip' },
         { sig: '/video-sequence-auto', desc: 'turn every <code>/video-sequence</code> shot into a video automatically as soon as its still is ready (after <code>/face-detail-auto</code>, if on); runs server-side, so it carries on if the browser closes' },
         { sig: '/video-sequence-auto-reset', desc: 'stop auto-running image2video on <code>/video-sequence</code> shots' },
         { sig: '/video-settings', desc: 'set video duration, frames, fps, resolution &amp; audio for image2video', notes: 'lock one value (🔒); editing either of the other two keeps <code>frames = duration × fps</code> &nbsp;·&nbsp; only one lock at a time &nbsp;·&nbsp; resolution presets: 360p, 540p, 720p, 1080p, square, phone &nbsp;·&nbsp; ⇄ swaps W/H &nbsp;·&nbsp; resolution is separate from <code>/image-settings</code> (videos have different constraints) &nbsp;·&nbsp; steps overrides the video workflow&rsquo;s sampler steps (tick <em>Use workflow default</em> to leave them alone) &nbsp;·&nbsp; untick Audio for a silent clip (<code>overall_soundscape</code> &amp; <code>non_diegetic_music</code> sent as N/A) &nbsp;·&nbsp; the five <em>Optimisations</em> boxes bypass the matching <code>[opt:&hellip;]</code> nodes in the video workflow (all on = fast, lower-quality preview) &nbsp;·&nbsp; ticking <em>Turbo 4-step LoRA</em> sets Steps to 4, unticking it returns them to the workflow default' },
@@ -3466,6 +3483,7 @@ export function makeCommandHandler(deps) {
         faceSuperN:                state.faceSuperN,
         autoFaceDetail:            state.autoFaceDetail,
         autoVideoSequence:         state.autoVideoSequence,
+        videoStoryAuto:            state.videoStoryAuto,
         lastFaceDetailPrompt:      state.lastFaceDetailPrompt,
         lastVideoMeta:             state.lastVideoMeta,
         lastInpaintingPrompt:      state.lastInpaintingPrompt,
@@ -3513,6 +3531,8 @@ export function makeCommandHandler(deps) {
       state.autoFaceDetail              = s.autoFaceDetail;
       // Guarded: snapshots pushed before /video-sequence-auto existed have no key.
       if (s.autoVideoSequence !== undefined) state.autoVideoSequence = s.autoVideoSequence;
+      // Guarded: snapshots pushed before /video-story-auto existed have no key.
+      if (s.videoStoryAuto !== undefined) state.videoStoryAuto = s.videoStoryAuto;
       state.lastFaceDetailPrompt        = s.lastFaceDetailPrompt;
       // Guarded: snapshots pushed before the Clone button existed have no key.
       if (s.lastVideoMeta !== undefined) state.lastVideoMeta = s.lastVideoMeta;

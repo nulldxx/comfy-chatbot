@@ -99,6 +99,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/video-story',                  desc: 'one continuous story as /iterations video clips — editable table, ⏭ chains them',     args: ' ' },
   { cmd: '/video-story-review',           desc: 'show the current video story table again',                                           args: ''  },
   { cmd: '/video-story-reset',            desc: 'clear the video story (hides the ⏭ buttons)',                                         args: ''  },
+  { cmd: '/video-story-auto',             desc: 'toggle: press ⏭ automatically while story shots remain, running the story unattended', args: ''  },
   { cmd: '/video-sequence-auto',          desc: 'auto-run image2video on every /video-sequence shot (after face-detail)',             args: ''  },
   { cmd: '/video-sequence-auto-reset',    desc: 'stop auto-running image2video on /video-sequence shots',                              args: ''  },
   { cmd: '/video-settings',               desc: 'set video duration, frames, fps, resolution & audio (lock one, the others follow)',  args: ''  },

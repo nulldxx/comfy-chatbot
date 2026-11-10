@@ -782,6 +782,12 @@ currentVideoSettings)`. No stills — the user brings the opening image. See
   An open table re-renders its rows on `video-story-changed` when the row count differs.
 - **Restored with the chat**: `restoreSession` (`chat.js`) re-renders the table at the
   end of the restored chat whenever the session has a `videoStory`.
+- **`/video-story-auto`** (toggle, default off, `state.videoStoryAuto`): when a
+  single-image i2v run (`runImage2Video`, so 🎬/Start/⏭) succeeds and a row remains,
+  ⏭ is pressed on the new video automatically (`shouldAutoStoryNext` in `utils.js`;
+  the URL comes from `runGeneration`'s `opts.onResult`). Stops on the last row or a
+  failed/cancelled clip. Client-side, so it dies with the tab. Restores default-off. See
+  `ADR/video-story-auto.md`.
 - `/video-story-review` re-shows the table (it isn't persisted as a chat message);
   `/video-story-reset` clears the story.
 
