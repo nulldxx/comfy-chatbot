@@ -8,7 +8,8 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          archiveParentPath, archiveBreadcrumb, joinArchivePath,
          fmtUptime, runStagePrefix, buildI2vSteps, buildFaceDetailSteps,
          renderMetadataTable, fmtBytes, expandWorkflowVariants,
-         videoClipSeconds, videoStoryCount, videoStoryNext, VIDEO_STORY_DEFAULT_COUNT } from '../../static/js/utils.js';
+         videoClipSeconds, videoStoryCount, videoStoryNext, VIDEO_STORY_DEFAULT_COUNT,
+         videoStoryInsert, videoStoryDelete, videoStorySetCursor } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -1347,5 +1348,62 @@ describe('videoStoryNext', () => {
   });
   test('null after the last row', () => {
     expect(videoStoryNext({ items, cursor: 1 })).toBeNull();
+  });
+});
+
+describe('videoStoryInsert', () => {
+  const blank = { description: '', soundscape: '', music: 'N/A' };
+  test('with no cursor inserts at the top and selects it', () => {
+    const st = { items: [{ description: 'a' }], cursor: -1 };
+    videoStoryInsert(st);
+    expect(st.items).toEqual([blank, { description: 'a' }]);
+    expect(st.cursor).toBe(0);
+  });
+  test('inserts after the cursor and moves onto it', () => {
+    const st = { items: [{ description: 'a' }, { description: 'b' }], cursor: 0 };
+    videoStoryInsert(st);
+    expect(st.items.map(i => i.description)).toEqual(['a', '', 'b']);
+    expect(st.cursor).toBe(1);
+  });
+  test('works on an empty story', () => {
+    const st = { items: [] };
+    videoStoryInsert(st);
+    expect(st.items).toEqual([blank]);
+    expect(st.cursor).toBe(0);
+  });
+});
+
+describe('videoStoryDelete', () => {
+  const mk = cursor => ({ items: [{ description: 'a' }, { description: 'b' }, { description: 'c' }], cursor });
+  test('deletes the cursor row and falls back to the previous row', () => {
+    const st = mk(1);
+    videoStoryDelete(st);
+    expect(st.items.map(i => i.description)).toEqual(['a', 'c']);
+    expect(st.cursor).toBe(0);
+    expect(videoStoryNext(st).item.description).toBe('c');
+  });
+  test('deleting the first row clears the cursor', () => {
+    const st = mk(0);
+    videoStoryDelete(st);
+    expect(st.items.map(i => i.description)).toEqual(['b', 'c']);
+    expect(st.cursor).toBe(-1);
+  });
+  test('no-op without a cursor', () => {
+    const st = mk(-1);
+    videoStoryDelete(st);
+    expect(st.items).toHaveLength(3);
+    expect(st.cursor).toBe(-1);
+  });
+});
+
+describe('videoStorySetCursor', () => {
+  const st = { items: [{}, {}, {}], cursor: -1 };
+  test('selects a row, toggles off when clicked again, ignores out of range', () => {
+    videoStorySetCursor(st, 2);
+    expect(st.cursor).toBe(2);
+    videoStorySetCursor(st, 2);
+    expect(st.cursor).toBe(-1);
+    videoStorySetCursor(st, 5);
+    expect(st.cursor).toBe(-1);
   });
 });

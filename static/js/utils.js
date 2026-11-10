@@ -280,6 +280,37 @@ export function videoStoryNext(story) {
   return { index, item: story.items[index] };
 }
 
+function storyCursor(story) {
+  return Number.isInteger(story.cursor) ? Math.max(-1, story.cursor) : -1;
+}
+
+// A blank shot, inserted after the cursor (at the top when there is none). The cursor
+// moves onto it, so it is the selected row and ⏭ carries on from it.
+export function videoStoryInsert(story) {
+  if (!story || !Array.isArray(story.items)) return;
+  const at = Math.min(storyCursor(story) + 1, story.items.length);
+  story.items.splice(at, 0, { description: '', soundscape: '', music: 'N/A' });
+  story.cursor = at;
+}
+
+// Delete the cursor row. The cursor falls back to the row before it (-1 for the first),
+// so ⏭'s next shot is the one that followed the deleted row. No-op with no cursor.
+export function videoStoryDelete(story) {
+  if (!story || !Array.isArray(story.items)) return;
+  const cur = storyCursor(story);
+  if (cur < 0 || cur >= story.items.length) return;
+  story.items.splice(cur, 1);
+  story.cursor = cur - 1;
+}
+
+// Click-to-select: make row i current; clicking the current row clears the cursor, so
+// ⏭ starts again from the first shot.
+export function videoStorySetCursor(story, i) {
+  if (!story || !Array.isArray(story.items)) return;
+  if (!Number.isInteger(i) || i < 0 || i >= story.items.length) return;
+  story.cursor = storyCursor(story) === i ? -1 : i;
+}
+
 // ---------------------------------------------------------------------------
 // Server-side batch runs (/api/batch-run)
 // ---------------------------------------------------------------------------

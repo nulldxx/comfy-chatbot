@@ -51,6 +51,16 @@ and shows them as an editable table. The user supplies the opening image; Grok w
 - `/video-story-review` re-shows the table (table bubbles aren't persisted with the
   chat); `/video-story-reset` clears the story and hides every ⏭.
 
+### Row editing (added later)
+- Click a row to make it the cursor; clicking the current row clears it (-1), so ⏭
+  starts again from shot 1.
+- ➕ *Insert row* / 🗑 *Delete row* under the table act on the cursor: insert puts a blank
+  shot after it (top with no cursor) and selects it; delete removes it and moves the
+  cursor to the previous row, so ⏭'s next shot is the one that followed. Helpers
+  `videoStoryInsert`, `videoStoryDelete`, `videoStorySetCursor` in `utils.js`.
+- `renderVideoStoryTable` stores its listener cleanup on the bubble so re-renders don't
+  stack listeners, and rebuilds rows when another open copy changed the row count.
+
 ## Consequences
 - Grok writes blind: it never sees the frames, so a clip that drifts from its prompt
   leaves the next prompt slightly off. The table is editable for exactly that reason.

@@ -372,6 +372,12 @@ body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell):hover::after { 
 }
 .story-table tr.story-current td { background: rgba(167,139,250,0.10); }
 .story-table tr.story-current td.story-num { color: #a78bfa; }
+.story-table tbody tr { cursor: pointer; }
+.story-table tbody tr:hover td { background: rgba(148,163,184,0.05); }
+.story-table tbody tr.story-current:hover td { background: rgba(167,139,250,0.14); }
+.story-actions { display: flex; gap: 8px; margin-top: 8px; }
+.story-actions .sel-btn { flex: none; padding: 4px 10px; font-size: 0.85rem; }
+.story-actions .sel-btn:disabled { opacity: 0.4; cursor: default; }
 .img-face {
   position: absolute; bottom: 8px; right: 8px;
   background: rgba(15,23,42,0.75); border: 1px solid #334155;

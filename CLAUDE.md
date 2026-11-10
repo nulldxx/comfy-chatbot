@@ -768,6 +768,12 @@ currentVideoSettings)`. No stills — the user brings the opening image. See
 - **⏭ on a video** (`.img-story-next`, beside ✂ in `.img-topleft`) shows while
   `videoStoryNext()` has a row: cut last frame → set that still's `imageVideoMeta` to the
   next row → advance cursor → `startImage2VideoFor`.
+- **Row editing**: clicking a row (outside its textareas/buttons) makes it the cursor;
+  clicking the current row clears it to `-1`. ➕ *Insert row* adds a blank shot after
+  the cursor (top when `-1`) and selects it; 🗑 *Delete row* removes the cursor row and
+  moves the cursor to the row before, so ⏭ carries on with the shot that followed.
+  Pure helpers `videoStoryInsert`/`videoStoryDelete`/`videoStorySetCursor` (`utils.js`).
+  An open table re-renders its rows on `video-story-changed` when the row count differs.
 - `/video-story-review` re-shows the table (it isn't persisted as a chat message);
   `/video-story-reset` clears the story.
 
