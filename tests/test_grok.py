@@ -86,7 +86,8 @@ class GenerateVideoPromptSequenceTests(unittest.TestCase):
         self.assertIn("a busker on a bridge", user)
         self.assertIn("exactly 3", user)
         for needle in ('"description"', '"soundscape"', "<d>[English]", "(S1)",
-                       "off-screen voiceover", "what happens next", "NEVER describe their appearance"):
+                       "off-screen voiceover", "what happens next", "NEVER describe their appearance",
+                       "ALWAYS describe how people sound", "British accent"):
             self.assertIn(needle, user)
         self.assertNotIn('"action"', user)
         # The score is left to the user, so Grok isn't asked for one.

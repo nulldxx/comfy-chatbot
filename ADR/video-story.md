@@ -64,8 +64,27 @@ and shows them as an editable table. The user supplies the opening image; Grok w
 - Restoring a chat (reload, sidebar, `/session-load`) re-renders the table at the end
   of the chat when the session has a story; the bubble itself still isn't persisted.
 
+### Character summary and voice details (added later)
+Voice details from the master prompt — a British accent, say — were vanishing. The
+"never describe people" rule read to Grok as "drop character traits", the only voice
+example was "in a deep voice", and nothing said a detail must be repeated, though each
+clip's text reaches H3 on its own. And because clips chain off cut last frames, the
+characters drifted over a story. So the `generate_video_story` prompt now says:
+- **Each description opens with one sentence summarising how the characters look**
+  (build, age range, hair, clothing), worded the same in every clip, then 1–3 sentences
+  of action. The scene — room, location, weather, lighting, style, lens — is still never
+  described: H3 sees it in the starting frame.
+- **Every voice detail** (accent, pitch, pace, tone, emotion) goes in the speaker's voice
+  phrase on every line, in every clip; the example is now
+  `"the man, in a deep British accent (S1)"`.
+- Token budget per clip rose from 400 to 500.
+
 ## Consequences
 - Grok writes blind: it never sees the frames, so a clip that drifts from its prompt
   leaves the next prompt slightly off. The table is editable for exactly that reason.
 - The cursor is global, not per video: ⏭ on an older clip still continues from the
   cursor, not from that clip. Use 📋 on a row to move the cursor back.
+- The character summary costs part of each clip's prompt and partly undoes the
+  `/video-sequence` "don't restate the still" rule, in exchange for consistency across a
+  chain of frames. `/video-sequence` got only the voice rule: each of its shots has a
+  freshly generated still, so nothing drifts.

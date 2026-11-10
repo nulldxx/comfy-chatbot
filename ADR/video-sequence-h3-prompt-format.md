@@ -90,6 +90,11 @@ it is given the still as Picture 1 and can see everything else.
   the master prompt implies speech, Grok writes the actual lines (`(S1)`/`(S2)` +
   `<d>[English] …</d>` are kept — H3 needs them to lip-sync). Camera moves are mentioned
   only when they matter, so the full camera vocabulary was dropped from the instructions.
+- **Voice is the exception** (added later): appearance is visible in the still, but
+  sound isn't, so every voice detail in the master prompt (accent, pitch, pace, tone,
+  emotion) must go in the speaker's voice phrase on every line of every shot. The `(S1)`
+  example became `"the man, in a deep British accent (S1)"`. Without this, a "British
+  accent" in the master prompt was routinely dropped as an appearance detail.
 - **Music is always `N/A`.** Grok is no longer asked for a score, and
   `_parse_video_prompts` ignores any it volunteers. The score is the user's call, set in
   the metadata editor.

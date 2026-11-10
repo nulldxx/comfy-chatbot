@@ -737,7 +737,9 @@ Raw markdown for either is at the same path with `/raw/` in place of `/blob/`.
   (`generate_video_prompt_sequence`) writes a short description of **what happens next**
   — action, reaction, `(S1) says: <d>[English] …</d>` — and a soundscape per shot. The
   description deliberately does **not** restate appearance, setting, lighting or style:
-  H3 sees the still, and re-describing it crowded out the action. **Music is always
+  H3 sees the still, and re-describing it crowded out the action. **Voice is the
+  exception**: every voice detail in the master prompt (accent, pitch, tone…) is repeated
+  in the speaker's voice phrase on every line, since the still can't show it. **Music is always
   `N/A`** (`_parse_video_prompts` ignores any the model sends); the score is left to the
   user. Each clip is a **single shot** — no `[Shot 2]` cuts.
 - **The prompt is assembled client-side at send time** by `buildVideoPrompt(base, meta,
@@ -760,6 +762,10 @@ starting from the previous clip's last frame and sized to `videoClipSeconds(
 currentVideoSettings)`. No stills — the user brings the opening image. See
 `ADR/video-story.md`.
 
+- **Descriptions differ from `/video-sequence`'s**: each opens with **one sentence
+  summarising how the characters look**, worded the same in every clip (chained last
+  frames drift, and each clip's text reaches H3 alone), then the action. The scene is
+  still never described, and voice details are repeated on every line, as there.
 - **`state.videoStory = { master, clipSeconds, items, cursor }`** — session-persisted,
   reset by `newChat`, not in `/settings-save`. Changes dispatch `video-story-changed`,
   which `chat.js` turns into a save + ⏭ refresh.

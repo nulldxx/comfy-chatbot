@@ -64,6 +64,25 @@ class TestGenerateVideoStory(unittest.TestCase):
         self.assertIn("about 6.5 seconds", captured["user"])
         self.assertIn("two friends hiking", captured["user"])
 
+    def test_prompt_asks_for_character_summary_and_voice(self):
+        captured = {}
+
+        def fake_chat(messages, **kw):
+            captured["user"] = messages[1]["content"]
+            return _reply({"clips": [{"description": "x"}]})
+
+        with patch.object(grok, "_chat", side_effect=fake_chat):
+            generate_video_story("a man with a British accent", 3, 5)
+        user = captured["user"]
+        # Each clip opens with a one-sentence character summary, kept consistent...
+        self.assertIn("OPEN with exactly one sentence summarising how the characters look", user)
+        self.assertIn("SAME wording in every clip", user)
+        # ...but never describes the scene...
+        self.assertIn("NEVER describe the scene", user)
+        # ...and carries every voice detail (accent etc.) on every line.
+        self.assertIn("ALWAYS describe how people sound", user)
+        self.assertIn("British accent (S1)", user)
+
     def test_whole_seconds_formatted_without_decimal(self):
         captured = {}
 
