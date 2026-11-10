@@ -61,6 +61,9 @@ and shows them as an editable table. The user supplies the opening image; Grok w
 - `renderVideoStoryTable` stores its listener cleanup on the bubble so re-renders don't
   stack listeners, and rebuilds rows when another open copy changed the row count.
 
+- Restoring a chat (reload, sidebar, `/session-load`) re-renders the table at the end
+  of the chat when the session has a story; the bubble itself still isn't persisted.
+
 ## Consequences
 - Grok writes blind: it never sees the frames, so a clip that drifts from its prompt
   leaves the next prompt slightly off. The table is editable for exactly that reason.

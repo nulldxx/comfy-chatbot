@@ -774,6 +774,8 @@ currentVideoSettings)`. No stills — the user brings the opening image. See
   moves the cursor to the row before, so ⏭ carries on with the shot that followed.
   Pure helpers `videoStoryInsert`/`videoStoryDelete`/`videoStorySetCursor` (`utils.js`).
   An open table re-renders its rows on `video-story-changed` when the row count differs.
+- **Restored with the chat**: `restoreSession` (`chat.js`) re-renders the table at the
+  end of the restored chat whenever the session has a `videoStory`.
 - `/video-story-review` re-shows the table (it isn't persisted as a chat message);
   `/video-story-reset` clears the story.
 

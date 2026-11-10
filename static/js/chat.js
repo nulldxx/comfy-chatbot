@@ -20,6 +20,7 @@ import { makeCommandHandler } from './commands.js';
 import { initSidebar } from './sidebar.js';
 import { initMediaMenu } from './mediamenu.js';
 import { initPrivacyMode, isPrivacyMode } from './privacy.js';
+import { renderVideoStoryTable } from './story.js';
 
 // ---------------------------------------------------------------------------
 // LoRA catalogue and alias catalogue — populated from server on load
@@ -1648,6 +1649,12 @@ function restoreSession(data) {
         bubble.parentElement.remove();
       }
     }
+  }
+
+  // The /video-story table isn't a persisted message — only state.videoStory is — so
+  // redraw it at the end of the restored chat rather than leaving the story invisible.
+  if (state.videoStory && Array.isArray(state.videoStory.items)) {
+    renderVideoStoryTable(addMessage('bot', ''));
   }
 
   if (data.recordingName) {
