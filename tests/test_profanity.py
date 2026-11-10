@@ -1,5 +1,6 @@
 """Tests for profanity.py — the optional PROFANITY_FILTER word list guarding the
-master prompt of /sequence and /video-sequence."""
+master prompt of /sequence, /video-sequence and
+/video-story."""
 
 import os
 import sys

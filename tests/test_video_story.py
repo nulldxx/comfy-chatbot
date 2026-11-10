@@ -150,6 +150,35 @@ class TestVideoStoryEndpoint(unittest.TestCase):
         self.assertEqual(result["items"][0]["soundscape"], "Dog song")
         self.assertEqual(result["items"][0]["music"], "N/A")
 
+    def test_profanity_in_master_prompt_returns_400(self):
+        # The master prompt is posted verbatim to Grok, so PROFANITY_FILTER guards it
+        # here exactly as it does for /sequence and /video-sequence.
+        app_module.profanity.configure("damn,blast")
+        try:
+            # A return value, so a regression fails the assertions below rather
+            # than erroring on an unserialisable MagicMock job id.
+            with patch.object(app_module, "start_background_job",
+                              return_value="job-1") as start, \
+                    patch.object(grok, "generate_video_story") as gen:
+                r = self._post({"prompt": "a damn story", "count": 3})
+        finally:
+            app_module.profanity.configure("")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("damn", r.get_json()["error"])
+        start.assert_not_called()
+        gen.assert_not_called()
+
+    def test_clean_prompt_passes_the_filter(self):
+        app_module.profanity.configure("damn,blast")
+        try:
+            with patch.object(app_module, "start_background_job",
+                              return_value="job-1") as start:
+                r = self._post({"prompt": "a story", "count": 3})
+        finally:
+            app_module.profanity.configure("")
+        self.assertEqual(r.status_code, 200)
+        start.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

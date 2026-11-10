@@ -6,10 +6,12 @@ docker-compose.yml): a comma-separated list of banned words. Unset or empty —
 the default — disables the filter completely, so an existing deployment behaves
 exactly as it did.
 
-Scope is deliberately narrow: only the master prompt of /sequence and
-/video-sequence is checked, because those are the two commands that ship a
-user's words off the appliance to a third-party LLM (Grok). Local ComfyUI
-generation is not filtered.
+Scope is deliberately narrow: only the master prompt of /sequence,
+/video-sequence and /video-story is checked, because those are the commands
+that ship a user's words off the appliance to a third-party LLM (Grok). All
+three parse it through app._parse_sequence_request, which is where the check
+lives. The prompts Grok sends back, and local ComfyUI generation, are not
+filtered.
 
 Matching is case-insensitive and whole-word, where a run of non-alphanumeric
 characters is a word boundary: a "damn" entry matches "damn!" and "(damn)" but
