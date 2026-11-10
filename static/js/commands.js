@@ -1932,7 +1932,10 @@ export function makeCommandHandler(deps) {
       return fetch('/api/video-story', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: master, count, clip_seconds: clipSeconds }),
+        body: JSON.stringify({
+          prompt: master, count, clip_seconds: clipSeconds,
+          replacements: state.sequenceReplacements,
+        }),
       })
         .then(r => r.json().then(data => ({ ok: r.ok, data })))
         .then(({ ok, data }) => new Promise((resolve, reject) => {
@@ -2026,7 +2029,7 @@ export function makeCommandHandler(deps) {
       addMessage('user', escapeHtml(raw), raw);
       if (!parts[1]) {
         if (!state.sequenceReplacements.length) {
-          addMessage('bot', `No sequence replacements set.<br>Usage: <code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Matching is case-insensitive and preserves the matched case (<code>bird</code>→<code>dog</code>, <code>Bird</code>→<code>Dog</code>). Applied to every prompt <code>/sequence</code> gets back from Grok.<br><code>/sequence-replacement-reset</code> removes them all.`);
+          addMessage('bot', `No sequence replacements set.<br>Usage: <code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Matching is case-insensitive and preserves the matched case (<code>bird</code>→<code>dog</code>, <code>Bird</code>→<code>Dog</code>). Applied to every prompt <code>/sequence</code>, <code>/video-sequence</code> and <code>/video-story</code> get back from Grok.<br><code>/sequence-replacement-reset</code> removes them all.`);
         } else {
           const list = state.sequenceReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
           addMessage('bot', `<strong>Sequence replacements:</strong><br>${list}<br><br><code>/sequence-replacement-reset</code> removes them all.`);
@@ -2752,7 +2755,7 @@ export function makeCommandHandler(deps) {
         { sig: '/removal-workflow [name]', desc: 'choose which object-removal workflow the removal button uses (no arg = picker)' },
         { sig: '/removal-workflow-reset', desc: 'reset the removal workflow to its default' },
         { sig: '/sequence <master prompt>', desc: 'ask Grok to expand a master prompt into a sequence of prompts, then generate an image for each one after another', notes: 'count comes from <code>/iterations</code> (or 15 if iterations is 1) &nbsp;·&nbsp; needs <code>XAI_API_KEY</code> set on the server' },
-        { sig: '/sequence-replacement <from> <to>', desc: 'find→replace applied to each Grok prompt (no args lists them)' },
+        { sig: '/sequence-replacement <from> <to>', desc: 'find→replace applied to each Grok prompt — <code>/sequence</code>, <code>/video-sequence</code> and <code>/video-story</code> (no args lists them)' },
         { sig: '/sequence-replacement-reset', desc: 'clear all sequence replacements' },
         { sig: '/sequence-review', desc: 'show the last sequence\'s prompts (with action/audio for a video sequence) in a grid; press ▶ on a row to generate that prompt' },
         { sig: '/server', desc: 'choose a ComfyUI server' },

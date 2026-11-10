@@ -131,6 +131,25 @@ class TestVideoStoryEndpoint(unittest.TestCase):
         self.assertEqual(result["clip_seconds"], 4.0)
         self.assertTrue(captured["summary"].startswith("Video story: "))
 
+    def test_sequence_replacements_applied(self):
+        captured = {}
+
+        def fake_start(fn, kind="task", summary=None):
+            captured["fn"] = fn
+            return "job-1"
+
+        items = [{"description": "A bird flies; the bird lands",
+                  "soundscape": "Bird song", "music": "N/A"}]
+        with patch.object(app_module, "start_background_job", side_effect=fake_start), \
+                patch.object(grok, "generate_video_story", return_value=items):
+            r = self._post({"prompt": "a story", "count": 1, "clip_seconds": 4,
+                            "replacements": [["bird", "dog"]]})
+            self.assertEqual(r.status_code, 200)
+            result = captured["fn"](lambda msg: None)
+        self.assertEqual(result["items"][0]["description"], "A dog flies; the dog lands")
+        self.assertEqual(result["items"][0]["soundscape"], "Dog song")
+        self.assertEqual(result["items"][0]["music"], "N/A")
+
 
 if __name__ == "__main__":
     unittest.main()
