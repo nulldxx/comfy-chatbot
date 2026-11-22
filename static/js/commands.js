@@ -667,6 +667,13 @@ function showChatSummary() {
     rows.push({ label: 'Face-detail prompt', value: `<code>${escapeHtml(state.lastFaceDetailPrompt)}</code>` });
   }
 
+  const multiFaces = state.faceMultiPrompts
+    .map((p, i) => p ? `${i + 1}: <code>${escapeHtml(p)}</code>` : null)
+    .filter(Boolean);
+  if (multiFaces.length || state.faceMultiMargin !== 20) {
+    rows.push({ label: 'Multi-face prompts', value: `${multiFaces.join(' · ') || '—'} <span style="color:#475569">(margin ${state.faceMultiMargin}px)</span>` });
+  }
+
   // The metadata editor's Clone button pastes this; showing it makes the clone source
   // visible without opening the dialog.
   if (state.lastVideoMeta) {
@@ -1424,6 +1431,8 @@ export function makeCommandHandler(deps) {
     state.references = newReferences();
     state.faceDetailReplacements = [];
     state.faceSuperN = 1;
+    state.faceMultiPrompts = [null, null, null, null];
+    state.faceMultiMargin = 20;
     state.autoFaceDetail = false;
     state.autoVideoSequence = false;
     state.videoStoryAuto = false;
@@ -3481,6 +3490,8 @@ export function makeCommandHandler(deps) {
         references:                cloneReferences(state.references),
         faceDetailReplacements:    state.faceDetailReplacements.slice(),
         faceSuperN:                state.faceSuperN,
+        faceMultiPrompts:          state.faceMultiPrompts.slice(),
+        faceMultiMargin:           state.faceMultiMargin,
         autoFaceDetail:            state.autoFaceDetail,
         autoVideoSequence:         state.autoVideoSequence,
         videoStoryAuto:            state.videoStoryAuto,
@@ -3528,6 +3539,9 @@ export function makeCommandHandler(deps) {
       if (s.references !== undefined) state.references = cloneReferences(s.references);
       state.faceDetailReplacements      = s.faceDetailReplacements;
       if (s.faceSuperN !== undefined) state.faceSuperN = s.faceSuperN;
+      // Guarded: snapshots pushed before the multi-face editor existed have no key.
+      if (s.faceMultiPrompts !== undefined) state.faceMultiPrompts = s.faceMultiPrompts.slice();
+      if (s.faceMultiMargin !== undefined) state.faceMultiMargin = s.faceMultiMargin;
       state.autoFaceDetail              = s.autoFaceDetail;
       // Guarded: snapshots pushed before /video-sequence-auto existed have no key.
       if (s.autoVideoSequence !== undefined) state.autoVideoSequence = s.autoVideoSequence;

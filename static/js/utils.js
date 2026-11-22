@@ -164,6 +164,54 @@ export function deriveFaceDetailPrompt(genPrompt) {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-face face-detail (👥, facemulti.js → /api/face-detail-multi)
+// ---------------------------------------------------------------------------
+
+export const FACE_MULTI_SLOTS = 4;
+export const FACE_MULTI_DEFAULT_MARGIN = 20;
+export const FACE_MULTI_MAX_MARGIN = 100;
+// Overlay colour per face slot (1 red, 2 green, 3 blue, 4 yellow).
+export const FACE_MULTI_COLOURS = ['#ef4444', '#22c55e', '#3b82f6', '#facc15'];
+
+// A session's stored per-face prompts → exactly FACE_MULTI_SLOTS entries of
+// trimmed string-or-null, whatever (if anything) was stored.
+export function normalizeFaceMultiPrompts(raw) {
+  const out = [];
+  for (let i = 0; i < FACE_MULTI_SLOTS; i++) {
+    const v = Array.isArray(raw) ? raw[i] : null;
+    out.push(typeof v === 'string' && v.trim() ? v.trim() : null);
+  }
+  return out;
+}
+
+export function clampFaceMultiMargin(raw) {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n)) return FACE_MULTI_DEFAULT_MARGIN;
+  return Math.max(0, Math.min(FACE_MULTI_MAX_MARGIN, n));
+}
+
+// Validate the editor's faces before upload. `faces` is one entry per slot,
+// `{ painted: bool, prompt: string }`. Unpainted slots are dropped; a painted
+// slot needs a prompt. Returns { slots: [indexes to send], missing: [indexes
+// painted but unprompted], error: string|null }.
+export function faceMultiPayload(faces) {
+  const slots = [];
+  const missing = [];
+  faces.forEach((f, i) => {
+    if (!f || !f.painted) return;
+    if ((f.prompt || '').trim()) slots.push(i);
+    else missing.push(i);
+  });
+  let error = null;
+  if (missing.length) {
+    error = `Face ${missing.map(i => i + 1).join(', ')} needs a prompt.`;
+  } else if (!slots.length) {
+    error = 'Paint at least one face first.';
+  }
+  return { slots, missing, error };
+}
+
+// ---------------------------------------------------------------------------
 // MiniMax H3 image2video prompts (VIDEO_PROMPT_WRITING_GUIDE_base_en.md)
 // ---------------------------------------------------------------------------
 

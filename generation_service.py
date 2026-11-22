@@ -11,7 +11,7 @@ import requests
 from werkzeug.utils import secure_filename
 
 from config import (COMFY_GENERATION_DIR, IMAGES_DIR, AUTO_PURGE_SECONDS,
-                    COMFY_WS_PROGRESS, VIDEO_EXTS)
+                    COMFY_WS_PROGRESS, VIDEO_EXTS, FACE_MULTI_INPUTS_DIR)
 from ComfyServer import ComfyServer, JobCancelled, JobRetry
 from comfy_progress import ProgressListener, node_titles_for, node_weights_for
 from catalogue import parse_loras_from_prompt, resolve_workflow_path, server_auto_purge_enabled
@@ -858,6 +858,141 @@ def start_face_detail_super_job(prompt, loras, server_address, server_os,
     t = threading.Thread(
         target=run_face_detail_super,
         args=(job_id, prompt, loras, server_address, server_os, workflow_name, count),
+        kwargs=kwargs,
+        daemon=True,
+    )
+    t.start()
+    return job_id
+
+
+# ---------------------------------------------------------------------------
+# Multi-face face-detail (/api/face-detail-multi)
+# ---------------------------------------------------------------------------
+#
+# The user paints up to four face masks, each with its own prompt. For each
+# face we cut a square (mask bbox + margin) out of the working image, upscale
+# it, run the face-detailer over just that square, then paste the result back
+# with a feathered margin. One final composite is saved; the per-face ComfyUI
+# outputs are intermediates and are deleted. See ADR/multi-face-detail.md.
+
+def run_face_detail_multi(job_id, faces, image_path, margin, server_address,
+                          server_os, workflow_name, **kwargs):
+    """Detail each face in ``faces`` (``[{prompt, loras, mask: Path}]``) over
+    ``image_path`` and emit a single composited image in ``done``."""
+    import face_multi
+    from PIL import Image
+
+    with jobs_lock:
+        channel = jobs[job_id]["channel"]
+        cancel_event = jobs[job_id]["cancel"]
+        jobs[job_id]["status"] = "running"
+
+    def send(msg_type, **kwargs2):
+        channel.send(json.dumps({"type": msg_type, **kwargs2}))
+
+    intermediates = []
+    crops = []
+    final_urls = []
+    try:
+        with Image.open(image_path) as src:
+            working = src.convert("RGB")
+        width, height = working.size
+        plans = []
+        for face in faces:
+            with Image.open(face["mask"]) as m:
+                mask = m.convert("L")
+            if mask.size != working.size:
+                mask = mask.resize(working.size, Image.Resampling.NEAREST)
+            bbox = face_multi.mask_bbox(mask)
+            if bbox is None:
+                continue
+            plans.append((face, bbox, face_multi.square_box(bbox, margin, width, height)))
+        if not plans:
+            raise ValueError("No painted faces to detail")
+
+        total = len(plans)
+        FACE_MULTI_INPUTS_DIR.mkdir(parents=True, exist_ok=True)
+        for i, (face, bbox, box) in enumerate(plans, 1):
+            if cancel_event.is_set():
+                raise JobCancelled()
+            send("progress", message=f"Face {i}/{total}…")
+            crop_path = FACE_MULTI_INPUTS_DIR / f"face_{uuid.uuid4().hex}.png"
+            crops.append(crop_path)
+            face_multi.prepare_crop(working, box).save(crop_path)
+            urls = _run_generation_core(
+                job_id, channel, cancel_event, face["prompt"], face["loras"],
+                server_address, server_os, workflow_name,
+                input_image=crop_path, cleanup_input_image=True, **kwargs,
+            )
+            intermediates.extend(urls)
+            stills = [u for u in urls if not _is_video_url(u)]
+            if not stills:
+                raise RuntimeError(f"Face {i}: the face-detailer returned no image")
+            with Image.open(_gallery_path(stills[0])) as out:
+                processed = out.convert("RGB")
+            face_multi.paste_back(working, processed, box,
+                                  face_multi.feather_alpha(box, bbox))
+
+        name = (f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                f"_facemulti_{uuid.uuid4().hex[:8]}.png")
+        dest = IMAGES_DIR / name
+        working.save(dest)
+        try:
+            st = Path(image_path).stat()
+            os.utime(dest, (st.st_atime, st.st_mtime))
+        except OSError:
+            pass
+        final_urls = [f"/images/{name}"]
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "done", images=final_urls, assets=final_urls)
+        send("done", images=final_urls)
+    except JobCancelled:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "cancelled", images=[], assets=[])
+        send("cancelled", message="Cancelled")
+    except Exception as e:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "error", error=str(e), images=[], assets=[])
+        send("error", message=str(e))
+    finally:
+        for url in intermediates:
+            _discard_gallery_file(url)
+        for path in crops + [face["mask"] for face in faces]:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        channel.close()
+
+
+def start_face_detail_multi_job(faces, image_path, margin, server_address,
+                                server_os, workflow_name, **kwargs):
+    """Create a tracked multi-face face-detail job; return its job_id."""
+    job_id = str(uuid.uuid4())
+    label = " | ".join(f["prompt"] for f in faces)
+    summary = _build_summary(workflow_name, label, "image")
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "channel": _JobChannel(),
+            "images": [],
+            "assets": [],
+            "cancel": threading.Event(),
+            "server": server_address,
+            "prompt_id": None,
+            "kind": "image",
+            "workflow_name": workflow_name,
+            "prompt": label,
+            "summary": summary,
+            "started_at": time.time(),
+            "finished_at": None,
+            "error": None,
+        }
+        _evict_old_jobs_locked()
+
+    t = threading.Thread(
+        target=run_face_detail_multi,
+        args=(job_id, faces, image_path, margin, server_address, server_os, workflow_name),
         kwargs=kwargs,
         daemon=True,
     )

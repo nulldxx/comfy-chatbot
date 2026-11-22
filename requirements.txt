@@ -3,3 +3,4 @@ Werkzeug==2.3.7
 gunicorn==21.2.0
 requests==2.32.3
 websocket-client==1.8.0
+Pillow==11.1.0

@@ -2,6 +2,104 @@ import { escapeHtml, computeDiffBox } from './utils.js';
 import { state } from './state.js';
 import { addMessage } from './dom.js';
 
+// ---------------------------------------------------------------------------
+// Shared brush-editor helpers (mask editor, composite editor, multi-face editor)
+// ---------------------------------------------------------------------------
+
+// Size each canvas's backing store to the image's on-screen box × dpr, with a
+// dpr transform so painting happens in CSS pixels. Returns {cssW, cssH}.
+export function sizeCanvasesToImage(img, canvases, dpr) {
+  const rect = img.getBoundingClientRect();
+  for (const c of canvases) {
+    c.width  = Math.round(rect.width  * dpr);
+    c.height = Math.round(rect.height * dpr);
+    c.style.width  = rect.width  + 'px';
+    c.style.height = rect.height + 'px';
+    c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  return { cssW: rect.width, cssH: rect.height };
+}
+
+// Sweep a thick round-capped line from `last` ({x, y} or null) to (x, y), plus
+// a dot, so fast strokes leave no gaps. Coordinates and radius are CSS px.
+export function brushStroke(ctx, color, radius, last, x, y) {
+  ctx.fillStyle = color;
+  if (last) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = radius * 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// A fixed-position circle that follows the pointer. `setRadius` takes the brush
+// radius in CSS px — the same units the strokes are painted in (the canvases
+// carry a dpr transform), so the circle matches the brush on HiDPI screens.
+export function createBrushCursor(parent) {
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;border-radius:50%;border:2px solid rgba(255,255,255,0.85);box-shadow:0 0 0 1px rgba(0,0,0,0.5);pointer-events:none;transform:translate(-50%,-50%);display:none;z-index:10001';
+  parent.appendChild(el);
+  return {
+    el,
+    setRadius(r) { el.style.width = el.style.height = r * 2 + 'px'; },
+    moveTo(x, y) { el.style.left = x + 'px'; el.style.top = y + 'px'; el.style.display = 'block'; },
+    show(on) { el.style.display = on ? 'block' : 'none'; },
+    remove() { el.remove(); },
+  };
+}
+
+// Turn a painted canvas into a strictly black/white mask at the image's
+// natural size: any painted pixel → white. Returns the mask canvas.
+export function binaryMaskCanvas(paintCanvas, natW, natH) {
+  const src = paintCanvas.getContext('2d').getImageData(0, 0, paintCanvas.width, paintCanvas.height);
+  const binary = new ImageData(paintCanvas.width, paintCanvas.height);
+  for (let i = 0; i < src.data.length; i += 4) {
+    const v = src.data[i + 3] > 0 ? 255 : 0;
+    binary.data[i] = binary.data[i + 1] = binary.data[i + 2] = v;
+    binary.data[i + 3] = 255;
+  }
+  const binaryCanvas = document.createElement('canvas');
+  binaryCanvas.width  = paintCanvas.width;
+  binaryCanvas.height = paintCanvas.height;
+  binaryCanvas.getContext('2d').putImageData(binary, 0, 0);
+
+  const out = document.createElement('canvas');
+  out.width  = natW;
+  out.height = natH;
+  const outCtx = out.getContext('2d');
+  // Nearest-neighbour scaling keeps the mask strictly black/white.
+  outCtx.imageSmoothingEnabled = false;
+  outCtx.drawImage(binaryCanvas, 0, 0, natW, natH);
+  return out;
+}
+
+export function canvasPngB64(canvas) {
+  return canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+}
+
+// True when any pixel of the canvas has been painted.
+export function canvasHasPaint(canvas) {
+  const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 0) return true;
+  return false;
+}
+
+// POST a base64 PNG mask to /api/upload-mask; resolves to its single-use token.
+export function uploadMask(b64) {
+  return fetch('/api/upload-mask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: b64 }),
+  }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error); return d.token; });
+}
+
 // Opens a full-screen mask editor over `imageUrl`. The user paints a translucent
 // yellow mask; on "Apply Inpaint" the mask is exported as a binary PNG, uploaded
 // to the server, and onInpaint() is called. `imgWrap` is the source .img-wrap
@@ -145,16 +243,7 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
 
   function syncCanvasSize() {
     if (!img.naturalWidth) return;
-    const rect = img.getBoundingClientRect();
-    cssW = rect.width;
-    cssH = rect.height;
-    for (const c of [canvas, drawCanvas]) {
-      c.width  = Math.round(rect.width  * dpr);
-      c.height = Math.round(rect.height * dpr);
-      c.style.width  = rect.width  + 'px';
-      c.style.height = rect.height + 'px';
-      c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
+    ({ cssW, cssH } = sizeCanvasesToImage(img, [canvas, drawCanvas], dpr));
     canvas.style.opacity = denoiseSlider.value;
     applyBtn.disabled = false;
   }
@@ -173,15 +262,9 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
   let tool = 'mask';
   let penColor = colorPicker.value;
 
-  const cursorEl = document.createElement('div');
-  cursorEl.style.cssText = 'position:fixed;border-radius:50%;border:2px solid rgba(255,255,255,0.85);box-shadow:0 0 0 1px rgba(0,0,0,0.5);pointer-events:none;transform:translate(-50%,-50%);display:none;z-index:10001';
-  overlay.appendChild(cursorEl);
-
-  function updateCursorSize() {
-    const cssR = brushRadius / dpr;
-    cursorEl.style.width  = cssR * 2 + 'px';
-    cursorEl.style.height = cssR * 2 + 'px';
-  }
+  const cursor = createBrushCursor(overlay);
+  const cursorEl = cursor.el;
+  const updateCursorSize = () => cursor.setRadius(brushRadius);
   updateCursorSize();
   canvas.style.cursor = 'none';
 
@@ -214,22 +297,8 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
   const onResize = () => { cachedRect = null; };
   window.addEventListener('resize', onResize);
 
-  // Sweep a thick round-capped line from the previous point for gap-free strokes.
   function stroke(targetCtx, color, x, y) {
-    targetCtx.fillStyle = color;
-    if (lastX !== null) {
-      targetCtx.strokeStyle = color;
-      targetCtx.lineWidth = brushRadius * 2;
-      targetCtx.lineCap = 'round';
-      targetCtx.lineJoin = 'round';
-      targetCtx.beginPath();
-      targetCtx.moveTo(lastX, lastY);
-      targetCtx.lineTo(x, y);
-      targetCtx.stroke();
-    }
-    targetCtx.beginPath();
-    targetCtx.arc(x, y, brushRadius, 0, Math.PI * 2);
-    targetCtx.fill();
+    brushStroke(targetCtx, color, brushRadius, lastX !== null ? { x: lastX, y: lastY } : null, x, y);
   }
 
   function paint(e) {
@@ -272,7 +341,7 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
     aborted = true;
     window.removeEventListener('resize', onResize);
     document.removeEventListener('keydown', onKey);
-    cursorEl.remove();
+    cursor.remove();
     overlay.remove();
   }
 
@@ -288,33 +357,8 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
     applyBtn.disabled = true;
     applyBtn.textContent = 'Uploading…';
 
-    const src = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const binary = new ImageData(canvas.width, canvas.height);
-    for (let i = 0; i < src.data.length; i += 4) {
-      const v = src.data[i + 3] > 0 ? 255 : 0;
-      binary.data[i] = binary.data[i + 1] = binary.data[i + 2] = v;
-      binary.data[i + 3] = 255;
-    }
-    const binaryCanvas = document.createElement('canvas');
-    binaryCanvas.width  = canvas.width;
-    binaryCanvas.height = canvas.height;
-    binaryCanvas.getContext('2d').putImageData(binary, 0, 0);
-
-    const offscreen = document.createElement('canvas');
-    offscreen.width  = img.naturalWidth;
-    offscreen.height = img.naturalHeight;
-    const offCtx = offscreen.getContext('2d');
-    // Nearest-neighbour scaling keeps the mask strictly black/white.
-    offCtx.imageSmoothingEnabled = false;
-    offCtx.drawImage(binaryCanvas, 0, 0, offscreen.width, offscreen.height);
-
-    const b64 = offscreen.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
-
-    const drawn = drawCtx.getImageData(0, 0, drawCanvas.width, drawCanvas.height).data;
-    let hasDrawing = false;
-    for (let i = 3; i < drawn.length; i += 4) {
-      if (drawn[i] > 0) { hasDrawing = true; break; }
-    }
+    const b64 = canvasPngB64(binaryMaskCanvas(canvas, img.naturalWidth, img.naturalHeight));
+    const hasDrawing = canvasHasPaint(drawCanvas);
 
     function uploadDrawing() {
       if (!hasDrawing) return Promise.resolve(null);
@@ -336,11 +380,7 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
     }
 
     Promise.all([
-      fetch('/api/upload-mask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: b64 }),
-      }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error); return d.token; }),
+      uploadMask(b64),
       uploadDrawing(),
     ])
     .then(([maskToken, drawToken]) => {
@@ -439,15 +479,8 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
 
   function syncCanvasSize() {
     if (!img.naturalWidth) return;
-    const rect = img.getBoundingClientRect();
-    cssW = rect.width;
-    cssH = rect.height;
-    canvas.width  = Math.round(rect.width  * dpr);
-    canvas.height = Math.round(rect.height * dpr);
-    canvas.style.width  = rect.width  + 'px';
-    canvas.style.height = rect.height + 'px';
+    ({ cssW, cssH } = sizeCanvasesToImage(img, [canvas], dpr));
     canvas.style.opacity = '0.6';
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     applyBtn.disabled = false;
   }
 
@@ -462,15 +495,9 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
   let lastX = null, lastY = null;
   let brushRadius = 30;
 
-  const cursorEl = document.createElement('div');
-  cursorEl.style.cssText = 'position:fixed;border-radius:50%;border:2px solid rgba(255,255,255,0.85);box-shadow:0 0 0 1px rgba(0,0,0,0.5);pointer-events:none;transform:translate(-50%,-50%);display:none;z-index:10001';
-  overlay.appendChild(cursorEl);
-
-  function updateCursorSize() {
-    const cssR = brushRadius / dpr;
-    cursorEl.style.width  = cssR * 2 + 'px';
-    cursorEl.style.height = cssR * 2 + 'px';
-  }
+  const cursor = createBrushCursor(overlay);
+  const cursorEl = cursor.el;
+  const updateCursorSize = () => cursor.setRadius(brushRadius);
   updateCursorSize();
   canvas.style.cursor = 'none';
 
@@ -481,20 +508,8 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
     if (!painting || !cachedRect) return;
     const x = e.clientX - cachedRect.left;
     const y = e.clientY - cachedRect.top;
-    ctx.fillStyle = 'rgba(255, 220, 0, 1.0)';
-    if (lastX !== null) {
-      ctx.strokeStyle = 'rgba(255, 220, 0, 1.0)';
-      ctx.lineWidth = brushRadius * 2;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.beginPath();
-      ctx.moveTo(lastX, lastY);
-      ctx.lineTo(x, y);
-      ctx.stroke();
-    }
-    ctx.beginPath();
-    ctx.arc(x, y, brushRadius, 0, Math.PI * 2);
-    ctx.fill();
+    brushStroke(ctx, 'rgba(255, 220, 0, 1.0)', brushRadius,
+                lastX !== null ? { x: lastX, y: lastY } : null, x, y);
     lastX = x; lastY = y;
   }
 
@@ -524,7 +539,7 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
     aborted = true;
     window.removeEventListener('resize', onResize);
     document.removeEventListener('keydown', onKey);
-    cursorEl.remove();
+    cursor.remove();
     overlay.remove();
   }
 
@@ -535,28 +550,10 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
     applyBtn.disabled = true;
     applyBtn.textContent = 'Compositing…';
 
-    const src = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const binary = new ImageData(canvas.width, canvas.height);
-    for (let i = 0; i < src.data.length; i += 4) {
-      const v = src.data[i + 3] > 0 ? 255 : 0;
-      binary.data[i] = binary.data[i + 1] = binary.data[i + 2] = v;
-      binary.data[i + 3] = 255;
-    }
-    const binaryCanvas = document.createElement('canvas');
-    binaryCanvas.width  = canvas.width;
-    binaryCanvas.height = canvas.height;
-    binaryCanvas.getContext('2d').putImageData(binary, 0, 0);
-
     const natW = img.naturalWidth;
     const natH = img.naturalHeight;
 
-    const maskCanvas = document.createElement('canvas');
-    maskCanvas.width  = natW;
-    maskCanvas.height = natH;
-    const maskCtx = maskCanvas.getContext('2d');
-    maskCtx.imageSmoothingEnabled = false;
-    maskCtx.drawImage(binaryCanvas, 0, 0, natW, natH);
-    const maskData = maskCtx.getImageData(0, 0, natW, natH);
+    const maskData = binaryMaskCanvas(canvas, natW, natH).getContext('2d').getImageData(0, 0, natW, natH);
 
     const img2Canvas = document.createElement('canvas');
     img2Canvas.width  = natW;

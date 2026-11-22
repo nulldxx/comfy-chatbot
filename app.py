@@ -41,7 +41,7 @@ from config import (
     COMFY_REMOVAL_DIR, COMFY_REMOVAL_WORKFLOW,
     COMFY_SERVER, COMFY_SERVER_OS,
     COMFY_TEXT2VIDEO_DIR, COMFY_TEXT2VIDEO_WORKFLOW, COMFY_TRAY_PORT,
-    COMFY_UPSCALER_DIR,
+    COMFY_UPSCALER_DIR, FACE_MULTI_MAX_FACES, FACE_MULTI_MAX_MARGIN,
     VIDEO_OPTIMIZATIONS, WORKFLOW_KIND_DIRS,
     COMFY_UPSCALER_WORKFLOW, COMFY_WORKFLOW, COMFY_WORKFLOW_DIR,
     FSCK_TIMEOUT, IDLE_TIMEOUT_SECONDS,
@@ -56,7 +56,7 @@ from generation_service import (
     BATCH_STEP_KINDS,
     rename_and_retarget_session, run_generation, start_background_job,
     start_batch_run_job,
-    start_face_detail_super_job, start_generation_job, start_sequence_run_job,
+    start_face_detail_multi_job, start_face_detail_super_job, start_generation_job, start_sequence_run_job,
 )
 from image_store import (
     MAX_MASK_BYTES, output_storage_error,
@@ -1263,6 +1263,88 @@ def api_face_detail():
         prompt, loras, server_address, server_os, workflow_name,
         workflow_dir=COMFY_FACEDETAILER_DIR, input_image=image_path,
         preserve_mtime_from=safe, denoise=denoise,
+    )
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/face-detail-multi", methods=["POST"])
+@login_required
+def api_face_detail_multi():
+    """Face-detail up to four user-masked faces, each with its own prompt.
+
+    Body: ``{image, workflow?, denoise?, margin?, faces: [{mask, prompt}],
+    server?, server_os?}`` where each ``mask`` is a token from
+    /api/upload-mask. The job crops a square around each mask, details it with
+    the face-detailer workflow, and composites the results into one image.
+    See ADR/multi-face-detail.md.
+    """
+    data = request.get_json(force=True) or {}
+    faces_in = data.get("faces")
+    if not isinstance(faces_in, list) or not faces_in:
+        return jsonify({"error": "faces is required"}), 400
+    if len(faces_in) > FACE_MULTI_MAX_FACES:
+        return jsonify({"error": f"At most {FACE_MULTI_MAX_FACES} faces"}), 400
+
+    parsed = []
+    for i, face in enumerate(faces_in, 1):
+        if not isinstance(face, dict):
+            return jsonify({"error": f"Face {i} is malformed"}), 400
+        raw_prompt = (face.get("prompt") or "").strip()
+        prompt, loras = parse_loras_from_prompt(raw_prompt)
+        if not prompt:
+            return jsonify({"error": f"Face {i} needs a prompt"}), 400
+        token = (face.get("mask") or "").strip()
+        if not token:
+            return jsonify({"error": f"Face {i} has no mask"}), 400
+        parsed.append({"prompt": prompt, "loras": loras, "token": token})
+
+    margin = data.get("margin", 20)
+    try:
+        margin = int(margin)
+    except (TypeError, ValueError):
+        return jsonify({"error": "margin must be an integer"}), 400
+    if margin < 0 or margin > FACE_MULTI_MAX_MARGIN:
+        return jsonify({"error": f"margin must be between 0 and {FACE_MULTI_MAX_MARGIN}"}), 400
+
+    image_url = (data.get("image") or "").strip()
+    if not image_url:
+        return jsonify({"error": "image is required"}), 400
+    safe, image_path, err = resolve_input_image(image_url)
+    if err:
+        return err
+
+    workflow_name, err = resolve_workflow(
+        data.get("workflow") or COMFY_FACEDETAILER_WORKFLOW,
+        list_facedetailer_workflows(), "face-detailer",
+    )
+    if err:
+        return err
+
+    denoise, err = _parse_denoise(data)
+    if err:
+        return err
+
+    err = output_storage_error()
+    if err:
+        return err
+
+    # Mask tokens are single-use, so they are resolved last: a request rejected
+    # above can be fixed and resent with the same tokens.
+    resolved = []
+    for i, face in enumerate(parsed, 1):
+        mask_path, err = resolve_mask(face["token"], session.get("user"))
+        if err:
+            for done in resolved:
+                done["mask"].unlink(missing_ok=True)
+            return err
+        resolved.append({"prompt": face["prompt"], "loras": face["loras"], "mask": mask_path})
+
+    job_id = start_face_detail_multi_job(
+        resolved, image_path, margin,
+        data.get("server") or COMFY_SERVER,
+        data.get("server_os") or COMFY_SERVER_OS,
+        workflow_name,
+        workflow_dir=COMFY_FACEDETAILER_DIR, denoise=denoise,
     )
     return jsonify({"job_id": job_id})
 

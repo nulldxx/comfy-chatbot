@@ -3,6 +3,7 @@ import {
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
   buildVideoPrompt, i2vTooltip, normalizeVideoMeta, videoPromptOpts, COMFY_URL_DND_TYPE, videoOptsPayload,
   progressPercent, progressCaption, runStagePrefix, videoStoryNext, shouldAutoStoryNext,
+  normalizeFaceMultiPrompts, clampFaceMultiMargin,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
 import {
@@ -16,6 +17,7 @@ import {
   renderSlashAc, getAcState, setAcFocused, tabCompleteSlashAc,
 } from './autocomplete.js';
 import { openMaskEditor, buildComparisonSlider, buildFaceSuperTiles, openCropEditor } from './editors.js';
+import { openMultiFaceEditor } from './facemulti.js';
 import { makeCommandHandler } from './commands.js';
 import { initSidebar } from './sidebar.js';
 import { initMediaMenu } from './mediamenu.js';
@@ -713,7 +715,9 @@ function openVideoMetaEditor(url, wrap) {
 // Image2image pre-run dialog
 // ---------------------------------------------------------------------------
 
-function showI2IDialog(wrap, defaultPrompt, defaultDenoise, titleText = 'Image to image') {
+// `extraAction` ({label, title}) adds a third button; clicking it resolves with
+// `extra: true` so the caller can hand the prompt/denoise to another screen.
+function showI2IDialog(wrap, defaultPrompt, defaultDenoise, titleText = 'Image to image', { extraAction = null } = {}) {
   return new Promise((resolve, reject) => {
     const overlay = document.createElement('div');
     overlay.className = 'img-i2i-dialog';
@@ -780,6 +784,18 @@ function showI2IDialog(wrap, defaultPrompt, defaultDenoise, titleText = 'Image t
       if (e.key === 'Escape') { dismiss(); reject(); }
     });
 
+    if (extraAction) {
+      const extraBtn = document.createElement('button');
+      extraBtn.className = 'img-i2i-dialog-btn img-i2i-dialog-btn-extra';
+      extraBtn.type = 'button';
+      extraBtn.textContent = extraAction.label;
+      if (extraAction.title) extraBtn.title = extraAction.title;
+      extraBtn.addEventListener('click', () => {
+        dismiss();
+        resolve({ prompt: promptEl.value.trim(), denoise: parseFloat(slider.value), extra: true });
+      });
+      actions.append(extraBtn);
+    }
     actions.append(cancelBtn, okBtn);
     card.append(title, promptLabel, promptEl, denoiseLabel, denoiseRow, actions);
     overlay.appendChild(card);
@@ -880,6 +896,21 @@ function runFaceDetail(prompt, image, imgWrap, denoiseOverride) {
   sendBtn.disabled = true;
   return runGeneration(prompt, '', null, {
     face: { image, workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW, denoiseOverride },
+    sliderReplace: imgWrap || null,
+  })
+    .finally(() => { sendBtn.disabled = false; });
+}
+
+// Multi-face face-detail: `faces` is [{mask: token, prompt}] from the 👥
+// editor. The server crops, details and recomposites each face, returning one
+// image, which lands in the same before/after slider as a plain face-detail.
+function runFaceDetailMulti(faces, image, imgWrap, denoise, margin) {
+  state.iterationsFromSequence = false;
+  sendBtn.disabled = true;
+  const summary = faces.map((f, i) => `${i + 1}: ${f.prompt}`).join(' · ');
+  addMessage('user', `Multi-face detail: ${escapeHtml(summary)}`, null);
+  return runGeneration(summary, '', null, {
+    faceMulti: { image, workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW, denoise, margin, faces },
     sliderReplace: imgWrap || null,
   })
     .finally(() => { sendBtn.disabled = false; });
@@ -1236,8 +1267,20 @@ function appendChatImage(container, url) {
       return;
     }
     face.disabled = true;
-    showI2IDialog(wrap, prompt, state.currentDenoise.face, 'Face detail')
-      .then(({ prompt: dlgPrompt, denoise }) => {
+    showI2IDialog(wrap, prompt, state.currentDenoise.face, 'Face detail', {
+      extraAction: { label: '👥 Multiple faces…', title: 'Paint up to 4 faces and give each its own prompt' },
+    })
+      .then(({ prompt: dlgPrompt, denoise, extra }) => {
+        if (extra) {
+          openMultiFaceEditor(url, {
+            defaultPrompt: dlgPrompt,
+            denoise,
+            onApply: ({ faces, margin, denoise: d }) => runFaceDetailMulti(faces, url, wrap, d, margin),
+            onClose: () => { face.disabled = false; },
+            onSettingsChange: scheduleRecordSave,
+          });
+          return;
+        }
         const run = state.faceSuperN > 1
           ? runFaceDetailSuper(dlgPrompt, url, wrap, denoise)
           : runFaceDetail(dlgPrompt, url, wrap, denoise);
@@ -1557,6 +1600,8 @@ function doRecordSave() {
         references: cloneReferences(state.references),
         faceDetailReplacements: state.faceDetailReplacements.slice(),
         faceSuperN: state.faceSuperN,
+        faceMultiPrompts: state.faceMultiPrompts.slice(),
+        faceMultiMargin: state.faceMultiMargin,
         autoFaceDetail: state.autoFaceDetail,
         autoVideoSequence: state.autoVideoSequence,
         videoStoryAuto: state.videoStoryAuto,
@@ -1631,6 +1676,10 @@ function restoreSession(data) {
   else if (s.refImageUrl) state.references = cloneReferences({ images: [s.refImageUrl] });
   if (s.faceDetailReplacements  !== undefined) state.faceDetailReplacements  = s.faceDetailReplacements;
   state.faceSuperN = (s.faceSuperN !== undefined) ? s.faceSuperN : 1;
+  // Always reset first, so an older chat with no key doesn't inherit the
+  // previous chat's per-face prompts.
+  state.faceMultiPrompts = normalizeFaceMultiPrompts(s.faceMultiPrompts);
+  state.faceMultiMargin = clampFaceMultiMargin(s.faceMultiMargin);
   if (s.autoFaceDetail          !== undefined) state.autoFaceDetail          = s.autoFaceDetail;
   // Default OFF, like t2vMode: a mode that queues a video per shot mustn't leak in
   // from whatever the previous chat had.
@@ -2351,6 +2400,7 @@ function reattachLiveSequenceRun(recordingName) {
 function runGeneration(raw, label, workflowOverride, opts = {}) {
   return new Promise(resolve => {
   const face = opts.face || null;
+  const faceMulti = opts.faceMulti || null;
   const upscale = opts.upscale || null;
   const image2image = opts.image2image || null;
   const image2video = opts.image2video || null;
@@ -2368,8 +2418,9 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   // text2video counts as a "job" despite having no source image: that keeps the
   // still-image params (width/height/steps/extraPrompt) and the auto-face-detail
   // pass off a video run, exactly as for image2video.
-  const job = face || upscale || image2image || image2video || text2video || inpaint || removal;
+  const job = face || faceMulti || upscale || image2image || image2video || text2video || inpaint || removal;
   const endpoint = face ? '/api/face-detail'
+                 : faceMulti ? '/api/face-detail-multi'
                  : upscale ? '/api/upscale'
                  : image2image ? '/api/image2image'
                  : image2video ? '/api/image2video'
@@ -2428,6 +2479,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       ...(removal ? { mask: removal.mask } : {}),
       ...(face        ? { denoise: face.denoiseOverride != null ? face.denoiseOverride : state.currentDenoise.face } : {}),
       ...(face && face.count ? { count: face.count } : {}),
+      ...(faceMulti ? { denoise: faceMulti.denoise, margin: faceMulti.margin, faces: faceMulti.faces } : {}),
       ...(upscale     ? { denoise: upscale.denoiseOverride != null ? upscale.denoiseOverride : state.currentDenoise.upscale } : {}),
       ...(image2image ? { denoise: image2image.denoiseOverride != null ? image2image.denoiseOverride : state.currentDenoise.image2image } : {}),
       ...(image2video || text2video ? { duration: state.currentVideoSettings.duration, frames: state.currentVideoSettings.frames, fps: state.currentVideoSettings.fps, video_width: state.currentVideoSettings.width, video_height: state.currentVideoSettings.height } : {}),
@@ -2555,7 +2607,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
             appendChatImage(tmp, oldUrl);
             sliderEl.replaceWith(tmp.firstChild);
           };
-          const onComposite = face ? (compositeUrl, sliderEl) => {
+          const onComposite = (face || faceMulti) ? (compositeUrl, sliderEl) => {
             deleteImageFile(oldUrl).catch(() => {});
             deleteImageFile(newUrl).catch(() => {});
             const idx = state.sessionImages.indexOf(oldUrl);

@@ -147,6 +147,12 @@ _best_effort_mkdir(MASKS_DIR)
 # galleries; consumed and deleted once the job uploads it to ComfyUI.
 INPAINT_INPUTS_DIR = IMAGES_DIR / '.inpaint-inputs'
 _best_effort_mkdir(INPAINT_INPUTS_DIR)
+# Per-face square crops for /api/face-detail-multi: written by the job, uploaded
+# to ComfyUI as <INPUT_IMAGE>, then deleted. Dot-prefixed so galleries skip it.
+FACE_MULTI_INPUTS_DIR = IMAGES_DIR / '.face-multi-inputs'
+# Most faces one /api/face-detail-multi request may carry, and its margin range.
+FACE_MULTI_MAX_FACES = 4
+FACE_MULTI_MAX_MARGIN = 200
 # Persistent reference assets (the /references table): desktop-uploaded reference
 # videos and audio clips that aren't gallery media. Kept dot-prefixed so they never
 # surface in review grids/slideshows/bulk-delete, but — unlike masks/inpaint inputs —

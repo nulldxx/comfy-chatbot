@@ -172,6 +172,11 @@ export const state = {
 
   // Prompt overrides
   lastFaceDetailPrompt:        null,
+  // Multi-face face-detail (👥): one remembered prompt per face slot (null =
+  // start from the face-detail dialog's prompt) and the crop margin in px.
+  // Per chat: saved with the session, in /settings-save, reset by newChat.
+  faceMultiPrompts:            [null, null, null, null],
+  faceMultiMargin:             20,
 
   // Metadata of the most recent image2video launch ({prompt, action, audio}), used by
   // the metadata editor's Clone button. null = no video generated yet in this chat.

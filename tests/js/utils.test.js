@@ -9,7 +9,9 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          fmtUptime, runStagePrefix, buildI2vSteps, buildFaceDetailSteps,
          renderMetadataTable, fmtBytes, expandWorkflowVariants,
          videoClipSeconds, videoStoryCount, videoStoryNext, shouldAutoStoryNext, VIDEO_STORY_DEFAULT_COUNT,
-         videoStoryInsert, videoStoryDelete, videoStorySetCursor } from '../../static/js/utils.js';
+         videoStoryInsert, videoStoryDelete, videoStorySetCursor,
+         faceMultiPayload, normalizeFaceMultiPrompts, clampFaceMultiMargin,
+         FACE_MULTI_DEFAULT_MARGIN, FACE_MULTI_COLOURS } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -1430,5 +1432,49 @@ describe('shouldAutoStoryNext', () => {
   });
   test('no story, no press', () => {
     expect(shouldAutoStoryNext({ ...base, story: null })).toBe(false);
+  });
+});
+
+describe('multi-face face-detail helpers', () => {
+  test('faceMultiPayload sends only painted, prompted slots', () => {
+    const r = faceMultiPayload([
+      { painted: true, prompt: 'alice <lora:a:1>' },
+      { painted: false, prompt: 'ignored' },
+      { painted: true, prompt: 'bob' },
+      { painted: false, prompt: '' },
+    ]);
+    expect(r).toEqual({ slots: [0, 2], missing: [], error: null });
+  });
+
+  test('faceMultiPayload flags painted faces with no prompt', () => {
+    const r = faceMultiPayload([
+      { painted: true, prompt: '  ' },
+      { painted: true, prompt: 'x' },
+      { painted: true, prompt: '' },
+      { painted: false, prompt: '' },
+    ]);
+    expect(r.missing).toEqual([0, 2]);
+    expect(r.error).toBe('Face 1, 3 needs a prompt.');
+  });
+
+  test('faceMultiPayload needs at least one painted face', () => {
+    expect(faceMultiPayload([{ painted: false, prompt: 'p' }]).error).toMatch(/Paint at least one/);
+  });
+
+  test('normalizeFaceMultiPrompts always yields four string-or-null slots', () => {
+    expect(normalizeFaceMultiPrompts(undefined)).toEqual([null, null, null, null]);
+    expect(normalizeFaceMultiPrompts([' a ', '', 3])).toEqual(['a', null, null, null]);
+    expect(normalizeFaceMultiPrompts(['a', 'b', 'c', 'd', 'e'])).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  test('clampFaceMultiMargin clamps and defaults', () => {
+    expect(clampFaceMultiMargin(undefined)).toBe(FACE_MULTI_DEFAULT_MARGIN);
+    expect(clampFaceMultiMargin('35')).toBe(35);
+    expect(clampFaceMultiMargin(-4)).toBe(0);
+    expect(clampFaceMultiMargin(9999)).toBe(100);
+  });
+
+  test('one overlay colour per slot', () => {
+    expect(FACE_MULTI_COLOURS).toHaveLength(4);
   });
 });

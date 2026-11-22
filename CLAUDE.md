@@ -327,6 +327,38 @@ ever offer the *most recent* seed, which is rarely the image you are looking at.
   fire `contextmenu`, iOS Safari does not, and a synthetic touch-hold would collide with
   the pinch/swipe handlers in `lightbox.js` and the drag-sort in `grids.js`.
 
+### Multi-face face-detail (👥, `facemulti.js`, `face_multi.py`)
+
+The 👤 Face detail dialog has a **👥 Multiple faces…** button (`showI2IDialog`'s
+`extraAction`). It opens an editor where up to 4 faces are painted on coloured layers
+(1 red, 2 green, 3 blue, 4 yellow; keys `1`–`4`), each with its own prompt. On Apply,
+each painted face's mask goes to `/api/upload-mask`, and the tokens are posted to
+`POST /api/face-detail-multi`. The result appears in the usual comparison slider. See
+`ADR/multi-face-detail.md`.
+
+- **Server-side, using Pillow** (the first server-side image library;
+  `requirements.txt`, and the Dockerfile `COPY face_multi.py`). For each face,
+  `run_face_detail_multi` (`generation_service.py`):
+  1. takes a square around the mask: `max(w,h) + 2×margin`, capped at the image's
+     shorter side and shifted, not shrunk, at an edge;
+  2. upscales it to 1024 if smaller;
+  3. runs the face-detailer over the square, with that face's prompt and LoRAs;
+  4. scales the result back down and pastes it on with an alpha that ramps across
+     the margin band (`feather_alpha`; margin 0 gives a hard paste).
+- **One output image.** The per-face ComfyUI outputs, the crops
+  (`FACE_MULTI_INPUTS_DIR`, `.face-multi-inputs/`) and the masks are always deleted.
+  No seed is recorded for the composite.
+- **Mask tokens are resolved last** in the route, so a 400 doesn't use them up.
+- **Per-chat memory**: `state.faceMultiPrompts` (4 × string|null) and
+  `state.faceMultiMargin` (default 20, 0–100 in the UI, 0–200 on the server). Both are
+  in the session save/restore (always normalised on restore), the `/settings-save`
+  stack, `newChat` and `/settings`. *Reset* in the editor clears the masks and the
+  remembered prompts.
+- **Shared brush code** now lives in `editors.js`: `sizeCanvasesToImage`,
+  `brushStroke`, `createBrushCursor`, `binaryMaskCanvas`, `canvasHasPaint` and
+  `uploadMask`. All three brush editors use it. A fourth should too, rather than
+  copying it.
+
 ### Privacy mode (`/privacy`, `privacy.js`)
 
 `/privacy` toggles a `privacy-mode` class on `<body>`; CSS in `chat.css` then covers every

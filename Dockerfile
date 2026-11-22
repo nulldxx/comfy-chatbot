@@ -37,6 +37,7 @@ COPY comfy_progress.py .
 COPY ComfyServer.py .
 COPY config.py .
 COPY crypto_key.py .
+COPY face_multi.py .
 COPY generation_service.py .
 COPY grok.py .
 COPY gunicorn.conf.py .

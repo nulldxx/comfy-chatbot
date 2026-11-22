@@ -43,6 +43,13 @@ try:
 except ImportError as e:
     print(f"❌ websocket-client import failed: {e}")
 
+try:
+    import PIL
+    from PIL import Image  # noqa: F401
+    print(f"✅ Pillow import successful (version: {PIL.__version__})")
+except ImportError as e:
+    print(f"❌ Pillow import failed: {e}")
+
 print("\n🔍 Summary:")
 print("All imports should work for both local development and Docker deployment")
 print("requests is required for Docker health checks")
