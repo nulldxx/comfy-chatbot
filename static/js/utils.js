@@ -378,9 +378,9 @@ export const CHARACTER_SHEET_PANELS = [
   { key: 'front',    label: 'Full body',                   prompt: 'The person, full body view facing forwards, white background' },
   { key: 'side',     label: 'Side view',                   prompt: 'The person, full body profile view, white background' },
   { key: 'rear',     label: 'Rear view',                   prompt: 'The person, full body rear view, white background' },
-  { key: 'neutral',  label: 'Facial expression: neutral',  prompt: 'The person, with a neutral facial expression' },
-  { key: 'smile',    label: 'Facial expression: smiling',  prompt: 'The person, with a smiling facial expression' },
-  { key: 'shocked',  label: 'Facial expression: shocked',  prompt: 'The person, with a shocked facial expression' },
+  { key: 'neutral',  label: 'Facial expression: neutral',  prompt: 'The person, with a neutral facial expression, white background, face close-up' },
+  { key: 'smile',    label: 'Facial expression: smiling',  prompt: 'The person, with a smiling facial expression, white background, face close-up' },
+  { key: 'shocked',  label: 'Facial expression: shocked',  prompt: 'The person, with a shocked facial expression, white background, face close-up' },
 ];
 
 export function defaultCharacterSheetPrompts() {
