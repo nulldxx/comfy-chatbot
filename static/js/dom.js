@@ -8,7 +8,7 @@ export const slashAcEl  = document.getElementById('slash-ac');
 
 export function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
-export function addMessage(role, contentHtml, rawText) {
+export function addMessage(role, contentHtml, rawText, { scroll = true } = {}) {
   const wrap   = document.createElement('div');
   wrap.className = `message ${role}`;
   const avatar = document.createElement('div');
@@ -37,7 +37,10 @@ export function addMessage(role, contentHtml, rawText) {
   wrap.appendChild(avatar);
   wrap.appendChild(bubble);
   messagesEl.appendChild(wrap);
-  scrollBottom();
+  // Callers that relocate the bubble next to an image (in-place jobs) pass
+  // scroll:false: #messages is scroll-behavior:smooth, so a scroll to the
+  // bottom here would race their own scrollIntoView and could win.
+  if (scroll) scrollBottom();
   return bubble;
 }
 

@@ -908,7 +908,7 @@ function runFaceDetailMulti(faces, image, imgWrap, denoise, margin) {
   state.iterationsFromSequence = false;
   sendBtn.disabled = true;
   const summary = faces.map((f, i) => `${i + 1}: ${f.prompt}`).join(' · ');
-  addMessage('user', `Multi-face detail: ${escapeHtml(summary)}`, null);
+  addMessage('user', `Multi-face detail: ${escapeHtml(summary)}`, null, { scroll: !imgWrap });
   return runGeneration(summary, '', null, {
     faceMulti: { image, workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW, denoise, margin, faces },
     sliderReplace: imgWrap || null,
@@ -2433,7 +2433,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
     <div class="dots"><span></span><span></span><span></span></div>
     <div class="progress-bar-wrap"><div class="progress-bar"></div></div>
     <div class="progress-caption"></div>
-  `);
+  `, null, { scroll: !(inPlaceWrap && inPlaceWrap.parentNode) });
 
   const statusLine = botBubble.querySelector('#status-line');
   const dotsEl     = botBubble.querySelector('.dots');
