@@ -39,7 +39,7 @@ export function renderArchiveBrowser(bubble) {
   function fail(msg) {
     clearBubble(bubble);
     const err = document.createElement('div');
-    err.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(msg)}</span>`;
+    err.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(msg)}</span>`;
     bubble.appendChild(err);
     scrollBottom();
   }
@@ -120,7 +120,7 @@ export function renderArchiveBrowser(bubble) {
     if (data.parent !== null) {
       const upBtn = document.createElement('button');
       upBtn.className = 'sel-btn arch-action';
-      upBtn.innerHTML = '<span style="color:#64748b">&lsaquo;</span> Up';
+      upBtn.innerHTML = '<span style="color:var(--g-600)">&lsaquo;</span> Up';
       upBtn.addEventListener('click', () => load(archiveParentPath(cwd) || ''));
       bar.appendChild(upBtn);
     }
@@ -158,8 +158,8 @@ export function renderArchiveBrowser(bubble) {
         const btn = document.createElement('button');
         btn.className = 'sel-btn';
         const count = dir.count === 1 ? '1 item' : `${dir.count} items`;
-        btn.innerHTML = `&#128193; <strong style="color:#cbd5e1">${escapeHtml(dir.name)}</strong> `
-          + `<span style="color:#475569">— ${count}</span>`;
+        btn.innerHTML = `&#128193; <strong style="color:var(--g-300)">${escapeHtml(dir.name)}</strong> `
+          + `<span style="color:var(--g-700)">— ${count}</span>`;
         btn.addEventListener('click', () => load(dir.path));
         list.appendChild(btn);
       });

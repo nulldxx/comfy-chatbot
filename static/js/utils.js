@@ -507,7 +507,7 @@ export function expandWorkflowVariants(workflows, variantsByWf) {
 export function workflowLabelHtml(name) {
   const { name: base, variant } = splitWorkflowVariant(name);
   const model = variant
-    ? ` <span style="color:#64748b;font-size:0.85em">${WORKFLOW_VARIANT_SEP} ${escapeHtml(variant)}</span>`
+    ? ` <span style="color:var(--g-600);font-size:0.85em">${WORKFLOW_VARIANT_SEP} ${escapeHtml(variant)}</span>`
     : '';
   return `${escapeHtml(base)}${model}`;
 }

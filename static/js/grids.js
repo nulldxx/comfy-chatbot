@@ -238,7 +238,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
       if (face.disabled || sendBtn.disabled) return;
       const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]), state.faceDetailReplacements);
       if (!prompt) {
-        addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
         return;
       }
       face.disabled = true;
@@ -271,7 +271,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
       } else {
         const orig = state.imagePrompts[url];
         if (!orig) {
-          addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
+          addMessage('bot', '<span style="color:var(--danger)">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
           return;
         }
         prompt = applyReplacements(orig, state.image2imageReplacements);
@@ -316,7 +316,7 @@ export function renderReviewGrid(bubble, urls, { runFaceDetail, runUpscale, runI
         const orig = state.imagePrompts[url];
         const meta = state.imageVideoMeta[url];
         if (!orig && !normalizeVideoMeta(meta).description) {
-          addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
+          addMessage('bot', '<span style="color:var(--danger)">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
           return;
         }
         const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';

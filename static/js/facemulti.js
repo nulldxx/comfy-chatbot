@@ -248,7 +248,7 @@ export function openMultiFaceEditor(imageUrl, { defaultPrompt, denoise, onApply,
         if (aborted) return;
         applyBtn.disabled = false;
         applyBtn.textContent = 'Apply Face Detail';
-        addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
+        addMessage('bot', `<span style="color:var(--danger)">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
       });
   });
 

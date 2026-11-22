@@ -36,11 +36,11 @@ export function renderVideoStoryTable(bubble) {
   const summary = document.createElement('div');
   header.appendChild(summary);
   const master = document.createElement('div');
-  master.style.cssText = 'color:#94a3b8;font-size:0.85rem;margin-top:2px';
+  master.style.cssText = 'color:var(--g-400);font-size:0.85rem;margin-top:2px';
   master.textContent = story.master || '';
   header.appendChild(master);
   const help = document.createElement('div');
-  help.style.cssText = 'color:#64748b;font-size:0.8rem;margin-top:4px';
+  help.style.cssText = 'color:var(--g-600);font-size:0.8rem;margin-top:4px';
   help.textContent = 'Edit any cell. Click a row to make it the current shot (click it again to clear). ' +
     '📋 copies a row for the metadata editor\'s Clone button and makes it current; ⏭ on a video cuts its ' +
     'last frame and starts the shot after the current one. Insert adds a blank shot after the current one; ' +

@@ -40,7 +40,7 @@ fetch('/api/loras')
       label:    entry.name.split('/').pop().replace(/\.safetensors$/i, ''),
     }));
     if (data && data.error) {
-      addMessage('bot', `<span style="color:#f87171">⚠ LoRA catalogue: ${escapeHtml(data.error)}</span>`);
+      addMessage('bot', `<span style="color:var(--danger)">⚠ LoRA catalogue: ${escapeHtml(data.error)}</span>`);
     }
   })
   .catch(() => {});
@@ -397,7 +397,7 @@ function importDroppedImage(file) {
       scrollBottom();
     })
     .catch(err => {
-      bubble.innerHTML = `<span style="color:#f87171">⚠ Could not import image: ${escapeHtml(err.message)}</span>`;
+      bubble.innerHTML = `<span style="color:var(--danger)">⚠ Could not import image: ${escapeHtml(err.message)}</span>`;
     });
 }
 
@@ -415,7 +415,7 @@ function importSettingsFile(file) {
       if (data.error) throw new Error(data.error);
       const det = data.detected || {};
       if (det.kind === 'unknown' || !det.kind) {
-        bubble.innerHTML = `<span style="color:#f87171">⚠ <code>${escapeHtml(file.name)}</code> isn't a recognised settings backup.</span>`;
+        bubble.innerHTML = `<span style="color:var(--danger)">⚠ <code>${escapeHtml(file.name)}</code> isn't a recognised settings backup.</span>`;
         scrollBottom();
         return;
       }
@@ -450,17 +450,17 @@ function importSettingsFile(file) {
             const needsReload = kind === 'backup' || kind === 'servers' || kind === 'session';
             applyBubble.innerHTML =
               `✓ Restored ${escapeHtml(parts.join(', ') || 'settings')}.`
-              + (needsReload ? '<br><span style="color:#94a3b8;font-size:0.85rem">Reload the page to pick up restored servers, and use <code>/chats</code> for restored chats.</span>' : '');
+              + (needsReload ? '<br><span style="color:var(--g-400);font-size:0.85rem">Reload the page to pick up restored servers, and use <code>/chats</code> for restored chats.</span>' : '');
             scrollBottom();
           })
           .catch(err => {
-            applyBubble.innerHTML = `<span style="color:#f87171">⚠ Restore failed: ${escapeHtml(err.message)}</span>`;
+            applyBubble.innerHTML = `<span style="color:var(--danger)">⚠ Restore failed: ${escapeHtml(err.message)}</span>`;
             scrollBottom();
           });
       };
     })
     .catch(err => {
-      bubble.innerHTML = `<span style="color:#f87171">⚠ Could not read settings file: ${escapeHtml(err.message)}</span>`;
+      bubble.innerHTML = `<span style="color:var(--danger)">⚠ Could not read settings file: ${escapeHtml(err.message)}</span>`;
       scrollBottom();
     });
 }
@@ -485,7 +485,7 @@ function extractLastFrame(url) {
       return data.url;
     })
     .catch(err => {
-      bubble.innerHTML = `<span style="color:#f87171">⚠ Could not cut last frame: ${escapeHtml(err.message)}</span>`;
+      bubble.innerHTML = `<span style="color:var(--danger)">⚠ Could not cut last frame: ${escapeHtml(err.message)}</span>`;
       return null;
     });
 }
@@ -520,7 +520,7 @@ document.addEventListener('video-story-changed', () => {
 
 async function runStoryNext(videoUrl, btn) {
   if (sendBtn.disabled) {
-    addMessage('bot', '<span style="color:#f87171">Busy — wait for the current generation to finish.</span>');
+    addMessage('bot', '<span style="color:var(--danger)">Busy — wait for the current generation to finish.</span>');
     scrollBottom();
     return;
   }
@@ -565,15 +565,15 @@ function openVideoMetaEditor(url, wrap) {
 
   const mkRow = (label, value, placeholder, multiline) => {
     const row = document.createElement('div');
-    row.style.cssText = `display:flex;${multiline ? 'align-items:flex-start' : 'align-items:center'};gap:8px;font-size:0.85rem;color:#cbd5e1`;
+    row.style.cssText = `display:flex;${multiline ? 'align-items:flex-start' : 'align-items:center'};gap:8px;font-size:0.85rem;color:var(--g-300)`;
     const lbl = document.createElement('span');
     lbl.textContent = label + ':';
-    lbl.style.cssText = `min-width:84px;color:#94a3b8${multiline ? ';padding-top:4px' : ''}`;
+    lbl.style.cssText = `min-width:84px;color:var(--g-400)${multiline ? ';padding-top:4px' : ''}`;
     const input = document.createElement(multiline ? 'textarea' : 'input');
     if (!multiline) input.type = 'text';
     input.value = value || '';
     input.placeholder = placeholder;
-    input.style.cssText = `flex:1;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:4px 6px;font-size:0.85rem${multiline ? ';resize:vertical;min-height:48px;font-family:inherit' : ''}`;
+    input.style.cssText = `flex:1;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);padding:4px 6px;font-size:0.85rem${multiline ? ';resize:vertical;min-height:48px;font-family:inherit' : ''}`;
     row.appendChild(lbl); row.appendChild(input);
     box.appendChild(row);
     return input;
@@ -585,7 +585,7 @@ function openVideoMetaEditor(url, wrap) {
   // for the video. Still editable — the prompt also drives re-generation and face-detail.
   const promptNote = document.createElement('div');
   promptNote.textContent = 'Not used for the video — the Description below replaces it. Clear the Description to fall back to this prompt.';
-  promptNote.style.cssText = 'margin:-4px 0 0 92px;font-size:0.75rem;color:#64748b;font-style:italic';
+  promptNote.style.cssText = 'margin:-4px 0 0 92px;font-size:0.75rem;color:var(--g-600);font-style:italic';
   box.appendChild(promptNote);
   const descriptionInput = mkRow('Description', meta.description, 'what happens next — action, reaction, speech as (S1) says: <d>[English] …</d>', true);
   const soundscapeInput  = mkRow('Soundscape',  meta.soundscape,  'ambient & physical sound (no dialogue or music)', true);
@@ -658,22 +658,22 @@ function openVideoMetaEditor(url, wrap) {
   startBtn.textContent = 'Start';
   startBtn.title = 'Apply the metadata and start the image2video job';
   startBtn.className = 'sel-btn';
-  startBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#a78bfa';
+  startBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:var(--neon)';
   const clearBtn = document.createElement('button');
   clearBtn.textContent = 'Clear';
   clearBtn.className = 'sel-btn';
-  clearBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+  clearBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:var(--g-400)';
 
   applyBtn.addEventListener('click', () => {
     const { prompt, description, soundscape, music } = commitMeta();
-    const shown = v => `<strong style="color:#a78bfa">${escapeHtml(v || '—')}</strong>`;
+    const shown = v => `<strong style="color:var(--neon)">${escapeHtml(v || '—')}</strong>`;
     addMessage('bot', `Metadata set — Prompt ${shown(prompt)} · Description ${shown(description)} · Soundscape ${shown(soundscape)} · Music ${shown(music)}.`);
     scrollBottom();
   });
   startBtn.addEventListener('click', () => {
     if (startBtn.disabled) return;
     if (sendBtn.disabled) {
-      addMessage('bot', '<span style="color:#f87171">Busy — wait for the current generation to finish.</span>');
+      addMessage('bot', '<span style="color:var(--danger)">Busy — wait for the current generation to finish.</span>');
       scrollBottom();
       return;
     }
@@ -703,7 +703,7 @@ function openVideoMetaEditor(url, wrap) {
   const header = document.createElement('div');
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding-right:26px';
   const title = document.createElement('div');
-  title.innerHTML = '<strong>Edit metadata</strong> <span style="color:#475569">(still prompt · image2video description / sound)</span>';
+  title.innerHTML = '<strong>Edit metadata</strong> <span style="color:var(--g-700)">(still prompt · image2video description / sound)</span>';
   header.appendChild(title);
   header.appendChild(cloneBtn);
   bubble.appendChild(header);
@@ -972,7 +972,7 @@ function startImage2VideoFor(url, btn) {
     const orig = state.imagePrompts[url];
     const meta = state.imageVideoMeta[url];
     if (!orig && !normalizeVideoMeta(meta).description) {
-      addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
+      addMessage('bot', '<span style="color:var(--danger)">No original prompt for this image — set one with <code>/image2video-set-prompt &lt;prompt&gt;</code></span>');
       return null;
     }
     const base = orig ? applyReplacements(orig, state.image2videoReplacements) : '';
@@ -1263,7 +1263,7 @@ function appendChatImage(container, url) {
     if (face.disabled || sendBtn.disabled) return;
     const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(state.imagePrompts[url]), state.faceDetailReplacements);
     if (!prompt) {
-      addMessage('bot', '<span style="color:#f87171">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
+      addMessage('bot', '<span style="color:var(--danger)">No LoRA in this image’s prompt — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>');
       return;
     }
     face.disabled = true;
@@ -1355,7 +1355,7 @@ function appendChatImage(container, url) {
     } else {
       const orig = state.imagePrompts[url];
       if (!orig) {
-        addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">No original prompt for this image — set one with <code>/image2image-set-prompt &lt;prompt&gt;</code></span>');
         return;
       }
       defaultPrompt = applyReplacements(orig, state.image2imageReplacements);
@@ -1404,7 +1404,7 @@ function appendChatImage(container, url) {
       })
       .catch(err => {
         if (err && err.cancelled) return;
-        addMessage('bot', `<span style="color:#f87171">Crop failed: ${escapeHtml(err.message)}</span>`);
+        addMessage('bot', `<span style="color:var(--danger)">Crop failed: ${escapeHtml(err.message)}</span>`);
       })
       .finally(() => { cropBtn.disabled = false; });
   });
@@ -1479,7 +1479,7 @@ function appendChatImage(container, url) {
           })
           .catch(err => {
             reinpaint.disabled = false;
-            addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
+            addMessage('bot', `<span style="color:var(--danger)">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
           });
         })
         .catch(() => { reinpaint.disabled = false; });
@@ -1512,7 +1512,7 @@ function compositeVideos(orderedUrls) {
       scrollBottom();
     })
     .catch(err => {
-      bubble.innerHTML = `<span style="color:#f87171">⚠ Could not composite videos: ${escapeHtml(err.message)}</span>`;
+      bubble.innerHTML = `<span style="color:var(--danger)">⚠ Could not composite videos: ${escapeHtml(err.message)}</span>`;
     });
 }
 
@@ -1729,7 +1729,7 @@ function restoreSession(data) {
 
   if (data.recordingName) {
     state.recordingName = data.recordingName;
-    addMessage('bot', `Recording resumed — auto-saving to session <strong style="color:#a78bfa">${escapeHtml(data.recordingName)}</strong>.`);
+    addMessage('bot', `Recording resumed — auto-saving to session <strong style="color:var(--neon)">${escapeHtml(data.recordingName)}</strong>.`);
     scrollBottom();
   } else {
     // Keep recording always-on even for a legacy/temp-less save.
@@ -1778,11 +1778,11 @@ function sendMessage() {
     state.savedDraft = '';
     const macroSteps = state.MACROS[macroName];
     if (!macroSteps || !macroSteps.length) {
-      addMessage('bot', `<span style="color:#f87171">⚠ No macro named <code>#${escapeHtml(macroName)}</code> — use <code>/macro-list</code> to see macros or <code>/macro-create ${escapeHtml(macroName)}</code> to create one.</span>`);
+      addMessage('bot', `<span style="color:var(--danger)">⚠ No macro named <code>#${escapeHtml(macroName)}</code> — use <code>/macro-list</code> to see macros or <code>/macro-create ${escapeHtml(macroName)}</code> to create one.</span>`);
       return;
     }
     if (!macroParam && macroSteps.some(s => /<PARAM>/i.test(s))) {
-      addMessage('bot', `<span style="color:#f87171">⚠ <code>#${escapeHtml(macroName)}</code> requires a parameter — e.g. <code>#${escapeHtml(macroName)} your text here</code></span>`);
+      addMessage('bot', `<span style="color:var(--danger)">⚠ <code>#${escapeHtml(macroName)}</code> requires a parameter — e.g. <code>#${escapeHtml(macroName)} your text here</code></span>`);
       return;
     }
     addMessage('user', `#${escapeHtml(macroName)}${macroParam ? ' ' + escapeHtml(macroParam) : ''}`, raw);
@@ -2026,7 +2026,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (sh.cancelBtn) sh.cancelBtn.remove();
     if (sh.retryBtn) sh.retryBtn.remove();
     if (sh.statusText) sh.statusText.textContent = '';
-    sh.bubble.innerHTML += `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(error || 'unknown error')}</span>`;
+    sh.bubble.innerHTML += `<span style="color:var(--danger)">⚠ Generation failed: ${escapeHtml(error || 'unknown error')}</span>`;
   };
 
   // A shot failed but the run is paused on it — keep the bubble open with its
@@ -2038,7 +2038,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     // graph from zero, and leaving it parked at 70% would be a lie.
     resetProgress(sh.barWrap, sh.captionEl);
     if (sh.statusText) {
-      sh.statusText.innerHTML = `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(error || 'unknown error')} — press ⟳ to retry</span>`;
+      sh.statusText.innerHTML = `<span style="color:var(--danger)">⚠ Generation failed: ${escapeHtml(error || 'unknown error')} — press ⟳ to retry</span>`;
     }
     if (sh.retryBtn) sh.retryBtn.disabled = false;
     if (sh.cancelBtn) sh.cancelBtn.disabled = false;
@@ -2082,7 +2082,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       const nVideos = assets.filter(isVideoUrl).length;
       const counts = `${assets.length - nVideos} image(s)` + (nVideos ? `, ${nVideos} video(s)` : '');
       const what = msg.batch ? 'Batch' : 'Sequence';
-      statusBubble.innerHTML = `<div class="status-text">${what} complete — ${counts}. Recorded to session <strong style="color:#a78bfa">${escapeHtml(state.recordingName || '')}</strong>.</div>`;
+      statusBubble.innerHTML = `<div class="status-text">${what} complete — ${counts}. Recorded to session <strong style="color:var(--neon)">${escapeHtml(state.recordingName || '')}</strong>.</div>`;
       scrollBottom();
       if (onDone) onDone(msg);
       return;
@@ -2090,7 +2090,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (msg.type === 'cancelled') {
       if (shell) { if (shell.dotsEl) shell.dotsEl.remove(); if (shell.cancelBtn) shell.cancelBtn.remove(); if (shell.retryBtn) shell.retryBtn.remove(); if (shell.statusText) shell.statusText.textContent = 'Cancelled'; shell = null; }
       stop();
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ Cancelled</span>`;
+      statusBubble.innerHTML = `<span style="color:var(--danger)">⚠ Cancelled</span>`;
       scrollBottom();
       if (onFail) onFail('Cancelled');
       return;
@@ -2098,7 +2098,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
     if (msg.type === 'error') {
       if (shell) { if (shell.dotsEl) shell.dotsEl.remove(); if (shell.cancelBtn) shell.cancelBtn.remove(); if (shell.retryBtn) shell.retryBtn.remove(); shell = null; }
       stop();
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
+      statusBubble.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(msg.message)}</span>`;
       scrollBottom();
       if (onFail) onFail(msg.message);
       return;
@@ -2167,7 +2167,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
       } else {
         // Reattached mid-shot with no open shell — render a standalone notice.
         addMessage('user', escapeHtml(msg.prompt || ''), msg.prompt || '');
-        addMessage('bot', `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(msg.error || 'unknown error')} — press ⟳ to retry</span>`);
+        addMessage('bot', `<span style="color:var(--danger)">⚠ Generation failed: ${escapeHtml(msg.error || 'unknown error')} — press ⟳ to retry</span>`);
       }
       scrollBottom();
     } else if (msg.type === 'failed') {
@@ -2177,7 +2177,7 @@ function attachSequenceRunStream(jobId, statusBubble, cancelBtn, { onDone, onFai
         shell = null;
       } else {
         addMessage('user', escapeHtml(msg.prompt || ''), msg.prompt || '');
-        addMessage('bot', `<span style="color:#f87171">⚠ Generation failed: ${escapeHtml(msg.error || 'unknown error')}</span>`);
+        addMessage('bot', `<span style="color:var(--danger)">⚠ Generation failed: ${escapeHtml(msg.error || 'unknown error')}</span>`);
       }
       scrollBottom();
     }
@@ -2252,7 +2252,7 @@ function runSequenceRunJob(master, count, opts = {}) {
     })
     .catch(err => {
       if (cancelBtn.parentNode) cancelBtn.remove();
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+      statusBubble.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`;
       resolve(false);
     });
   });
@@ -2352,7 +2352,7 @@ function runBatchJob(steps) {
     })
     .catch(err => {
       if (cancelBtn.parentNode) cancelBtn.remove();
-      statusBubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+      statusBubble.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`;
       sendBtn.disabled = false;
       resolve(false);
     });
@@ -2723,7 +2723,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
         captionEl.remove();
         cancelBtn.remove();
         statusLine.textContent = '';
-        botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(msg.message)}</span>`;
+        botBubble.innerHTML += `<span style="color:var(--danger)">⚠ ${escapeHtml(msg.message)}</span>`;
         if (!inPlaceWrap) scrollBottom();
         resolve(false);
       }
@@ -2735,7 +2735,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
       if (barWrap.parentNode) barWrap.remove();
       if (captionEl.parentNode) captionEl.remove();
       cancelBtn.remove();
-      botBubble.innerHTML += `<span style="color:#f87171">⚠ Connection lost — check server logs.</span>`;
+      botBubble.innerHTML += `<span style="color:var(--danger)">⚠ Connection lost — check server logs.</span>`;
       resolve(false);
     };
   })
@@ -2745,7 +2745,7 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
     if (captionEl.parentNode) captionEl.remove();
     cancelBtn.remove();
     statusLine.textContent = '';
-    botBubble.innerHTML += `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+    botBubble.innerHTML += `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`;
     resolve(false);
   });
   });

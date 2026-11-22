@@ -72,7 +72,7 @@ export function initSidebar(deps) {
         sessions.forEach(s => listEl.appendChild(buildRow(s, current)));
       })
       .catch(() => {
-        listEl.innerHTML = '<div class="sidebar-empty" style="color:#f87171">Failed to load chats.</div>';
+        listEl.innerHTML = '<div class="sidebar-empty" style="color:var(--danger)">Failed to load chats.</div>';
       });
   }
 
@@ -86,7 +86,7 @@ export function initSidebar(deps) {
     btn.className = 'sel-btn' + (s.name === current ? ' current' : '');
     btn.dataset.name = s.name;
     btn.innerHTML = `<span>${escapeHtml(s.name)}</span>
-      <span style="color:#475569;font-size:0.8em">${s.image_count} image(s)${date ? ' · ' + date : ''}</span>`;
+      <span style="color:var(--g-700);font-size:0.8em">${s.image_count} image(s)${date ? ' · ' + date : ''}</span>`;
     btn.addEventListener('click', () => switchTo(s.name));
 
     const renameBtn = document.createElement('button');
@@ -223,7 +223,7 @@ export function initSidebar(deps) {
         })
         .catch(err => {
           input.disabled = false;
-          input.style.borderColor = '#ef4444';
+          input.style.borderColor = 'var(--danger)';
           input.title = err.message || 'Rename failed';
           done = false;
         });

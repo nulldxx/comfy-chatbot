@@ -42,8 +42,8 @@ function renderVariantButtons(container, wf, variants, current, onPick) {
     const btn = document.createElement('button');
     btn.className = 'sel-btn' + (isCur ? ' current' : '');
     btn.innerHTML = escapeHtml(v)
-      + (i === 0 ? ' <span style="color:#475569;font-size:0.85em">(default)</span>' : '')
-      + (isCur ? ' <span style="color:#7c3aed">\u2713</span>' : '');
+      + (i === 0 ? ' <span style="color:var(--g-700);font-size:0.85em">(default)</span>' : '')
+      + (isCur ? ' <span style="color:var(--neon)">\u2713</span>' : '');
     btn.addEventListener('click', () => onPick(wire));
     inner.appendChild(btn);
   });
@@ -55,7 +55,7 @@ function renderWorkflowPicker({ url, kind, title, loadingText, failLabel, emptyM
   const bubble = addMessage('bot', `<div class="status-text">${loadingText}</div>`).parentElement.querySelector('.bubble');
   const done = wire => {
     onSelect(wire);
-    bubble.innerHTML = `${setMsg} <strong style="color:#a78bfa">${workflowLabelHtml(wire)}</strong>`;
+    bubble.innerHTML = `${setMsg} <strong style="color:var(--neon)">${workflowLabelHtml(wire)}</strong>`;
   };
   fetch(url).then(r => r.json()).then(workflows => {
     if (!workflows.length && emptyMsg) {
@@ -67,7 +67,7 @@ function renderWorkflowPicker({ url, kind, title, loadingText, failLabel, emptyM
     workflows.forEach(wf => {
       const isCur = wf === curName;
       html += `<button class="sel-btn${isCur ? ' current' : ''}" data-wf="${escapeHtml(wf)}">
-                 ${escapeHtml(wf)}${isCur ? ' <span style="color:#7c3aed">\u2713</span>' : ''}
+                 ${escapeHtml(wf)}${isCur ? ' <span style="color:var(--neon)">\u2713</span>' : ''}
                </button>`;
     });
     html += '</div>';
@@ -89,7 +89,7 @@ function renderWorkflowPicker({ url, kind, title, loadingText, failLabel, emptyM
       });
     });
     scrollBottom();
-  }).catch(() => { bubble.innerHTML = `<span style="color:#f87171">Failed to load ${failLabel}.</span>`; });
+  }).catch(() => { bubble.innerHTML = `<span style="color:var(--danger)">Failed to load ${failLabel}.</span>`; });
 }
 
 // ---------------------------------------------------------------------------
@@ -194,10 +194,10 @@ function renderReferencesTable() {
   wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:6px';
 
   const counter = document.createElement('div');
-  counter.style.cssText = 'font-size:0.78rem;color:#94a3b8;margin-bottom:2px';
+  counter.style.cssText = 'font-size:0.78rem;color:var(--g-400);margin-bottom:2px';
   const refreshCount = () => {
     const n = countReferenceFiles(state.references);
-    counter.innerHTML = `<strong style="color:${n >= REFERENCE_MAX_FILES ? '#f472b6' : '#a78bfa'}">${n}</strong>` +
+    counter.innerHTML = `<strong style="color:${n >= REFERENCE_MAX_FILES ? 'var(--neon-2)' : 'var(--neon)'}">${n}</strong>` +
       ` / ${REFERENCE_MAX_FILES} reference files used`;
   };
   wrap.appendChild(counter);
@@ -205,7 +205,7 @@ function renderReferencesTable() {
   REFERENCE_SLOTS.forEach(slot => {
     if (slot.group) {
       const hdr = document.createElement('div');
-      hdr.style.cssText = 'font-size:0.74rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-top:6px';
+      hdr.style.cssText = 'font-size:0.74rem;color:var(--g-600);text-transform:uppercase;letter-spacing:.04em;margin-top:6px';
       hdr.textContent = slot.group;
       wrap.appendChild(hdr);
     }
@@ -213,7 +213,7 @@ function renderReferencesTable() {
   });
 
   const hint = document.createElement('div');
-  hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:6px';
+  hint.style.cssText = 'font-size:0.78rem;color:var(--g-700);margin-top:6px';
   hint.innerHTML = 'Drag a chat image/video onto a row, or drop a file from your desktop (click a row to browse). ' +
     'Images and videos can also come from the chat; standalone audio must be uploaded. Only <strong>Image 1</strong> ' +
     'is used by LTX face-ID (as the mandatory reference). A reference video counts once per track you tick — using ' +
@@ -222,7 +222,7 @@ function renderReferencesTable() {
   wrap.appendChild(hint);
 
   refreshCount();
-  const bubble = addMessage('bot', '<strong>References</strong> <span style="color:#475569">(image2video / text2video)</span>')
+  const bubble = addMessage('bot', '<strong>References</strong> <span style="color:var(--g-700)">(image2video / text2video)</span>')
     .parentElement.querySelector('.bubble');
   bubble.appendChild(wrap);
   scrollBottom();
@@ -231,16 +231,16 @@ function renderReferencesTable() {
 function buildReferenceRow(slot, onChange) {
   const notifyChange = () => { if (onChange) onChange(); };
   const row = document.createElement('div');
-  row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:0.85rem;color:#cbd5e1';
+  row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:0.85rem;color:var(--g-300)';
 
   const labelBox = document.createElement('div');
   labelBox.style.cssText = 'min-width:150px;display:flex;flex-direction:column;line-height:1.2';
-  labelBox.innerHTML = `<span style="color:#94a3b8">${escapeHtml(slot.label)}</span>` +
-    `<span style="color:#475569;font-size:0.72rem">${escapeHtml(slot.note)}</span>`;
+  labelBox.innerHTML = `<span style="color:var(--g-400)">${escapeHtml(slot.label)}</span>` +
+    `<span style="color:var(--g-700);font-size:0.72rem">${escapeHtml(slot.note)}</span>`;
 
   const zone = document.createElement('div');
-  zone.style.cssText = 'flex:1;min-height:52px;border:1px dashed #334155;border-radius:6px;' +
-    'display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;background:#0f172a;transition:border-color .15s';
+  zone.style.cssText = 'flex:1;min-height:52px;border:1px dashed var(--g-800);border-radius:6px;' +
+    'display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;background:var(--g-950);transition:border-color .15s';
 
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
@@ -251,7 +251,7 @@ function buildReferenceRow(slot, onChange) {
   clearBtn.className = 'sel-btn';
   clearBtn.textContent = '✕';
   clearBtn.title = 'Clear this reference';
-  clearBtn.style.cssText = 'flex:none;width:28px;padding:2px 0;font-size:0.9rem;line-height:1;color:#94a3b8';
+  clearBtn.style.cssText = 'flex:none;width:28px;padding:2px 0;font-size:0.9rem;line-height:1;color:var(--g-400)';
 
   // Enable switch: parks a reference without discarding it. Off costs nothing against
   // the 12-file budget and is sent as empty, so it is a real "not using this right now"
@@ -283,7 +283,7 @@ function buildReferenceRow(slot, onChange) {
   let trackCaption = null;
   if (slot.tracks) {
     trackBox = document.createElement('div');
-    trackBox.style.cssText = 'flex:none;display:flex;flex-direction:column;gap:2px;font-size:0.72rem;color:#94a3b8';
+    trackBox.style.cssText = 'flex:none;display:flex;flex-direction:column;gap:2px;font-size:0.72rem;color:var(--g-400)';
     trackInputs = {};
     ['video', 'audio'].forEach(track => {
       const lbl = document.createElement('label');
@@ -306,7 +306,7 @@ function buildReferenceRow(slot, onChange) {
       trackBox.appendChild(lbl);
     });
     trackCaption = document.createElement('span');
-    trackCaption.style.cssText = 'font-size:0.68rem;color:#475569';
+    trackCaption.style.cssText = 'font-size:0.68rem;color:var(--g-700)';
     trackBox.appendChild(trackCaption);
   }
 
@@ -339,7 +339,7 @@ function buildReferenceRow(slot, onChange) {
     const n = (t.video ? 1 : 0) + (t.audio ? 1 : 0);
     const inactive = url && on && n === 0;
     trackCaption.textContent = !url ? '' : (off ? 'off' : (inactive ? 'inactive' : `${n} file${n === 1 ? '' : 's'}`));
-    trackCaption.style.color = (off || inactive) ? '#fbbf24' : '#475569';
+    trackCaption.style.color = (off || inactive) ? 'var(--warn)' : 'var(--g-700)';
     if (!off) zone.style.opacity = inactive ? '0.5' : '1';
   }
 
@@ -357,8 +357,8 @@ function buildReferenceRow(slot, onChange) {
     }, 2500);
   }
 
-  const flashError = msg => flashMsg(msg, '#f87171');
-  const flashNote  = msg => flashMsg(msg, '#fbbf24');
+  const flashError = msg => flashMsg(msg, 'var(--danger)');
+  const flashNote  = msg => flashMsg(msg, 'var(--warn)');
 
   // render() = the dropzone contents plus the enable switch and, on a video row, the
   // track checkboxes. renderZone has early returns, so those refreshes can't just be
@@ -370,7 +370,7 @@ function buildReferenceRow(slot, onChange) {
     zone.innerHTML = '';
     if (zone.dataset.msg) {
       const err = document.createElement('span');
-      err.style.cssText = `color:${zone.dataset.msgColour || '#f87171'};font-size:0.78rem`;
+      err.style.cssText = `color:${zone.dataset.msgColour || 'var(--danger)'};font-size:0.78rem`;
       err.textContent = '⚠ ' + zone.dataset.msg;
       zone.appendChild(err);
       clearBtn.style.visibility = url ? 'visible' : 'hidden';
@@ -378,7 +378,7 @@ function buildReferenceRow(slot, onChange) {
     }
     if (!url) {
       const ph = document.createElement('span');
-      ph.style.cssText = 'color:#475569;font-size:0.78rem';
+      ph.style.cssText = 'color:var(--g-700);font-size:0.78rem';
       ph.textContent = `Drop ${slot.kind} here…`;
       zone.appendChild(ph);
       clearBtn.style.visibility = 'hidden';
@@ -435,11 +435,11 @@ function buildReferenceRow(slot, onChange) {
   zone.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', e => { acceptFile(e.target.files[0]); e.target.value = ''; });
 
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = '#f472b6'; });
-  zone.addEventListener('dragleave', () => { zone.style.borderColor = '#334155'; });
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = 'var(--neon-2)'; });
+  zone.addEventListener('dragleave', () => { zone.style.borderColor = 'var(--g-800)'; });
   zone.addEventListener('drop', e => {
     e.preventDefault();
-    zone.style.borderColor = '#334155';
+    zone.style.borderColor = 'var(--g-800)';
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length) { acceptFile(files[0]); return; }
     const inAppUrl = e.dataTransfer.getData(COMFY_URL_DND_TYPE);
@@ -489,7 +489,7 @@ function referencePreview(kind, url) {
   const chip = document.createElement('div');
   chip.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0';
   const name = document.createElement('span');
-  name.style.cssText = 'color:#94a3b8;font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px';
+  name.style.cssText = 'color:var(--g-400);font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px';
   name.textContent = '🎵 ' + decodeURIComponent(url.split('/').pop());
   const audio = document.createElement('audio');
   audio.src = url;
@@ -526,101 +526,101 @@ function showChatSummary() {
   const srvAddr  = state.currentServer ? state.currentServer.address : DEFAULT_SERVER;
   const srvOs    = state.currentServer ? state.currentServer.os      : DEFAULT_SERVER_OS;
   const srvLabel = state.currentServer
-    ? `<span style="color:#a78bfa">${escapeHtml(srvName)}</span> <span style="color:#475569">(${escapeHtml(srvAddr)}, ${escapeHtml(srvOs)})</span>`
-    : `<span style="color:#a78bfa">${escapeHtml(srvName)}</span> <span style="color:#475569">(default)</span>`;
+    ? `<span style="color:var(--neon)">${escapeHtml(srvName)}</span> <span style="color:var(--g-700)">(${escapeHtml(srvAddr)}, ${escapeHtml(srvOs)})</span>`
+    : `<span style="color:var(--neon)">${escapeHtml(srvName)}</span> <span style="color:var(--g-700)">(default)</span>`;
   rows.push({ label: 'Server', value: srvLabel });
 
   const wfActive = state.currentWorkflow || DEFAULT_WORKFLOW;
   const wfLabel  = state.currentWorkflow
-    ? `<span style="color:#a78bfa">${escapeHtml(wfActive)}</span>`
-    : `<span style="color:#a78bfa">${escapeHtml(wfActive)}</span> <span style="color:#475569">(default)</span>`;
+    ? `<span style="color:var(--neon)">${escapeHtml(wfActive)}</span>`
+    : `<span style="color:var(--neon)">${escapeHtml(wfActive)}</span> <span style="color:var(--g-700)">(default)</span>`;
   rows.push({ label: 'Workflow', value: wfLabel });
 
   const faceWfActive = state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW;
   const faceWfLabel  = faceWfActive
     ? (state.currentFaceWorkflow
-        ? `<span style="color:#a78bfa">${escapeHtml(faceWfActive)}</span>`
-        : `<span style="color:#a78bfa">${escapeHtml(faceWfActive)}</span> <span style="color:#475569">(default)</span>`)
-    : `<span style="color:#475569">not set</span>`;
+        ? `<span style="color:var(--neon)">${escapeHtml(faceWfActive)}</span>`
+        : `<span style="color:var(--neon)">${escapeHtml(faceWfActive)}</span> <span style="color:var(--g-700)">(default)</span>`)
+    : `<span style="color:var(--g-700)">not set</span>`;
   rows.push({ label: 'Face-detail workflow', value: faceWfLabel });
 
   const upWfActive = state.currentUpscaleWorkflow || DEFAULT_UPSCALE_WORKFLOW;
   const upWfLabel  = upWfActive
     ? (state.currentUpscaleWorkflow
-        ? `<span style="color:#a78bfa">${escapeHtml(upWfActive)}</span>`
-        : `<span style="color:#a78bfa">${escapeHtml(upWfActive)}</span> <span style="color:#475569">(default)</span>`)
-    : `<span style="color:#475569">not set</span>`;
+        ? `<span style="color:var(--neon)">${escapeHtml(upWfActive)}</span>`
+        : `<span style="color:var(--neon)">${escapeHtml(upWfActive)}</span> <span style="color:var(--g-700)">(default)</span>`)
+    : `<span style="color:var(--g-700)">not set</span>`;
   rows.push({ label: 'Upscale workflow', value: upWfLabel });
 
   const i2iWfActive = state.currentImage2ImageWorkflow || DEFAULT_IMAGE2IMAGE_WORKFLOW;
   const i2iWfLabel  = i2iWfActive
     ? (state.currentImage2ImageWorkflow
-        ? `<span style="color:#a78bfa">${escapeHtml(i2iWfActive)}</span>`
-        : `<span style="color:#a78bfa">${escapeHtml(i2iWfActive)}</span> <span style="color:#475569">(default)</span>`)
-    : `<span style="color:#475569">not set</span>`;
+        ? `<span style="color:var(--neon)">${escapeHtml(i2iWfActive)}</span>`
+        : `<span style="color:var(--neon)">${escapeHtml(i2iWfActive)}</span> <span style="color:var(--g-700)">(default)</span>`)
+    : `<span style="color:var(--g-700)">not set</span>`;
   rows.push({ label: 'Image2image workflow', value: i2iWfLabel });
 
   const i2vWfActive = state.currentImage2VideoWorkflow || DEFAULT_IMAGE2VIDEO_WORKFLOW;
   const i2vWfLabel  = i2vWfActive
     ? (state.currentImage2VideoWorkflow
-        ? `<span style="color:#a78bfa">${escapeHtml(i2vWfActive)}</span>`
-        : `<span style="color:#a78bfa">${escapeHtml(i2vWfActive)}</span> <span style="color:#475569">(default)</span>`)
-    : `<span style="color:#475569">not set</span>`;
+        ? `<span style="color:var(--neon)">${escapeHtml(i2vWfActive)}</span>`
+        : `<span style="color:var(--neon)">${escapeHtml(i2vWfActive)}</span> <span style="color:var(--g-700)">(default)</span>`)
+    : `<span style="color:var(--g-700)">not set</span>`;
   rows.push({ label: 'Image2video workflow', value: i2vWfLabel });
 
   const t2vWfActive = state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW;
   const t2vWfLabel  = t2vWfActive
     ? (state.currentText2VideoWorkflow
-        ? `<span style="color:#a78bfa">${escapeHtml(t2vWfActive)}</span>`
-        : `<span style="color:#a78bfa">${escapeHtml(t2vWfActive)}</span> <span style="color:#475569">(default)</span>`)
-    : `<span style="color:#475569">not set</span>`;
+        ? `<span style="color:var(--neon)">${escapeHtml(t2vWfActive)}</span>`
+        : `<span style="color:var(--neon)">${escapeHtml(t2vWfActive)}</span> <span style="color:var(--g-700)">(default)</span>`)
+    : `<span style="color:var(--g-700)">not set</span>`;
   rows.push({ label: 'Text2video workflow', value: t2vWfLabel });
 
   rows.push({
     label: 'Text-to-video mode',
     value: state.t2vMode
-      ? `<span style="color:#a78bfa">ON</span> <span style="color:#475569">— prompts generate video</span>`
-      : `<span style="color:#475569">off</span>`,
+      ? `<span style="color:var(--neon)">ON</span> <span style="color:var(--g-700)">— prompts generate video</span>`
+      : `<span style="color:var(--g-700)">off</span>`,
   });
 
   rows.push({
     label: 'Privacy mode',
     value: isPrivacyMode()
-      ? `<span style="color:#a78bfa">ON</span> <span style="color:#475569">— media hidden until hovered (this browser)</span>`
-      : `<span style="color:#475569">off</span>`,
+      ? `<span style="color:var(--neon)">ON</span> <span style="color:var(--g-700)">— media hidden until hovered (this browser)</span>`
+      : `<span style="color:var(--g-700)">off</span>`,
   });
 
   const inpaintWfActive = state.currentInpaintingWorkflow || DEFAULT_INPAINTING_WORKFLOW;
   const inpaintWfLabel  = inpaintWfActive
     ? (state.currentInpaintingWorkflow
-        ? `<span style="color:#a78bfa">${escapeHtml(inpaintWfActive)}</span>`
-        : `<span style="color:#a78bfa">${escapeHtml(inpaintWfActive)}</span> <span style="color:#475569">(default)</span>`)
-    : `<span style="color:#475569">not set</span>`;
+        ? `<span style="color:var(--neon)">${escapeHtml(inpaintWfActive)}</span>`
+        : `<span style="color:var(--neon)">${escapeHtml(inpaintWfActive)}</span> <span style="color:var(--g-700)">(default)</span>`)
+    : `<span style="color:var(--g-700)">not set</span>`;
   rows.push({ label: 'Inpainting workflow', value: inpaintWfLabel });
 
   const removalWfActive = state.currentRemovalWorkflow || DEFAULT_REMOVAL_WORKFLOW;
   const removalWfLabel  = removalWfActive
     ? (state.currentRemovalWorkflow
-        ? `<span style="color:#a78bfa">${escapeHtml(removalWfActive)}</span>`
-        : `<span style="color:#a78bfa">${escapeHtml(removalWfActive)}</span> <span style="color:#475569">(default)</span>`)
-    : `<span style="color:#475569">not set</span>`;
+        ? `<span style="color:var(--neon)">${escapeHtml(removalWfActive)}</span>`
+        : `<span style="color:var(--neon)">${escapeHtml(removalWfActive)}</span> <span style="color:var(--g-700)">(default)</span>`)
+    : `<span style="color:var(--g-700)">not set</span>`;
   rows.push({ label: 'Removal workflow', value: removalWfLabel });
 
   const resLabel = state.currentResolution
-    ? `<span style="color:#a78bfa">${state.currentResolution.width}×${state.currentResolution.height}</span>`
-    : `<span style="color:#475569">workflow default</span>`;
+    ? `<span style="color:var(--neon)">${state.currentResolution.width}×${state.currentResolution.height}</span>`
+    : `<span style="color:var(--g-700)">workflow default</span>`;
   rows.push({ label: 'Resolution', value: resLabel });
 
-  rows.push({ label: 'Iterations', value: `<span style="color:#a78bfa">${state.iterations}</span>${state.iterations > 1 ? ' per prompt' : ''}` });
+  rows.push({ label: 'Iterations', value: `<span style="color:var(--neon)">${state.iterations}</span>${state.iterations > 1 ? ' per prompt' : ''}` });
 
   if (state.currentGenerationSteps !== null) {
-    rows.push({ label: 'Generation steps', value: `<span style="color:#a78bfa">${state.currentGenerationSteps}</span>` });
+    rows.push({ label: 'Generation steps', value: `<span style="color:var(--neon)">${state.currentGenerationSteps}</span>` });
   }
 
   const DENOISE_LABELS = { face: 'Face-detailer', image2image: 'Image2image', inpaint: 'Inpainting', upscale: 'Upscale' };
   const denoiseOverrides = Object.entries(state.currentDenoise)
     .filter(([k, v]) => v !== DEFAULT_DENOISE[k])
-    .map(([k, v]) => `${DENOISE_LABELS[k]}: <span style="color:#a78bfa">${v.toFixed(2)}</span>`)
+    .map(([k, v]) => `${DENOISE_LABELS[k]}: <span style="color:var(--neon)">${v.toFixed(2)}</span>`)
     .join(' · ');
   if (denoiseOverrides) {
     rows.push({ label: 'Denoise overrides', value: denoiseOverrides });
@@ -629,13 +629,13 @@ function showChatSummary() {
   const vs = state.currentVideoSettings;
   rows.push({
     label: 'Video settings',
-    value: `<span style="color:#a78bfa">${fmtDuration(vs.duration)}s</span> · ` +
-           `<span style="color:#a78bfa">${vs.frames}</span> frames · ` +
-           `<span style="color:#a78bfa">${vs.fps}</span> fps · ` +
-           `<span style="color:#a78bfa">${vs.width}×${vs.height}</span> · ` +
-           `audio <span style="color:#a78bfa">${vs.audio !== false ? 'on' : 'off'}</span> ` +
-           `<span style="color:#475569">(🔒 ${state.videoLock})</span>` +
-           (state.currentVideoSteps !== null ? ` · steps <span style="color:#a78bfa">${state.currentVideoSteps}</span>` : ''),
+    value: `<span style="color:var(--neon)">${fmtDuration(vs.duration)}s</span> · ` +
+           `<span style="color:var(--neon)">${vs.frames}</span> frames · ` +
+           `<span style="color:var(--neon)">${vs.fps}</span> fps · ` +
+           `<span style="color:var(--neon)">${vs.width}×${vs.height}</span> · ` +
+           `audio <span style="color:var(--neon)">${vs.audio !== false ? 'on' : 'off'}</span> ` +
+           `<span style="color:var(--g-700)">(🔒 ${state.videoLock})</span>` +
+           (state.currentVideoSteps !== null ? ` · steps <span style="color:var(--neon)">${state.currentVideoSteps}</span>` : ''),
   });
   // Read through the wire payload rather than the raw flags, so a pre-upgrade session
   // (where the absent 8-step flags read as on beside an explicit turbo) is summarised
@@ -645,22 +645,22 @@ function showChatSummary() {
   rows.push({
     label: 'Video optimisations',
     value: optsOn.length
-      ? `<span style="color:#a78bfa">${optsOn.map(o => escapeHtml(o.label)).join('</span> · <span style="color:#a78bfa">')}</span>` +
+      ? `<span style="color:var(--neon)">${optsOn.map(o => escapeHtml(o.label)).join('</span> · <span style="color:var(--neon)">')}</span>` +
         (optsOn.length < VIDEO_OPTIMIZATIONS.length
-          ? ` <span style="color:#475569">(${VIDEO_OPTIMIZATIONS.length - optsOn.length} off)</span>` : '')
-      : '<span style="color:#475569">all off</span>',
+          ? ` <span style="color:var(--g-700)">(${VIDEO_OPTIMIZATIONS.length - optsOn.length} off)</span>` : '')
+      : '<span style="color:var(--g-700)">all off</span>',
   });
 
   if (state.autoFaceDetail) {
-    rows.push({ label: 'Auto face-detail', value: '<span style="color:#4ade80">on</span>' });
+    rows.push({ label: 'Auto face-detail', value: '<span style="color:var(--ok)">on</span>' });
   }
 
   if (state.autoVideoSequence) {
-    rows.push({ label: 'Auto video-sequence', value: '<span style="color:#4ade80">on</span> <span style="color:#475569">— every /video-sequence shot becomes a video</span>' });
+    rows.push({ label: 'Auto video-sequence', value: '<span style="color:var(--ok)">on</span> <span style="color:var(--g-700)">— every /video-sequence shot becomes a video</span>' });
   }
 
   if (state.videoStoryAuto) {
-    rows.push({ label: 'Auto video-story', value: '<span style="color:#4ade80">on</span> <span style="color:#475569">— ⏭ is pressed automatically while story shots remain</span>' });
+    rows.push({ label: 'Auto video-story', value: '<span style="color:var(--ok)">on</span> <span style="color:var(--g-700)">— ⏭ is pressed automatically while story shots remain</span>' });
   }
 
   if (state.lastFaceDetailPrompt) {
@@ -671,7 +671,7 @@ function showChatSummary() {
     .map((p, i) => p ? `${i + 1}: <code>${escapeHtml(p)}</code>` : null)
     .filter(Boolean);
   if (multiFaces.length || state.faceMultiMargin !== 20) {
-    rows.push({ label: 'Multi-face prompts', value: `${multiFaces.join(' · ') || '—'} <span style="color:#475569">(margin ${state.faceMultiMargin}px)</span>` });
+    rows.push({ label: 'Multi-face prompts', value: `${multiFaces.join(' · ') || '—'} <span style="color:var(--g-700)">(margin ${state.faceMultiMargin}px)</span>` });
   }
 
   // The metadata editor's Clone button pastes this; showing it makes the clone source
@@ -730,21 +730,21 @@ function showChatSummary() {
   const aliasKeys = Object.keys(state.ALIASES).sort();
   if (aliasKeys.length) {
     const preview = aliasKeys.slice(0, 3).map(k => `<code>${escapeHtml(k)}</code>`).join(', ');
-    const more = aliasKeys.length > 3 ? ` <span style="color:#475569">+${aliasKeys.length - 3} more</span>` : '';
+    const more = aliasKeys.length > 3 ? ` <span style="color:var(--g-700)">+${aliasKeys.length - 3} more</span>` : '';
     rows.push({ label: `Aliases (${aliasKeys.length})`, value: `${preview}${more} — <code>/alias-list</code> to see all` });
   }
 
   const macroKeys = Object.keys(state.MACROS).sort();
   if (macroKeys.length) {
     const preview = macroKeys.slice(0, 3).map(k => `<code>#${escapeHtml(k)}</code>`).join(', ');
-    const more = macroKeys.length > 3 ? ` <span style="color:#475569">+${macroKeys.length - 3} more</span>` : '';
+    const more = macroKeys.length > 3 ? ` <span style="color:var(--g-700)">+${macroKeys.length - 3} more</span>` : '';
     rows.push({ label: `Macros (${macroKeys.length})`, value: `${preview}${more} — <code>/macro-list</code> to see all` });
   }
 
-  rows.push({ label: 'Session images', value: `<span style="color:#a78bfa">${state.sessionImages.length}</span>` });
+  rows.push({ label: 'Session images', value: `<span style="color:var(--neon)">${state.sessionImages.length}</span>` });
 
   const rowsHtml = rows
-    .map(r => `<div style="font-size:0.85rem;color:#94a3b8"><strong style="color:#cbd5e1">${r.label}:</strong> ${r.value}</div>`)
+    .map(r => `<div style="font-size:0.85rem;color:var(--g-400)"><strong style="color:var(--g-300)">${r.label}:</strong> ${r.value}</div>`)
     .join('');
   addMessage('bot', `<strong>Session summary</strong><div class="sel-list" style="margin-top:10px;gap:4px">${rowsHtml}</div>`);
   scrollBottom();
@@ -763,11 +763,11 @@ function showChatSummary() {
 // the current chat as a normal bot message.
 
 const JOB_STATUS_LABELS = {
-  pending:   { label: 'Queued',      color: '#94a3b8' },
-  running:   { label: 'In progress', color: '#38bdf8' },
-  done:      { label: 'Done',        color: '#22c55e' },
-  error:     { label: 'Failed',      color: '#f87171' },
-  cancelled: { label: 'Cancelled',   color: '#94a3b8' },
+  pending:   { label: 'Queued',      color: 'var(--g-400)' },
+  running:   { label: 'In progress', color: 'var(--info)' },
+  done:      { label: 'Done',        color: 'var(--ok)' },
+  error:     { label: 'Failed',      color: 'var(--danger)' },
+  cancelled: { label: 'Cancelled',   color: 'var(--g-400)' },
 };
 
 function _fmtRelative(ts) {
@@ -816,7 +816,7 @@ function renderJobsGrid(bubble, deps) {
       })
       .catch(err => {
         stopAutoRefresh();
-        bubble.innerHTML = `<span style="color:#f87171">⚠ Failed to load jobs: ${escapeHtml(err.message || err)}</span>`;
+        bubble.innerHTML = `<span style="color:var(--danger)">⚠ Failed to load jobs: ${escapeHtml(err.message || err)}</span>`;
       });
   }
 
@@ -824,14 +824,14 @@ function renderJobsGrid(bubble, deps) {
     const card = document.createElement('div');
     card.className = 'job-card';
 
-    const statusInfo = JOB_STATUS_LABELS[job.status] || { label: job.status, color: '#94a3b8' };
+    const statusInfo = JOB_STATUS_LABELS[job.status] || { label: job.status, color: 'var(--g-400)' };
     const headerHtml = `
       <div class="job-card-header">
-        <span class="job-status-badge" style="background:${statusInfo.color}1f;color:${statusInfo.color};border:1px solid ${statusInfo.color}55">
+        <span class="job-status-badge" style="background:color-mix(in srgb, ${statusInfo.color} 12%, transparent);color:${statusInfo.color};border:1px solid color-mix(in srgb, ${statusInfo.color} 33%, transparent)">
           ${escapeHtml(statusInfo.label)}
         </span>
-        <span class="job-card-kind" style="color:#94a3b8;font-size:0.78rem">${escapeHtml(job.kind || '')}</span>
-        <span class="job-card-time" style="color:#475569;font-size:0.75rem;margin-left:auto">${escapeHtml(_fmtRelative(job.started_at))}</span>
+        <span class="job-card-kind" style="color:var(--g-400);font-size:0.78rem">${escapeHtml(job.kind || '')}</span>
+        <span class="job-card-time" style="color:var(--g-700);font-size:0.75rem;margin-left:auto">${escapeHtml(_fmtRelative(job.started_at))}</span>
       </div>
     `;
 
@@ -853,13 +853,13 @@ function renderJobsGrid(bubble, deps) {
       ? `<div class="job-card-assets">${(job.assets || []).map(a => `<code>${escapeHtml(a)}</code>`).join('<br>')}</div>`
       : '';
     const errorHtml = job.error
-      ? `<div class="job-card-error" style="color:#f87171;font-size:0.78rem;margin-top:4px">⚠ ${escapeHtml(job.error)}</div>`
+      ? `<div class="job-card-error" style="color:var(--danger);font-size:0.78rem;margin-top:4px">⚠ ${escapeHtml(job.error)}</div>`
       : '';
 
     card.innerHTML = `
       ${headerHtml}
       ${previewHtml}
-      <div class="job-card-summary" style="font-size:0.82rem;color:#cbd5e1;margin-top:6px">${escapeHtml(truncated)}</div>
+      <div class="job-card-summary" style="font-size:0.82rem;color:var(--g-300);margin-top:6px">${escapeHtml(truncated)}</div>
       ${assetsHtml}
       ${errorHtml}
       <div class="job-card-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
@@ -907,9 +907,9 @@ function renderJobsGrid(bubble, deps) {
 
   function pullAssetsIntoChat(job, deps) {
     const promptLine = job.prompt
-      ? `<div style="color:#94a3b8;font-size:0.85rem;margin-bottom:6px">From job: <code>${escapeHtml(job.summary || job.prompt)}</code></div>`
+      ? `<div style="color:var(--g-400);font-size:0.85rem;margin-bottom:6px">From job: <code>${escapeHtml(job.summary || job.prompt)}</code></div>`
       : '';
-    const wrap = addMessage('bot', promptLine || '<div style="color:#94a3b8;font-size:0.85rem;margin-bottom:6px">Pulled in from /jobs</div>');
+    const wrap = addMessage('bot', promptLine || '<div style="color:var(--g-400);font-size:0.85rem;margin-bottom:6px">Pulled in from /jobs</div>');
     (job.assets || []).forEach(url => {
       if (job.prompt) state.imagePrompts[url] = job.prompt;
       // Avoid double-adding if the user is pulling the same asset twice.
@@ -941,9 +941,9 @@ function renderJobsGrid(bubble, deps) {
 // The panel is also a superset of /server: each row can make its server the
 // active one, so you can see a box is up and switch to it in one place.
 
-const SRV_UP    = '#22c55e';
-const SRV_DOWN  = '#94a3b8';
-const SRV_ERR   = '#f87171';
+const SRV_UP    = 'var(--ok)';
+const SRV_DOWN  = 'var(--g-400)';
+const SRV_ERR   = 'var(--danger)';
 
 // How long to keep re-polling after a Start or Stop before giving up on the
 // state ever settling. ComfyTray's start returns as soon as the process is
@@ -959,29 +959,29 @@ function srvDot(color) {
 // The ComfyUI line: the honest answer to "can I generate on this right now?".
 function srvComfyLine(comfy) {
   if (comfy.reachable) {
-    const ver = comfy.version ? ` <span style="color:#475569">v${escapeHtml(comfy.version)}</span>` : '';
-    return `${srvDot(SRV_UP)}<span style="color:#cbd5e1">ComfyUI</span> <span style="color:${SRV_UP}">running</span>${ver}`;
+    const ver = comfy.version ? ` <span style="color:var(--g-700)">v${escapeHtml(comfy.version)}</span>` : '';
+    return `${srvDot(SRV_UP)}<span style="color:var(--g-300)">ComfyUI</span> <span style="color:${SRV_UP}">running</span>${ver}`;
   }
-  const why = comfy.error ? ` <span style="color:#475569">(${escapeHtml(comfy.error)})</span>` : '';
-  return `${srvDot(SRV_DOWN)}<span style="color:#cbd5e1">ComfyUI</span> <span style="color:${SRV_DOWN}">not responding</span>${why}`;
+  const why = comfy.error ? ` <span style="color:var(--g-700)">(${escapeHtml(comfy.error)})</span>` : '';
+  return `${srvDot(SRV_DOWN)}<span style="color:var(--g-300)">ComfyUI</span> <span style="color:${SRV_DOWN}">not responding</span>${why}`;
 }
 
 // The ComfyTray line. "No tray" is a normal, un-alarming state — plenty of
 // servers are started by hand — so it is grey, not red.
 function srvTrayLine(tray, trayPort) {
   if (!tray.reachable) {
-    return `${srvDot(SRV_DOWN)}<span style="color:#cbd5e1">ComfyTray</span> ` +
+    return `${srvDot(SRV_DOWN)}<span style="color:var(--g-300)">ComfyTray</span> ` +
            `<span style="color:${SRV_DOWN}">no tray on :${trayPort} — unmanaged</span>`;
   }
   const bits = [];
   if (tray.pid) bits.push(`pid ${tray.pid}`);
   const up = fmtUptime(tray.uptime_seconds);
   if (up) bits.push(`up ${up}`);
-  const detail = bits.length ? ` <span style="color:#475569">· ${escapeHtml(bits.join(' · '))}</span>` : '';
+  const detail = bits.length ? ` <span style="color:var(--g-700)">· ${escapeHtml(bits.join(' · '))}</span>` : '';
   const state = tray.running
     ? `<span style="color:${SRV_UP}">ComfyUI running</span>`
     : `<span style="color:${SRV_DOWN}">ComfyUI stopped</span>`;
-  return `${srvDot(SRV_UP)}<span style="color:#cbd5e1">ComfyTray</span> <span style="color:${SRV_UP}">up</span> · ${state}${detail}`;
+  return `${srvDot(SRV_UP)}<span style="color:var(--g-300)">ComfyTray</span> <span style="color:${SRV_UP}">up</span> · ${state}${detail}`;
 }
 
 function renderServerStatusGrid(bubble, deps) {
@@ -1033,7 +1033,7 @@ function renderServerStatusGrid(bubble, deps) {
         bubble.appendChild(buildHeader());
         if (!servers.length) {
           const empty = document.createElement('div');
-          empty.style.cssText = 'color:#94a3b8;margin-top:6px';
+          empty.style.cssText = 'color:var(--g-400);margin-top:6px';
           empty.textContent = 'No servers configured — add one with /server-add.';
           bubble.appendChild(empty);
           return;
@@ -1074,9 +1074,9 @@ function renderServerStatusGrid(bubble, deps) {
     card.className = 'srv-card' + (isCur ? ' current' : '');
     card.innerHTML = `
       <div class="srv-card-header">
-        <strong style="color:#a78bfa">${escapeHtml(server.name)}</strong>
-        <code style="color:#475569;font-size:0.8rem">${escapeHtml(server.address)}</code>
-        ${isCur ? '<span style="color:#7c3aed;margin-left:auto">✓ current</span>' : ''}
+        <strong style="color:var(--neon)">${escapeHtml(server.name)}</strong>
+        <code style="color:var(--g-700);font-size:0.8rem">${escapeHtml(server.address)}</code>
+        ${isCur ? '<span style="color:var(--neon);margin-left:auto">✓ current</span>' : ''}
       </div>
       <div class="srv-card-line">${srvComfyLine(server.comfy)}</div>
       <div class="srv-card-line">${srvTrayLine(server.tray, trayPort)}</div>
@@ -1166,7 +1166,7 @@ function renderServerStatusGrid(bubble, deps) {
 
   function power(server, action) {
     notes.set(server.address,
-      `<span style="color:#38bdf8">${action === 'start' ? 'Starting' : 'Stopping'} ComfyUI…</span>`);
+      `<span style="color:var(--info)">${action === 'start' ? 'Starting' : 'Stopping'} ComfyUI…</span>`);
     fetch('/api/server-power', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1182,14 +1182,14 @@ function renderServerStatusGrid(bubble, deps) {
         // saying so is more use than silently showing the same card again.
         if (tray.changed === false) {
           notes.set(server.address,
-            `<span style="color:#94a3b8">Already ${action === 'start' ? 'running' : 'stopped'}.</span>`);
+            `<span style="color:var(--g-400)">Already ${action === 'start' ? 'running' : 'stopped'}.</span>`);
         } else if (action === 'start') {
           // The tray returns the moment the process is spawned; ComfyUI will not
           // answer for a while yet, so say so rather than look hung.
           notes.set(server.address,
-            '<span style="color:#38bdf8">Started — waiting for ComfyUI to come up…</span>');
+            '<span style="color:var(--info)">Started — waiting for ComfyUI to come up…</span>');
         } else {
-          notes.set(server.address, '<span style="color:#38bdf8">Stopping…</span>');
+          notes.set(server.address, '<span style="color:var(--info)">Stopping…</span>');
         }
         settling.set(server.address, Date.now() + SRV_SETTLE_MAX_MS);
       })
@@ -1215,7 +1215,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
   wrap.appendChild(title);
 
   const hint = document.createElement('div');
-  hint.style.cssText = 'font-size:0.8rem;color:#64748b';
+  hint.style.cssText = 'font-size:0.8rem;color:var(--g-600)';
   hint.innerHTML = 'Each step is a prompt or a /command, run in order when you type <code>#' + escapeHtml(name) + '</code>. Use <code>&lt;PARAM&gt;</code> in any step — it is replaced by the text after the macro name when invoked, e.g. <code>#' + escapeHtml(name) + ' my text</code>.';
   wrap.appendChild(hint);
 
@@ -1238,7 +1238,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
     stepsList.innerHTML = '';
     if (!steps.length) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'color:#475569;font-size:0.82rem;padding:4px 0';
+      empty.style.cssText = 'color:var(--g-700);font-size:0.82rem;padding:4px 0';
       empty.textContent = 'No steps yet — add some below.';
       stepsList.appendChild(empty);
       return;
@@ -1249,14 +1249,14 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
       row.style.alignItems = 'flex-start';
 
       const num = document.createElement('span');
-      num.style.cssText = 'color:#475569;font-size:0.78rem;min-width:18px;flex-shrink:0;padding-top:5px';
+      num.style.cssText = 'color:var(--g-700);font-size:0.78rem;min-width:18px;flex-shrink:0;padding-top:5px';
       num.textContent = (i + 1) + '.';
 
       const ta = document.createElement('textarea');
       ta.className = 'step-edit';
       ta.value = step;
       ta.rows = 1;
-      ta.style.cssText = 'flex:1;min-width:0;font-size:0.82rem;color:#cbd5e1;font-family:monospace;background:#1e293b;border:1px solid #334155;border-radius:4px;padding:3px 6px;resize:none;overflow:hidden';
+      ta.style.cssText = 'flex:1;min-width:0;font-size:0.82rem;color:var(--g-300);font-family:monospace;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;padding:3px 6px;resize:none;overflow:hidden';
       ta.addEventListener('input', () => autoResize(ta));
       setTimeout(() => autoResize(ta), 0);
 
@@ -1287,7 +1287,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
   const stepInput = document.createElement('textarea');
   stepInput.placeholder = 'Type a prompt or /command…';
   stepInput.rows = 2;
-  stepInput.style.cssText = 'flex:1;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:4px 6px;font-size:0.82rem;resize:vertical;min-height:40px;font-family:inherit';
+  stepInput.style.cssText = 'flex:1;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);padding:4px 6px;font-size:0.82rem;resize:vertical;min-height:40px;font-family:inherit';
 
   const addBtn = document.createElement('button');
   addBtn.className = 'sel-btn';
@@ -1325,7 +1325,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'sel-btn';
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+  cancelBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:var(--g-400)';
 
   saveBtn.addEventListener('click', () => {
     flushEdits();
@@ -1336,7 +1336,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
       renderStepsList();
     }
     if (!steps.length) {
-      addMessage('bot', '<span style="color:#f87171">⚠ A macro needs at least one step.</span>');
+      addMessage('bot', '<span style="color:var(--danger)">⚠ A macro needs at least one step.</span>');
       scrollBottom();
       return;
     }
@@ -1358,7 +1358,7 @@ function renderMacroEditor(bubble, name, initialSteps, onCancel) {
     .catch(err => {
       saveBtn.disabled = false;
       cancelBtn.disabled = false;
-      addMessage('bot', `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`);
+      addMessage('bot', `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`);
       scrollBottom();
     });
   });
@@ -1470,14 +1470,14 @@ export function makeCommandHandler(deps) {
       addMessage('bot', `Skipping ${skippedVideos} video(s) — face-detail needs a still image.`);
     }
     if (noPrompt) {
-      addMessage('bot', `<span style="color:#f87171">No LoRA in ${noPrompt === 1 ? 'this image\'s prompt' : `${noPrompt} images' prompts`} — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>`);
+      addMessage('bot', `<span style="color:var(--danger)">No LoRA in ${noPrompt === 1 ? 'this image\'s prompt' : `${noPrompt} images' prompts`} — set one with <code>/face-detail-prompt &lt;prompt&gt;</code></span>`);
     }
     return deps.runBatchJob(steps);
   }
 
   function runDefaultMacroOnImage(url) {
     if (!state.defaultMacro) {
-      addMessage('bot', '<span style="color:#f87171">⚠ No default macro set — use <code>/macro-set-default</code> to choose one.</span>');
+      addMessage('bot', '<span style="color:var(--danger)">⚠ No default macro set — use <code>/macro-set-default</code> to choose one.</span>');
       return Promise.resolve();
     }
     const name = state.defaultMacro;
@@ -1485,7 +1485,7 @@ export function makeCommandHandler(deps) {
     if (!macroSteps || !macroSteps.length) {
       state.defaultMacro = null;
       persistDefaultMacro(null);
-      addMessage('bot', `<span style="color:#f87171">⚠ Default macro <code>#${escapeHtml(name)}</code> no longer exists — use <code>/macro-set-default</code> to choose a new one.</span>`);
+      addMessage('bot', `<span style="color:var(--danger)">⚠ Default macro <code>#${escapeHtml(name)}</code> no longer exists — use <code>/macro-set-default</code> to choose a new one.</span>`);
       return Promise.resolve();
     }
     if (sendBtn.disabled) return Promise.resolve();
@@ -1551,7 +1551,7 @@ export function makeCommandHandler(deps) {
   // renderWorkflowPicker's fetch + .sel-btn + current-tick pattern.
   function renderWorkflowsTable() {
     const bubble = addMessage('bot',
-      '<strong>Workflow types</strong> <span style="color:#475569;font-size:0.8rem">— click a row to switch</span>')
+      '<strong>Workflow types</strong> <span style="color:var(--g-700);font-size:0.8rem">— click a row to switch</span>')
       .parentElement.querySelector('.bubble');
     const list = document.createElement('div');
     list.className = 'sel-list';
@@ -1562,9 +1562,9 @@ export function makeCommandHandler(deps) {
     function valueHtml(t) {
       const cur = t.get();
       const active = cur || t.def();
-      if (!active) return '<span style="color:#475569">not set</span>';
-      const suffix = cur ? '' : ' <span style="color:#475569">(default)</span>';
-      return `<span style="color:#a78bfa">${workflowLabelHtml(active)}</span>${suffix}`;
+      if (!active) return '<span style="color:var(--g-700)">not set</span>';
+      const suffix = cur ? '' : ' <span style="color:var(--g-700)">(default)</span>';
+      return `<span style="color:var(--neon)">${workflowLabelHtml(active)}</span>${suffix}`;
     }
 
     function collapse(row) {
@@ -1584,8 +1584,8 @@ export function makeCommandHandler(deps) {
       row.choices.innerHTML = '';
       const back = document.createElement('button');
       back.className = 'sel-btn';
-      back.innerHTML = '<span style="color:#64748b">‹ back</span> '
-        + `<strong style="color:#cbd5e1">${escapeHtml(wf)}</strong>`;
+      back.innerHTML = '<span style="color:var(--g-600)">‹ back</span> '
+        + `<strong style="color:var(--g-300)">${escapeHtml(wf)}</strong>`;
       back.addEventListener('click', () => renderChoices(row, row.workflows));
       row.choices.appendChild(back);
       const box = document.createElement('div');
@@ -1598,7 +1598,7 @@ export function makeCommandHandler(deps) {
     function renderChoices(row, workflows) {
       const t = row.type;
       if (!workflows.length) {
-        row.choices.innerHTML = '<span style="color:#94a3b8;font-size:0.85rem">No workflows available — add one to the matching workflows folder.</span>';
+        row.choices.innerHTML = '<span style="color:var(--g-400);font-size:0.85rem">No workflows available — add one to the matching workflows folder.</span>';
         return;
       }
       const cur = splitWorkflowVariant(t.get() || t.def() || '').name;
@@ -1610,7 +1610,7 @@ export function makeCommandHandler(deps) {
         const isCur = wf === cur;
         const btn = document.createElement('button');
         btn.className = 'sel-btn' + (isCur ? ' current' : '');
-        btn.innerHTML = escapeHtml(wf) + (isCur ? ' <span style="color:#7c3aed">✓</span>' : '');
+        btn.innerHTML = escapeHtml(wf) + (isCur ? ' <span style="color:var(--neon)">✓</span>' : '');
         btn.addEventListener('click', () => {
           // A workflow offering alternate models drills down one more level; one that
           // doesn't is picked outright, as before. Variants are cached per workflow
@@ -1621,7 +1621,7 @@ export function makeCommandHandler(deps) {
             else renderVariants(row, wf, cached);
             return;
           }
-          btn.innerHTML = escapeHtml(wf) + ' <span style="color:#64748b">…</span>';
+          btn.innerHTML = escapeHtml(wf) + ' <span style="color:var(--g-600)">…</span>';
           fetchWorkflowVariants(t.kind, wf).then(variants => {
             row.variants[wf] = variants;
             if (variants.length < 2) pick(row, wf);
@@ -1639,7 +1639,7 @@ export function makeCommandHandler(deps) {
         row.workflows = workflows;
         renderChoices(row, workflows);
       }).catch(() => {
-        row.choices.innerHTML = '<span style="color:#f87171">Failed to load workflows.</span>';
+        row.choices.innerHTML = '<span style="color:var(--danger)">Failed to load workflows.</span>';
       });
     }
 
@@ -1647,8 +1647,8 @@ export function makeCommandHandler(deps) {
       const header = document.createElement('button');
       header.className = 'sel-btn';
       header.innerHTML =
-        '<span class="wf-caret" style="display:inline-block;width:1em;color:#64748b">▸</span>' +
-        `<strong style="color:#cbd5e1">${escapeHtml(t.label)}</strong> ` +
+        '<span class="wf-caret" style="display:inline-block;width:1em;color:var(--g-600)">▸</span>' +
+        `<strong style="color:var(--g-300)">${escapeHtml(t.label)}</strong> ` +
         '<span class="wf-value"></span>';
       const caret = header.querySelector('.wf-caret');
       const valueEl = header.querySelector('.wf-value');
@@ -1714,20 +1714,20 @@ export function makeCommandHandler(deps) {
   // house style.
   function renderSettingsMenu() {
     const bubble = addMessage('bot',
-      '<strong>Settings</strong> <span style="color:#475569;font-size:0.8rem">— pick one to configure</span>')
+      '<strong>Settings</strong> <span style="color:var(--g-700);font-size:0.8rem">— pick one to configure</span>')
       .parentElement.querySelector('.bubble');
     const list = document.createElement('div');
     list.className = 'sel-list';
     SETTINGS_MENU.forEach(section => {
       const h = document.createElement('div');
-      h.style.cssText = 'color:#64748b;font-size:0.75rem;margin:6px 0 2px;text-transform:uppercase;letter-spacing:0.05em';
+      h.style.cssText = 'color:var(--g-600);font-size:0.75rem;margin:6px 0 2px;text-transform:uppercase;letter-spacing:0.05em';
       h.textContent = section.group;
       list.appendChild(h);
       section.items.forEach(item => {
         const btn = document.createElement('button');
         btn.className = 'sel-btn';
         btn.innerHTML = `${escapeHtml(item.label)} ` +
-          `<span style="color:#475569;font-size:0.8rem">${escapeHtml(item.cmd)}</span>`;
+          `<span style="color:var(--g-700);font-size:0.8rem">${escapeHtml(item.cmd)}</span>`;
         btn.addEventListener('click', () => {
           if (item.mode === 'insert') { inputEl.value = item.cmd + ' '; inputEl.focus(); }
           else handleSlashCommand(item.cmd);
@@ -1745,20 +1745,20 @@ export function makeCommandHandler(deps) {
   function renderChangePasswordForm() {
     const bubble = addMessage('bot',
       '<strong>Change login password</strong> ' +
-      '<span style="color:#475569;font-size:0.8rem">— stored securely, survives restarts</span>')
+      '<span style="color:var(--g-700);font-size:0.8rem">— stored securely, survives restarts</span>')
       .parentElement.querySelector('.bubble');
 
     const wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px;max-width:320px';
 
-    const inputStyle = 'background:#1e293b;border:1px solid #334155;border-radius:4px;' +
-      'color:#f1f5f9;padding:4px 6px;font-size:0.85rem';
+    const inputStyle = 'background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;' +
+      'color:var(--g-100);padding:4px 6px;font-size:0.85rem';
     const mkField = (labelText, placeholder) => {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;flex-direction:column;gap:2px';
       const lbl = document.createElement('label');
       lbl.textContent = labelText;
-      lbl.style.cssText = 'color:#94a3b8;font-size:0.78rem';
+      lbl.style.cssText = 'color:var(--g-400);font-size:0.78rem';
       const inp = document.createElement('input');
       inp.type = 'password';
       inp.autocomplete = 'off';
@@ -1786,17 +1786,17 @@ export function makeCommandHandler(deps) {
       const nw = newInp.value;
       const confirm = confirmInp.value;
       if (nw.length < 8) {
-        status.style.color = '#f87171';
+        status.style.color = 'var(--danger)';
         status.textContent = 'New password must be at least 8 characters.';
         return;
       }
       if (nw !== confirm) {
-        status.style.color = '#f87171';
+        status.style.color = 'var(--danger)';
         status.textContent = 'New password and confirmation do not match.';
         return;
       }
       submit.disabled = true;
-      status.style.color = '#94a3b8';
+      status.style.color = 'var(--g-400)';
       status.textContent = 'Updating…';
       fetch('/api/change-password', {
         method: 'POST',
@@ -1808,7 +1808,7 @@ export function makeCommandHandler(deps) {
           if (ok && d.ok) {
             wrap.remove();
             const ok2 = document.createElement('div');
-            ok2.style.cssText = 'color:#4ade80;font-size:0.85rem;margin-top:6px';
+            ok2.style.cssText = 'color:var(--ok);font-size:0.85rem;margin-top:6px';
             ok2.textContent = '✓ Password changed. It takes effect at your next login.';
             bubble.appendChild(ok2);
             // First time a password is set, the server re-keys the encrypted volumes
@@ -1817,18 +1817,18 @@ export function makeCommandHandler(deps) {
             // show it once and tell the user to save it offline.
             if (d.recovery) {
               const rec = document.createElement('div');
-              rec.style.cssText = 'margin-top:10px;padding:10px;border:1px solid #f59e0b;' +
-                'border-radius:6px;background:#1e293b;max-width:420px';
+              rec.style.cssText = 'margin-top:10px;padding:10px;border:1px solid var(--warn);' +
+                'border-radius:6px;background:var(--g-900);max-width:420px';
               const hdr = document.createElement('div');
-              hdr.style.cssText = 'color:#fbbf24;font-size:0.82rem;font-weight:600;margin-bottom:6px';
+              hdr.style.cssText = 'color:var(--warn);font-size:0.82rem;font-weight:600;margin-bottom:6px';
               hdr.textContent = '⚠ Recovery key — store this offline now';
               const body = document.createElement('div');
-              body.style.cssText = 'color:#cbd5e1;font-size:0.78rem;margin-bottom:8px';
+              body.style.cssText = 'color:var(--g-300);font-size:0.78rem;margin-bottom:8px';
               body.textContent = 'This is the only way to recover the encrypted archive if ' +
                 'you forget your password. It is shown once and is not stored on the server.';
               const key = document.createElement('code');
               key.style.cssText = 'display:block;user-select:all;word-break:break-all;' +
-                'background:#0f172a;border:1px solid #334155;border-radius:4px;color:#f1f5f9;' +
+                'background:var(--g-950);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);' +
                 'padding:6px 8px;font-size:0.82rem';
               key.textContent = d.recovery;
               const copy = document.createElement('button');
@@ -1846,14 +1846,14 @@ export function makeCommandHandler(deps) {
             }
           } else {
             submit.disabled = false;
-            status.style.color = '#f87171';
+            status.style.color = 'var(--danger)';
             status.textContent = (d && d.error) || 'Could not change password.';
           }
           scrollBottom();
         })
         .catch(() => {
           submit.disabled = false;
-          status.style.color = '#f87171';
+          status.style.color = 'var(--danger)';
           status.textContent = 'Network error — please try again.';
         });
     };
@@ -1886,7 +1886,7 @@ export function makeCommandHandler(deps) {
       const lines = raw.slice('/multi-prompt'.length).split('\n').map(l => l.trim()).filter(Boolean);
       if (!lines.length) {
         addMessage('user', escapeHtml(raw), null);
-        addMessage('bot', '<span style="color:#f87171">⚠ Paste line-separated prompts after <code>/multi-prompt</code> (use Shift+Enter between lines)</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Paste line-separated prompts after <code>/multi-prompt</code> (use Shift+Enter between lines)</span>');
         return;
       }
       // One server-side batch: each line's shot writes its own user line.
@@ -1900,7 +1900,7 @@ export function makeCommandHandler(deps) {
       const master = expandAliases(raw.slice('/sequence'.length).trim(), state.ALIASES);
       addMessage('user', escapeHtml(raw), raw);
       if (!master) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide a master prompt, e.g. <code>/sequence a woman practising yoga at sunrise</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide a master prompt, e.g. <code>/sequence a woman practising yoga at sunrise</code></span>');
         return;
       }
       const count = state.iterations === 1 ? 15 : state.iterations;
@@ -1919,7 +1919,7 @@ export function makeCommandHandler(deps) {
       const master = expandAliases(raw.slice('/video-sequence'.length).trim(), state.ALIASES);
       addMessage('user', escapeHtml(raw), raw);
       if (!master) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide a master prompt, e.g. <code>/video-sequence a woman dancing in the rain</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide a master prompt, e.g. <code>/video-sequence a woman dancing in the rain</code></span>');
         return;
       }
       const count = state.iterations === 1 ? 15 : state.iterations;
@@ -1937,7 +1937,7 @@ export function makeCommandHandler(deps) {
       const master = expandAliases(raw.slice('/video-story'.length).trim(), state.ALIASES);
       addMessage('user', escapeHtml(raw), raw);
       if (!master) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide a story prompt, e.g. <code>/video-story two friends get lost hiking and find a hidden lake</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide a story prompt, e.g. <code>/video-story two friends get lost hiking and find a hidden lake</code></span>');
         return;
       }
       const count = videoStoryCount(state.iterations);
@@ -1983,7 +1983,7 @@ export function makeCommandHandler(deps) {
           notifyVideoStoryChanged();
         })
         .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ Video story failed: ${escapeHtml(err.message)}</span>`;
+          bubble.innerHTML = `<span style="color:var(--danger)">⚠ Video story failed: ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
     }
@@ -1991,7 +1991,7 @@ export function makeCommandHandler(deps) {
     if (cmd === '/video-story-review') {
       addMessage('user', escapeHtml(raw), raw);
       if (!state.videoStory) {
-        addMessage('bot', '<span style="color:#f87171">⚠ No video story in this chat — use <code>/video-story &lt;prompt&gt;</code> first.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ No video story in this chat — use <code>/video-story &lt;prompt&gt;</code> first.</span>');
         return;
       }
       renderVideoStoryTable(addMessage('bot', ''));
@@ -2035,7 +2035,7 @@ export function makeCommandHandler(deps) {
     if (cmd === '/sequence-review') {
       addMessage('user', escapeHtml(raw), raw);
       if (!state.lastSequence || !state.lastSequence.items.length) {
-        addMessage('bot', '<span style="color:#f87171">⚠ No sequence has been run yet — use <code>/sequence</code> or <code>/video-sequence</code> first.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ No sequence has been run yet — use <code>/sequence</code> or <code>/video-sequence</code> first.</span>');
         return;
       }
       const bubble = addMessage('bot', '');
@@ -2064,7 +2064,7 @@ export function makeCommandHandler(deps) {
       const from = parts[1];
       const to   = parts.slice(2).join(' ');
       if (!to) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/sequence-replacement woman elegant woman in a red dress</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide both a from and a to value, e.g. <code>/sequence-replacement woman elegant woman in a red dress</code></span>');
         return;
       }
       const prevSeq = upsertReplacement(state.sequenceReplacements, from, to, true);
@@ -2088,7 +2088,7 @@ export function makeCommandHandler(deps) {
       const from = parts[1];
       const to   = parts.slice(2).join(' ');
       if (!to) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/i2i-replacement Dog Cat</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide both a from and a to value, e.g. <code>/i2i-replacement Dog Cat</code></span>');
         return;
       }
       const prevI2i = upsertReplacement(state.image2imageReplacements, from, to);
@@ -2119,7 +2119,7 @@ export function makeCommandHandler(deps) {
       const from = parts[1];
       const to   = parts.slice(2).join(' ');
       if (!to) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/face-detail-replacement Dog Cat</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide both a from and a to value, e.g. <code>/face-detail-replacement Dog Cat</code></span>');
         return;
       }
       const prevFd = upsertReplacement(state.faceDetailReplacements, from, to);
@@ -2178,7 +2178,7 @@ export function makeCommandHandler(deps) {
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentImage2ImageWorkflow = wfArg;
-        addMessage('bot', `Image2image workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        addMessage('bot', `Image2image workflow set to <strong style="color:var(--neon)">${escapeHtml(wfArg)}</strong>`);
         return;
       }
       renderWorkflowPicker({
@@ -2215,7 +2215,7 @@ export function makeCommandHandler(deps) {
       const from = parts[1];
       const to   = parts.slice(2).join(' ');
       if (!to) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a from and a to value, e.g. <code>/i2v-replacement Dog Cat</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide both a from and a to value, e.g. <code>/i2v-replacement Dog Cat</code></span>');
         return;
       }
       const prevI2v = upsertReplacement(state.image2videoReplacements, from, to);
@@ -2273,7 +2273,7 @@ export function makeCommandHandler(deps) {
           state.reuseSeed = data.seed;
           addMessage('bot', `🎲 The next generation (t2i, i2v or t2v) will reuse seed <code>${data.seed}</code>. It reverts to random seeds afterwards.`);
         })
-        .catch(() => addMessage('bot', '<span style="color:#f87171">⚠ Could not fetch the last seed.</span>'));
+        .catch(() => addMessage('bot', '<span style="color:var(--danger)">⚠ Could not fetch the last seed.</span>'));
       return;
     }
 
@@ -2289,7 +2289,7 @@ export function makeCommandHandler(deps) {
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentImage2VideoWorkflow = wfArg;
-        addMessage('bot', `Image2video workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        addMessage('bot', `Image2video workflow set to <strong style="color:var(--neon)">${escapeHtml(wfArg)}</strong>`);
         return;
       }
       renderWorkflowPicker({
@@ -2319,7 +2319,7 @@ export function makeCommandHandler(deps) {
       if (state.t2vMode) {
         const t2vWf = state.currentText2VideoWorkflow || DEFAULT_TEXT2VIDEO_WORKFLOW;
         const vs = state.currentVideoSettings;
-        addMessage('bot', `Text-to-video mode <strong style="color:#a78bfa">ON</strong> — prompts now generate video with <strong style="color:#a78bfa">${escapeHtml(t2vWf || 'the first text2video workflow')}</strong> (${vs.frames} frames @ ${vs.fps} fps, ${vs.width}×${vs.height}). Change it with <code>/t2v-workflow</code> or <code>/video-settings</code>; type <code>/t2v</code> again to turn it off.`);
+        addMessage('bot', `Text-to-video mode <strong style="color:var(--neon)">ON</strong> — prompts now generate video with <strong style="color:var(--neon)">${escapeHtml(t2vWf || 'the first text2video workflow')}</strong> (${vs.frames} frames @ ${vs.fps} fps, ${vs.width}×${vs.height}). Change it with <code>/t2v-workflow</code> or <code>/video-settings</code>; type <code>/t2v</code> again to turn it off.`);
       } else {
         addMessage('bot', 'Text-to-video mode <strong>OFF</strong> — prompts generate images again.');
       }
@@ -2331,7 +2331,7 @@ export function makeCommandHandler(deps) {
       setPrivacyMode(!isPrivacyMode());
       deps.updateHeaderStatus();
       if (isPrivacyMode()) {
-        addMessage('bot', 'Privacy mode <strong style="color:#a78bfa">ON</strong> — images and videos are hidden until you hover over them. Remembered in this browser only; type <code>/privacy</code> again to turn it off.');
+        addMessage('bot', 'Privacy mode <strong style="color:var(--neon)">ON</strong> — images and videos are hidden until you hover over them. Remembered in this browser only; type <code>/privacy</code> again to turn it off.');
       } else {
         addMessage('bot', 'Privacy mode <strong>OFF</strong> — images and videos are shown again.');
       }
@@ -2344,7 +2344,7 @@ export function makeCommandHandler(deps) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentText2VideoWorkflow = wfArg;
         deps.updateHeaderStatus();
-        addMessage('bot', `Text2video workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        addMessage('bot', `Text2video workflow set to <strong style="color:var(--neon)">${escapeHtml(wfArg)}</strong>`);
         return;
       }
       renderWorkflowPicker({
@@ -2376,12 +2376,12 @@ export function makeCommandHandler(deps) {
       }
       const i2vArg = raw.slice('/i2v'.length).trim();
       if (i2vArg !== '' && !/^\d+$/.test(i2vArg)) {
-        addMessage('bot', '<span style="color:#f87171">⚠ <code>/i2v</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/i2v-set-prompt &lt;prompt&gt;</code> first.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ <code>/i2v</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/i2v-set-prompt &lt;prompt&gt;</code> first.</span>');
         return;
       }
       const i2vN = i2vArg !== '' ? parseInt(i2vArg, 10) : 1;
       if (i2vN < 1) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/i2v</code> or <code>/i2v &lt;N&gt;</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Usage: <code>/i2v</code> or <code>/i2v &lt;N&gt;</code></span>');
         return;
       }
       // Built up front and run as one server-side batch, so the chain survives the tab
@@ -2392,7 +2392,7 @@ export function makeCommandHandler(deps) {
         addMessage('bot', `Skipping ${i2vVideos} video(s) — image2video needs a still image.`);
       }
       if (missingPrompt) {
-        addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/i2v-set-prompt &lt;prompt&gt;</code></span>'
+        addMessage('bot', '<span style="color:var(--danger)">No original prompt for this image — set one with <code>/i2v-set-prompt &lt;prompt&gt;</code></span>'
           + (i2vSteps.length ? ` Running the ${i2vSteps.length} before it.` : ''));
       }
       return deps.runBatchJob(i2vSteps);
@@ -2403,7 +2403,7 @@ export function makeCommandHandler(deps) {
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentInpaintingWorkflow = wfArg;
-        addMessage('bot', `Inpainting workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        addMessage('bot', `Inpainting workflow set to <strong style="color:var(--neon)">${escapeHtml(wfArg)}</strong>`);
         return;
       }
       renderWorkflowPicker({
@@ -2457,7 +2457,7 @@ export function makeCommandHandler(deps) {
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentRemovalWorkflow = wfArg;
-        addMessage('bot', `Removal workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        addMessage('bot', `Removal workflow set to <strong style="color:var(--neon)">${escapeHtml(wfArg)}</strong>`);
         return;
       }
       renderWorkflowPicker({
@@ -2485,7 +2485,7 @@ export function makeCommandHandler(deps) {
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentUpscaleWorkflow = wfArg;
-        addMessage('bot', `Upscale workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        addMessage('bot', `Upscale workflow set to <strong style="color:var(--neon)">${escapeHtml(wfArg)}</strong>`);
         return;
       }
       renderWorkflowPicker({
@@ -2516,12 +2516,12 @@ export function makeCommandHandler(deps) {
       }
       const i2iArg = raw.slice('/i2i'.length).trim();
       if (i2iArg !== '' && !/^\d+$/.test(i2iArg)) {
-        addMessage('bot', '<span style="color:#f87171">⚠ <code>/i2i</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/i2i-set-prompt &lt;prompt&gt;</code> first.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ <code>/i2i</code> takes only a number (how many recent images to process). To use a custom prompt, set one with <code>/i2i-set-prompt &lt;prompt&gt;</code> first.</span>');
         return;
       }
       const i2iN = i2iArg !== '' ? parseInt(i2iArg, 10) : 1;
       if (i2iN < 1) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/i2i</code> or <code>/i2i &lt;N&gt;</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Usage: <code>/i2i</code> or <code>/i2i &lt;N&gt;</code></span>');
         return;
       }
       const i2iTargets = state.sessionImages.slice(-i2iN);
@@ -2537,7 +2537,7 @@ export function makeCommandHandler(deps) {
             const orig = state.imagePrompts[img];
             if (!orig) {
               i2iAborted = true;
-              addMessage('bot', '<span style="color:#f87171">No original prompt for this image — set one with <code>/i2i-set-prompt &lt;prompt&gt;</code></span>');
+              addMessage('bot', '<span style="color:var(--danger)">No original prompt for this image — set one with <code>/i2i-set-prompt &lt;prompt&gt;</code></span>');
               return;
             }
             prompt = applyReplacements(orig, state.image2imageReplacements);
@@ -2553,7 +2553,7 @@ export function makeCommandHandler(deps) {
       const master = raw.slice('/t2i-workflow-iterate'.length).trim();
       addMessage('user', escapeHtml(raw), raw);
       if (!master) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/t2i-workflow-iterate a cat astronaut</code> — then tick the workflows to run it against</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide a prompt, e.g. <code>/t2i-workflow-iterate a cat astronaut</code> — then tick the workflows to run it against</span>');
         return;
       }
       const bubble = addMessage('bot', '<div class="status-text">Loading workflows…</div>').parentElement.querySelector('.bubble');
@@ -2570,9 +2570,9 @@ export function makeCommandHandler(deps) {
       }).then(loaded => {
         if (!loaded) return;
         const entries = expandWorkflowVariants(loaded.workflows, loaded.variants);
-        const rowStyle = 'display:flex;align-items:center;gap:8px;font-size:0.9rem;color:#cbd5e1;cursor:pointer';
+        const rowStyle = 'display:flex;align-items:center;gap:8px;font-size:0.9rem;color:var(--g-300);cursor:pointer';
         let html = `<strong>Run against which workflows?</strong>
-          <div style="font-size:0.8rem;color:#94a3b8;margin:4px 0 8px">Prompt: <code>${escapeHtml(master)}</code></div>
+          <div style="font-size:0.8rem;color:var(--g-400);margin:4px 0 8px">Prompt: <code>${escapeHtml(master)}</code></div>
           <div class="sel-list">`;
         entries.forEach((e, i) => {
           if (e.model === null) {
@@ -2584,11 +2584,11 @@ export function makeCommandHandler(deps) {
           }
           // A multi-model workflow: a header naming it, then an indented row per model.
           if (e.isDefault) {
-            html += `<div class="wfi-group" style="font-size:0.9rem;color:#cbd5e1">${escapeHtml(e.workflow)}</div>`;
+            html += `<div class="wfi-group" style="font-size:0.9rem;color:var(--g-300)">${escapeHtml(e.workflow)}</div>`;
           }
           html += `<label class="wfi-row" style="${rowStyle};padding-left:22px">
                      <input type="checkbox" class="wfi-check" value="${escapeHtml(e.wire)}" data-label="${escapeHtml(`${e.workflow}@${e.model}`)}" id="wfi-${i}">
-                     ${escapeHtml(e.model)}${e.isDefault ? ' <span style="color:#475569;font-size:0.85em">(default)</span>' : ''}
+                     ${escapeHtml(e.model)}${e.isDefault ? ' <span style="color:var(--g-700);font-size:0.85em">(default)</span>' : ''}
                    </label>`;
         });
         html += `</div>
@@ -2605,7 +2605,7 @@ export function makeCommandHandler(deps) {
             if (!bubble.querySelector('.wfi-warn')) {
               const warn = document.createElement('div');
               warn.className = 'wfi-warn';
-              warn.style.cssText = 'color:#f87171;font-size:0.82rem;margin-top:6px';
+              warn.style.cssText = 'color:var(--danger);font-size:0.82rem;margin-top:6px';
               warn.textContent = '⚠ Tick at least one workflow.';
               bubble.appendChild(warn);
             }
@@ -2615,7 +2615,7 @@ export function makeCommandHandler(deps) {
           const warn = bubble.querySelector('.wfi-warn');
           if (warn) warn.remove();
           bubble.insertAdjacentHTML('beforeend',
-            `<div class="status-text" style="margin-top:8px">Generating <strong style="color:#a78bfa">${selected.length}</strong> run(s)…</div>`);
+            `<div class="status-text" style="margin-top:8px">Generating <strong style="color:var(--neon)">${selected.length}</strong> run(s)…</div>`);
 
           deps.runBatchJob(selected.map((sel, i) => ({
             kind: 't2i', prompt: master, workflow: sel.wire,
@@ -2623,7 +2623,7 @@ export function makeCommandHandler(deps) {
           })));
         });
         scrollBottom();
-      }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load workflows.</span>'; });
+      }).catch(() => { bubble.innerHTML = '<span style="color:var(--danger)">Failed to load workflows.</span>'; });
       return;
     }
 
@@ -2631,11 +2631,11 @@ export function makeCommandHandler(deps) {
       const prompt = raw.slice('/face-detail-prompt'.length).trim();
       addMessage('user', escapeHtml(raw), raw);
       if (!prompt) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide a prompt, e.g. <code>/face-detail-prompt a clear, detailed face &lt;lora:name:strength&gt;</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide a prompt, e.g. <code>/face-detail-prompt a clear, detailed face &lt;lora:name:strength&gt;</code></span>');
         return;
       }
       if (!/<lora:[^>]+>/i.test(prompt)) {
-        addMessage('bot', '<span style="color:#f87171">⚠ <code>/face-detail-prompt</code> needs a LoRA tag in the prompt, e.g. <code>/face-detail-prompt a clear, detailed face &lt;lora:name:strength&gt;</code> — type <code>/lora</code> to find one.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ <code>/face-detail-prompt</code> needs a LoRA tag in the prompt, e.g. <code>/face-detail-prompt a clear, detailed face &lt;lora:name:strength&gt;</code> — type <code>/lora</code> to find one.</span>');
         return;
       }
       state.lastFaceDetailPrompt = prompt;
@@ -2659,7 +2659,7 @@ export function makeCommandHandler(deps) {
       const upscaleArg = raw.slice('/upscale'.length).trim();
       const upscaleN = upscaleArg ? parseInt(upscaleArg, 10) : 1;
       if (isNaN(upscaleN) || upscaleN < 1) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/upscale</code> or <code>/upscale &lt;N&gt;</code> — upscale the last N images</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Usage: <code>/upscale</code> or <code>/upscale &lt;N&gt;</code> — upscale the last N images</span>');
         return;
       }
       const upscaleTargets = state.sessionImages.slice(-upscaleN);
@@ -2686,7 +2686,7 @@ export function makeCommandHandler(deps) {
       const fdArg = raw.slice('/face-detail'.length).trim();
       const fdN = fdArg ? parseInt(fdArg, 10) : 1;
       if (isNaN(fdN) || fdN < 1) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/face-detail</code> or <code>/face-detail &lt;N&gt;</code> — face-detail the last N images</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Usage: <code>/face-detail</code> or <code>/face-detail &lt;N&gt;</code> — face-detail the last N images</span>');
         return;
       }
       return runFaceDetailBatch(state.sessionImages.slice(-fdN));
@@ -2697,7 +2697,7 @@ export function makeCommandHandler(deps) {
       const fsArg = raw.slice('/face-detail-super'.length).trim();
       const fsN = fsArg ? parseInt(fsArg, 10) : NaN;
       if (isNaN(fsN) || fsN < 1 || fsN > 16 || String(fsN) !== fsArg) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Usage: <code>/face-detail-super &lt;N&gt;</code> — make the face icon produce N (2–16) detailer variations with a tile picker; <code>/face-detail-super 1</code> restores the normal before/after slider</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Usage: <code>/face-detail-super &lt;N&gt;</code> — make the face icon produce N (2–16) detailer variations with a tile picker; <code>/face-detail-super 1</code> restores the normal before/after slider</span>');
         return;
       }
       state.faceSuperN = fsN;
@@ -2822,7 +2822,7 @@ export function makeCommandHandler(deps) {
         const esc = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const re = new RegExp(esc, 'gi');
         return html.replace(/(<[^>]*>)|([^<]+)/g, (_m, tag, text) =>
-          tag ? tag : text.replace(re, t => `<span style="color:#ef4444;font-weight:bold">${t}</span>`)
+          tag ? tag : text.replace(re, t => `<span style="color:var(--danger);font-weight:bold">${t}</span>`)
         );
       }
 
@@ -2839,25 +2839,25 @@ export function makeCommandHandler(deps) {
         const sigHtml  = hlHtml(escapeHtml(e.sig), filter);
         const descHtml = hlHtml(e.desc, filter);
         const inner = e.notes
-          ? `<code>${sigHtml}</code> — ${descHtml}<div style="margin-top:2px;color:#475569;font-size:0.78rem">${hlHtml(e.notes, filter)}</div>`
+          ? `<code>${sigHtml}</code> — ${descHtml}<div style="margin-top:2px;color:var(--g-700);font-size:0.78rem">${hlHtml(e.notes, filter)}</div>`
           : `<code>${sigHtml}</code> — ${descHtml}`;
-        return `<div style="font-size:0.85rem;color:#94a3b8">${inner}</div>`;
+        return `<div style="font-size:0.85rem;color:var(--g-400)">${inner}</div>`;
       }).join('\n          ');
 
       const title = filter
-        ? `<strong>Commands matching "${escapeHtml(filter)}"</strong> <span style="font-size:0.8rem;color:#64748b">(${matched.length} of ${helpEntries.length})</span>`
+        ? `<strong>Commands matching "${escapeHtml(filter)}"</strong> <span style="font-size:0.8rem;color:var(--g-600)">(${matched.length} of ${helpEntries.length})</span>`
         : '<strong>Available commands</strong>';
 
       const body = matched.length
         ? rows
-        : `<div style="color:#64748b;font-size:0.85rem">No commands matched "${escapeHtml(filter)}"</div>`;
+        : `<div style="color:var(--g-600);font-size:0.85rem">No commands matched "${escapeHtml(filter)}"</div>`;
 
       addMessage('bot', `
         ${title}
         <div class="sel-list" style="margin-top:10px;gap:4px">
           ${body}
         </div>
-        ${!filter ? `<div style="margin-top:10px;font-size:0.8rem;color:#475569">
+        ${!filter ? `<div style="margin-top:10px;font-size:0.8rem;color:var(--g-700)">
           Include LoRAs in any prompt with <code>&lt;lora:name:strength&gt;</code>,
           or type <code>/lora</code> while writing a prompt to search for one
         </div>` : ''}
@@ -2875,8 +2875,8 @@ export function makeCommandHandler(deps) {
           const isCur = addr === curAddr;
           html += `<button class="sel-btn${isCur ? ' current' : ''}"
                      data-addr="${addr}" data-os="${s.os || 'unix'}" data-name="${s.name}">
-                     ${escapeHtml(s.name)} <span style="color:#475569;font-size:0.8em">${addr}</span>
-                     ${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}
+                     ${escapeHtml(s.name)} <span style="color:var(--g-700);font-size:0.8em">${addr}</span>
+                     ${isCur ? ' <span style="color:var(--neon)">✓</span>' : ''}
                    </button>`;
         });
         html += '</div>';
@@ -2884,12 +2884,12 @@ export function makeCommandHandler(deps) {
         bubble.querySelectorAll('.sel-btn').forEach(btn => {
           btn.addEventListener('click', () => {
             state.currentServer = { address: btn.dataset.addr, os: btn.dataset.os, name: btn.dataset.name };
-            bubble.innerHTML = `Server set to <strong style="color:#a78bfa">${escapeHtml(state.currentServer.name)}</strong> <span style="color:#475569">(${state.currentServer.address})</span>`;
+            bubble.innerHTML = `Server set to <strong style="color:var(--neon)">${escapeHtml(state.currentServer.name)}</strong> <span style="color:var(--g-700)">(${state.currentServer.address})</span>`;
             deps.updateHeaderStatus();
           });
         });
         scrollBottom();
-      }).catch(() => { bubble.innerHTML = '<span style="color:#f87171">Failed to load servers.</span>'; });
+      }).catch(() => { bubble.innerHTML = '<span style="color:var(--danger)">Failed to load servers.</span>'; });
       return;
     }
 
@@ -2922,7 +2922,7 @@ export function makeCommandHandler(deps) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentWorkflow = wfArg;
         deps.updateHeaderStatus();
-        addMessage('bot', `Workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        addMessage('bot', `Workflow set to <strong style="color:var(--neon)">${escapeHtml(wfArg)}</strong>`);
         return;
       }
       renderWorkflowPicker({
@@ -2950,7 +2950,7 @@ export function makeCommandHandler(deps) {
       if (wfArg) {
         addMessage('user', escapeHtml(raw), raw);
         state.currentFaceWorkflow = wfArg;
-        addMessage('bot', `Face-detailer workflow set to <strong style="color:#a78bfa">${escapeHtml(wfArg)}</strong>`);
+        addMessage('bot', `Face-detailer workflow set to <strong style="color:var(--neon)">${escapeHtml(wfArg)}</strong>`);
         return;
       }
       renderWorkflowPicker({
@@ -2983,13 +2983,13 @@ export function makeCommandHandler(deps) {
       }
       const connParts = connStr.split(':');
       if (connParts.length !== 3) {
-        addMessage('bot', `<span style="color:#f87171">⚠ Expected <code>host:port:os</code> — e.g. <code>mordor:8000:windows</code></span>`);
+        addMessage('bot', `<span style="color:var(--danger)">⚠ Expected <code>host:port:os</code> — e.g. <code>mordor:8000:windows</code></span>`);
         return;
       }
       const [host, portStr, os] = connParts;
       const port = parseInt(portStr, 10);
       if (!host || isNaN(port) || !os) {
-        addMessage('bot', `<span style="color:#f87171">⚠ Invalid format. Expected <code>host:port:os</code></span>`);
+        addMessage('bot', `<span style="color:var(--danger)">⚠ Invalid format. Expected <code>host:port:os</code></span>`);
         return;
       }
       fetch('/api/add-server', {
@@ -3000,9 +3000,9 @@ export function makeCommandHandler(deps) {
       .then(r => r.json())
       .then(data => {
         if (data.error) throw new Error(data.error);
-        addMessage('bot', `Server <strong style="color:#a78bfa">${escapeHtml(data.name)}</strong> added (<code>${escapeHtml(data.host)}:${data.port}</code>, OS: <code>${escapeHtml(data.os)}</code>).<br>Use <code>/server</code> to select it.`);
+        addMessage('bot', `Server <strong style="color:var(--neon)">${escapeHtml(data.name)}</strong> added (<code>${escapeHtml(data.host)}:${data.port}</code>, OS: <code>${escapeHtml(data.os)}</code>).<br>Use <code>/server</code> to select it.`);
       })
-      .catch(err => addMessage('bot', `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`));
+      .catch(err => addMessage('bot', `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`));
       return;
     }
 
@@ -3032,7 +3032,7 @@ export function makeCommandHandler(deps) {
           }
           state.activeSlideshowCtrl = createSlideshow(bubble, images.slice(0, n).reverse());
         })
-        .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
+        .catch(() => { bubble.innerHTML = '<span style="color:var(--danger)">⚠ Failed to load images.</span>'; });
       return;
     }
 
@@ -3052,7 +3052,7 @@ export function makeCommandHandler(deps) {
           if (!reverse) images = images.slice().reverse();
           state.activeSlideshowCtrl = createSlideshow(bubble, images);
         })
-        .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
+        .catch(() => { bubble.innerHTML = '<span style="color:var(--danger)">⚠ Failed to load images.</span>'; });
       return;
     }
 
@@ -3098,7 +3098,7 @@ export function makeCommandHandler(deps) {
           }
           renderReviewGrid(bubble, images.slice(0, n).reverse(), gridRunners);
         })
-        .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
+        .catch(() => { bubble.innerHTML = '<span style="color:var(--danger)">⚠ Failed to load images.</span>'; });
       return;
     }
 
@@ -3116,7 +3116,7 @@ export function makeCommandHandler(deps) {
           }
           renderReviewGrid(bubble, images.slice().reverse(), gridRunners);
         })
-        .catch(() => { bubble.innerHTML = '<span style="color:#f87171">⚠ Failed to load images.</span>'; });
+        .catch(() => { bubble.innerHTML = '<span style="color:var(--danger)">⚠ Failed to load images.</span>'; });
       return;
     }
 
@@ -3141,18 +3141,18 @@ export function makeCommandHandler(deps) {
           bubble.innerHTML = `
             <div style="margin-bottom:8px">
               <strong>Last-sent workflow</strong>
-              <span style="color:#475569;font-size:0.8rem;margin-left:8px">${escapeHtml(data.workflow_name || '?')} · ${nodeCount} node(s) · ${escapeHtml(ts)}</span>
+              <span style="color:var(--g-700);font-size:0.8rem;margin-left:8px">${escapeHtml(data.workflow_name || '?')} · ${nodeCount} node(s) · ${escapeHtml(ts)}</span>
             </div>
             <a href="${escapeHtml(url)}" download="${escapeHtml(filename)}"
-               style="display:inline-block;margin-bottom:10px;padding:4px 12px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#a78bfa;font-size:0.82rem;text-decoration:none">
+               style="display:inline-block;margin-bottom:10px;padding:4px 12px;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--neon);font-size:0.82rem;text-decoration:none">
               ⬇ Download ${escapeHtml(filename)}
             </a>
-            <pre style="background:#0f172a;border:1px solid #1e293b;border-radius:4px;padding:8px;font-size:0.72rem;color:#94a3b8;max-height:320px;overflow:auto;white-space:pre;margin:0">${escapeHtml(pretty.slice(0, 8000))}${pretty.length > 8000 ? '\n… (truncated — download for full JSON)' : ''}</pre>
+            <pre style="background:var(--g-950);border:1px solid var(--g-900);border-radius:4px;padding:8px;font-size:0.72rem;color:var(--g-400);max-height:320px;overflow:auto;white-space:pre;margin:0">${escapeHtml(pretty.slice(0, 8000))}${pretty.length > 8000 ? '\n… (truncated — download for full JSON)' : ''}</pre>
           `;
           scrollBottom();
         })
         .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+          bubble.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
       return;
@@ -3177,16 +3177,16 @@ export function makeCommandHandler(deps) {
           bubble.innerHTML = `
             <div style="margin-bottom:8px">
               <strong>Settings backup ready</strong>
-              <span style="color:#475569;font-size:0.8rem;margin-left:8px">${escapeHtml(kb)} KB · macros, aliases, sessions, servers</span>
+              <span style="color:var(--g-700);font-size:0.8rem;margin-left:8px">${escapeHtml(kb)} KB · macros, aliases, sessions, servers</span>
             </div>
             <a href="${escapeHtml(url)}" download="${escapeHtml(filename)}"
-               style="display:inline-block;padding:4px 12px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#a78bfa;font-size:0.82rem;text-decoration:none">
+               style="display:inline-block;padding:4px 12px;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--neon);font-size:0.82rem;text-decoration:none">
               ⬇ Download ${escapeHtml(filename)}
             </a>`;
           scrollBottom();
         })
         .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+          bubble.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
       return;
@@ -3204,7 +3204,7 @@ export function makeCommandHandler(deps) {
         bubble.innerHTML = 'Deleted 1 image.';
         scrollBottom();
       }).catch(err => {
-        bubble.innerHTML = `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
+        bubble.innerHTML = `<span style="color:var(--danger)">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
         scrollBottom();
       });
       return;
@@ -3231,7 +3231,7 @@ export function makeCommandHandler(deps) {
           messagesEl.innerHTML = '';
           addMessage('bot', 'Chat cleared. Describe the image you\'d like to generate.');
         } else {
-          bubble.innerHTML = `Deleted ${ok} image(s). <span style="color:#f87171">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`;
+          bubble.innerHTML = `Deleted ${ok} image(s). <span style="color:var(--danger)">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`;
           scrollBottom();
         }
       });
@@ -3259,7 +3259,7 @@ export function makeCommandHandler(deps) {
               const failed = results.filter(r => r.status === 'rejected');
               const ok = results.length - failed.length;
               if (failed.length) {
-                bubble.innerHTML = `Deleted ${ok} image(s) generated today. <span style="color:#f87171">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`;
+                bubble.innerHTML = `Deleted ${ok} image(s) generated today. <span style="color:var(--danger)">⚠ ${failed.length} failed: ${escapeHtml(failed[0].reason.message)}</span>`;
               } else {
                 bubble.innerHTML = `Deleted ${ok} image(s) generated today.`;
               }
@@ -3267,7 +3267,7 @@ export function makeCommandHandler(deps) {
             });
           })
           .catch(err => {
-            bubble.innerHTML = `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
+            bubble.innerHTML = `<span style="color:var(--danger)">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
             scrollBottom();
           });
       };
@@ -3296,7 +3296,7 @@ export function makeCommandHandler(deps) {
             addMessage('bot', `Deleted ${data.deleted} image(s) from the output folder.`);
           })
           .catch(err => {
-            bubble.innerHTML = `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
+            bubble.innerHTML = `<span style="color:var(--danger)">⚠ Delete failed: ${escapeHtml(err.message)}</span>`;
             scrollBottom();
           });
       };
@@ -3305,7 +3305,7 @@ export function makeCommandHandler(deps) {
 
     if (cmd === '/fscheck') {
       const bubble = addMessage('bot', '<div class="status-text">Checking filesystems…</div>').parentElement.querySelector('.bubble');
-      const toneColor = { ok: '#4ade80', warn: '#fbbf24', error: '#f87171', muted: '#9ca3af' };
+      const toneColor = { ok: 'var(--ok)', warn: 'var(--warn)', error: 'var(--danger)', muted: 'var(--g-400)' };
       const renderRow = (label, result) => {
         const f = formatFscheckResult(result);
         const color = toneColor[f.tone] || toneColor.muted;
@@ -3334,18 +3334,18 @@ export function makeCommandHandler(deps) {
               scrollBottom();
             } else if (msg.type === 'error') {
               es.close();
-              bubble.innerHTML = `<span style="color:#f87171">⚠ Filesystem check failed: ${escapeHtml(msg.message || 'unknown error')}</span>`;
+              bubble.innerHTML = `<span style="color:var(--danger)">⚠ Filesystem check failed: ${escapeHtml(msg.message || 'unknown error')}</span>`;
               scrollBottom();
             }
           };
           es.onerror = () => {
             es.close();
-            bubble.innerHTML = '<span style="color:#f87171">⚠ Lost connection to the filesystem check.</span>';
+            bubble.innerHTML = '<span style="color:var(--danger)">⚠ Lost connection to the filesystem check.</span>';
             scrollBottom();
           };
         })
         .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+          bubble.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
       return;
@@ -3378,7 +3378,7 @@ export function makeCommandHandler(deps) {
           scrollBottom();
         })
         .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
+          bubble.innerHTML = `<span style="color:var(--danger)">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
       return;
@@ -3410,7 +3410,7 @@ export function makeCommandHandler(deps) {
           addMessage('bot', `Archived ${data.archived} image(s) generated today to <code>${escapeHtml(data.folder)}</code> on the encrypted volume.`);
         })
         .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
+          bubble.innerHTML = `<span style="color:var(--danger)">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
       return;
@@ -3443,7 +3443,7 @@ export function makeCommandHandler(deps) {
             addMessage('bot', `Archived ${data.archived} image(s) from the output folder to <code>${escapeHtml(data.folder)}</code> on the encrypted volume.`);
           })
           .catch(err => {
-            bubble.innerHTML = `<span style="color:#f87171">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
+            bubble.innerHTML = `<span style="color:var(--danger)">⚠ Archive failed: ${escapeHtml(err.message)}</span>`;
             scrollBottom();
           });
       };
@@ -3507,7 +3507,7 @@ export function makeCommandHandler(deps) {
     if (cmd === '/settings-restore') {
       addMessage('user', escapeHtml(raw), raw);
       if (!state.settingsStack.length) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Nothing to restore — settings stack is empty.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Nothing to restore — settings stack is empty.</span>');
         return;
       }
       const s = state.settingsStack.pop();
@@ -3572,7 +3572,7 @@ export function makeCommandHandler(deps) {
         scrollBottom();
       })
       .catch(err => {
-        bubble.innerHTML = `<span style="color:#f87171">⚠ Purge failed: ${escapeHtml(err.message)}</span>`;
+        bubble.innerHTML = `<span style="color:var(--danger)">⚠ Purge failed: ${escapeHtml(err.message)}</span>`;
         scrollBottom();
       });
       return;
@@ -3588,12 +3588,12 @@ export function makeCommandHandler(deps) {
         .then(r => r.json().then(data => ({ ok: r.ok, data })))
         .then(({ ok, data }) => {
           if (!ok || !data.ok) throw new Error(data.error || 'Could not lock the appliance.');
-          bubble.innerHTML = '<span style="color:#4ade80">\u2713</span> Volumes closed \u2014 signing out\u2026';
+          bubble.innerHTML = '<span style="color:var(--ok)">\u2713</span> Volumes closed \u2014 signing out\u2026';
           scrollBottom();
           window.location.href = '/login';
         })
         .catch(err => {
-          bubble.innerHTML = `<span style="color:#f87171">\u26a0 ${escapeHtml(err.message)}</span>`;
+          bubble.innerHTML = `<span style="color:var(--danger)">\u26a0 ${escapeHtml(err.message)}</span>`;
           scrollBottom();
         });
       return;
@@ -3619,14 +3619,14 @@ export function makeCommandHandler(deps) {
       wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:6px';
 
       const resRow = document.createElement('div');
-      resRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;flex-wrap:wrap';
+      resRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--g-300);flex-wrap:wrap';
       const resLbl = document.createElement('span');
       resLbl.textContent = 'Resolution:';
-      resLbl.style.cssText = 'min-width:92px;color:#94a3b8';
+      resLbl.style.cssText = 'min-width:92px;color:var(--g-400)';
       const mkDim = key => {
         const inp = document.createElement('input');
         inp.type = 'text';
-        inp.style.cssText = 'width:62px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+        inp.style.cssText = 'width:62px;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);padding:2px 4px;font-size:0.85rem;text-align:center';
         inp.addEventListener('change', () => {
           const v = parseInt(inp.value, 10);
           if (!isNaN(v)) work[key] = Math.min(8192, Math.max(64, v));
@@ -3640,7 +3640,7 @@ export function makeCommandHandler(deps) {
       const heightInp = mkDim('height');
       const times = document.createElement('span');
       times.textContent = '×';
-      times.style.color = '#475569';
+      times.style.color = 'var(--g-700)';
       const flipBtn = document.createElement('button');
       flipBtn.textContent = '⇄';
       flipBtn.className = 'sel-btn';
@@ -3669,7 +3669,7 @@ export function makeCommandHandler(deps) {
         const b = document.createElement('button');
         b.textContent = label;
         b.className = 'sel-btn';
-        b.style.cssText = 'flex:none;padding:2px 8px;font-size:0.78rem;color:#94a3b8';
+        b.style.cssText = 'flex:none;padding:2px 8px;font-size:0.78rem;color:var(--g-400)';
         b.addEventListener('click', onClick);
         return b;
       };
@@ -3686,31 +3686,31 @@ export function makeCommandHandler(deps) {
       wrap.appendChild(presetRow);
 
       const defaultResRow = document.createElement('label');
-      defaultResRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:#cbd5e1;cursor:pointer;padding-left:100px';
+      defaultResRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--g-300);cursor:pointer;padding-left:100px';
       const defaultResBox = document.createElement('input');
       defaultResBox.type = 'checkbox';
       defaultResBox.checked = work.useDefaultRes;
-      defaultResBox.style.cssText = 'width:14px;height:14px;accent-color:#f472b6;cursor:pointer';
+      defaultResBox.style.cssText = 'width:14px;height:14px;accent-color:var(--neon-2);cursor:pointer';
       defaultResBox.addEventListener('change', () => { work.useDefaultRes = defaultResBox.checked; });
       const defaultResLbl = document.createElement('span');
-      defaultResLbl.innerHTML = 'Use workflow default <span style="color:#475569">— ignore the resolution above</span>';
+      defaultResLbl.innerHTML = 'Use workflow default <span style="color:var(--g-700)">— ignore the resolution above</span>';
       defaultResRow.appendChild(defaultResBox); defaultResRow.appendChild(defaultResLbl);
       wrap.appendChild(defaultResRow);
 
       const stepsRow = document.createElement('div');
-      stepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;margin-top:4px';
+      stepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--g-300);margin-top:4px';
       const stepsLbl = document.createElement('span');
       stepsLbl.textContent = 'Steps:';
-      stepsLbl.style.cssText = 'min-width:92px;color:#94a3b8';
+      stepsLbl.style.cssText = 'min-width:92px;color:var(--g-400)';
       const stepsSlider = document.createElement('input');
       stepsSlider.type = 'range';
       stepsSlider.min = '1'; stepsSlider.max = '100'; stepsSlider.step = '1';
       stepsSlider.value = String(work.steps);
-      stepsSlider.style.cssText = 'width:130px;accent-color:#f472b6;cursor:pointer';
+      stepsSlider.style.cssText = 'width:130px;accent-color:var(--neon-2);cursor:pointer';
       const stepsInp = document.createElement('input');
       stepsInp.type = 'text';
       stepsInp.value = String(work.steps);
-      stepsInp.style.cssText = 'width:52px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+      stepsInp.style.cssText = 'width:52px;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);padding:2px 4px;font-size:0.85rem;text-align:center';
       const onStepsEdit = v => {
         const n = parseInt(v, 10);
         if (isNaN(n)) { stepsInp.value = String(work.steps); return; }
@@ -3726,14 +3726,14 @@ export function makeCommandHandler(deps) {
       wrap.appendChild(stepsRow);
 
       const defaultStepsRow = document.createElement('label');
-      defaultStepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:#cbd5e1;cursor:pointer;padding-left:100px';
+      defaultStepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--g-300);cursor:pointer;padding-left:100px';
       const defaultStepsBox = document.createElement('input');
       defaultStepsBox.type = 'checkbox';
       defaultStepsBox.checked = work.useDefaultSteps;
-      defaultStepsBox.style.cssText = 'width:14px;height:14px;accent-color:#f472b6;cursor:pointer';
+      defaultStepsBox.style.cssText = 'width:14px;height:14px;accent-color:var(--neon-2);cursor:pointer';
       defaultStepsBox.addEventListener('change', () => { work.useDefaultSteps = defaultStepsBox.checked; });
       const defaultStepsLbl = document.createElement('span');
-      defaultStepsLbl.innerHTML = 'Use workflow default <span style="color:#475569">— does not affect face-detail, upscale, image2image or image2video</span>';
+      defaultStepsLbl.innerHTML = 'Use workflow default <span style="color:var(--g-700)">— does not affect face-detail, upscale, image2image or image2video</span>';
       defaultStepsRow.appendChild(defaultStepsBox); defaultStepsRow.appendChild(defaultStepsLbl);
       wrap.appendChild(defaultStepsRow);
 
@@ -3746,16 +3746,16 @@ export function makeCommandHandler(deps) {
       const resetBtn = document.createElement('button');
       resetBtn.textContent = 'Reset to defaults';
       resetBtn.className = 'sel-btn';
-      resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+      resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:var(--g-400)';
       applyBtn.addEventListener('click', () => {
         state.currentResolution = work.useDefaultRes ? null : { width: work.width, height: work.height };
         state.currentGenerationSteps = work.useDefaultSteps ? null : work.steps;
         const resTxt = state.currentResolution
-          ? `<strong style="color:#a78bfa">${state.currentResolution.width}×${state.currentResolution.height}</strong>`
-          : '<span style="color:#475569">workflow default</span>';
+          ? `<strong style="color:var(--neon)">${state.currentResolution.width}×${state.currentResolution.height}</strong>`
+          : '<span style="color:var(--g-700)">workflow default</span>';
         const stepsTxt = state.currentGenerationSteps !== null
-          ? `<strong style="color:#a78bfa">${state.currentGenerationSteps}</strong>`
-          : '<span style="color:#475569">workflow default</span>';
+          ? `<strong style="color:var(--neon)">${state.currentGenerationSteps}</strong>`
+          : '<span style="color:var(--g-700)">workflow default</span>';
         addMessage('bot', `Image settings set — Resolution ${resTxt} · Steps ${stepsTxt}`);
         scrollBottom();
       });
@@ -3774,7 +3774,7 @@ export function makeCommandHandler(deps) {
       wrap.appendChild(btnRow);
 
       refreshRes();
-      const bubble = addMessage('bot', '<strong>Image settings</strong> <span style="color:#475569">(image generation)</span>').parentElement.querySelector('.bubble');
+      const bubble = addMessage('bot', '<strong>Image settings</strong> <span style="color:var(--g-700)">(image generation)</span>').parentElement.querySelector('.bubble');
       bubble.appendChild(wrap);
       scrollBottom();
       return;
@@ -3782,17 +3782,17 @@ export function makeCommandHandler(deps) {
 
     if (cmd === '/iterations') {
       if (!parts[1]) {
-        addMessage('bot', `Each prompt currently generates <strong style="color:#a78bfa">${state.iterations}</strong> image(s).<br>Usage: <code>/iterations &lt;n&gt;</code> — e.g. <code>/iterations 8</code>`);
+        addMessage('bot', `Each prompt currently generates <strong style="color:var(--neon)">${state.iterations}</strong> image(s).<br>Usage: <code>/iterations &lt;n&gt;</code> — e.g. <code>/iterations 8</code>`);
         return;
       }
       const n = parseInt(parts[1], 10);
       if (isNaN(n) || n < 1 || n > 64) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Iterations must be a number between 1 and 64.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Iterations must be a number between 1 and 64.</span>');
         return;
       }
       state.iterations = n;
       state.iterationsFromSequence = false;
-      addMessage('bot', `Each prompt will now generate <strong style="color:#a78bfa">${state.iterations}</strong> image(s)${n > 1 ? ', one after another' : ''}.`);
+      addMessage('bot', `Each prompt will now generate <strong style="color:var(--neon)">${state.iterations}</strong> image(s)${n > 1 ? ', one after another' : ''}.`);
       return;
     }
 
@@ -3810,17 +3810,17 @@ export function makeCommandHandler(deps) {
       const inputs  = {};
       DENOISE_ROWS.forEach(({ key, label }) => {
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1';
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--g-300)';
         const lbl = document.createElement('span');
         lbl.textContent = label + ':';
-        lbl.style.cssText = 'min-width:110px;color:#94a3b8';
+        lbl.style.cssText = 'min-width:110px;color:var(--g-400)';
         const sl = document.createElement('input');
         sl.type = 'range'; sl.min = '0.01'; sl.max = '1'; sl.step = '0.01';
         sl.value = state.currentDenoise[key].toFixed(2);
-        sl.style.cssText = 'width:130px;accent-color:#f472b6;cursor:pointer';
+        sl.style.cssText = 'width:130px;accent-color:var(--neon-2);cursor:pointer';
         const inp = document.createElement('input');
         inp.type = 'text'; inp.value = state.currentDenoise[key].toFixed(2);
-        inp.style.cssText = 'width:44px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+        inp.style.cssText = 'width:44px;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);padding:2px 4px;font-size:0.85rem;text-align:center';
         sl.addEventListener('input', () => { inp.value = parseFloat(sl.value).toFixed(2); });
         inp.addEventListener('change', () => {
           let v = parseFloat(inp.value);
@@ -3842,13 +3842,13 @@ export function makeCommandHandler(deps) {
       const resetBtn = document.createElement('button');
       resetBtn.textContent = 'Reset to defaults';
       resetBtn.className = 'sel-btn';
-      resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+      resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:var(--g-400)';
       applyBtn.addEventListener('click', () => {
         DENOISE_ROWS.forEach(({ key }) => {
           state.currentDenoise[key] = parseFloat(sliders[key].value);
         });
         const summary = DENOISE_ROWS.map(({ key, label }) =>
-          `${label}: <strong style="color:#a78bfa">${state.currentDenoise[key].toFixed(2)}</strong>`).join(' · ');
+          `${label}: <strong style="color:var(--neon)">${state.currentDenoise[key].toFixed(2)}</strong>`).join(' · ');
         addMessage('bot', `Denoise defaults set — ${summary}`);
         scrollBottom();
       });
@@ -3858,7 +3858,7 @@ export function makeCommandHandler(deps) {
           sliders[key].value = DEFAULT_DENOISE[key].toFixed(2);
           inputs[key].value  = DEFAULT_DENOISE[key].toFixed(2);
         });
-        addMessage('bot', 'Denoise defaults reset to: Face-detailer <strong style="color:#a78bfa">0.35</strong> · Image2image <strong style="color:#a78bfa">0.30</strong> · Inpainting <strong style="color:#a78bfa">0.45</strong> · Upscale <strong style="color:#a78bfa">0.15</strong>');
+        addMessage('bot', 'Denoise defaults reset to: Face-detailer <strong style="color:var(--neon)">0.35</strong> · Image2image <strong style="color:var(--neon)">0.30</strong> · Inpainting <strong style="color:var(--neon)">0.45</strong> · Upscale <strong style="color:var(--neon)">0.15</strong>');
         scrollBottom();
       });
       btnRow.appendChild(applyBtn);
@@ -3929,7 +3929,7 @@ export function makeCommandHandler(deps) {
       VIDEO_ROWS.forEach(({ key, label }) => {
         const lim = VIDEO_LIMITS[key];
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1';
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--g-300)';
 
         const lockBtn = document.createElement('button');
         lockBtn.className = 'sel-btn';
@@ -3942,18 +3942,18 @@ export function makeCommandHandler(deps) {
 
         const lbl = document.createElement('span');
         lbl.textContent = label + ':';
-        lbl.style.cssText = 'min-width:92px;color:#94a3b8';
+        lbl.style.cssText = 'min-width:92px;color:var(--g-400)';
 
         const slider = document.createElement('input');
         slider.type = 'range';
         slider.min = String(lim.min); slider.max = String(lim.max);
         slider.step = key === 'duration' ? '0.1' : '1';
-        slider.style.cssText = 'width:130px;accent-color:#f472b6;cursor:pointer';
+        slider.style.cssText = 'width:130px;accent-color:var(--neon-2);cursor:pointer';
         slider.addEventListener('input', () => onEdit(key, slider.value));
 
         const input = document.createElement('input');
         input.type = 'text';
-        input.style.cssText = 'width:52px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+        input.style.cssText = 'width:52px;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);padding:2px 4px;font-size:0.85rem;text-align:center';
         input.addEventListener('change', () => onEdit(key, input.value));
 
         els[key] = { lockBtn, slider, input };
@@ -3962,14 +3962,14 @@ export function makeCommandHandler(deps) {
       });
 
       const resRow = document.createElement('div');
-      resRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1';
+      resRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--g-300)';
       const resLbl = document.createElement('span');
       resLbl.textContent = 'Resolution:';
-      resLbl.style.cssText = 'min-width:92px;color:#94a3b8';
+      resLbl.style.cssText = 'min-width:92px;color:var(--g-400)';
       const mkDim = key => {
         const inp = document.createElement('input');
         inp.type = 'text';
-        inp.style.cssText = 'width:58px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+        inp.style.cssText = 'width:58px;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);padding:2px 4px;font-size:0.85rem;text-align:center';
         inp.addEventListener('change', () => {
           const v = parseFloat(inp.value);
           if (!isNaN(v)) work[key] = clampVideo(key, v);
@@ -3981,7 +3981,7 @@ export function makeCommandHandler(deps) {
       const heightInp = mkDim('height');
       const times = document.createElement('span');
       times.textContent = '×';
-      times.style.color = '#475569';
+      times.style.color = 'var(--g-700)';
       const flipBtn = document.createElement('button');
       flipBtn.textContent = '⇄';
       flipBtn.className = 'sel-btn';
@@ -4005,7 +4005,7 @@ export function makeCommandHandler(deps) {
         const b = document.createElement('button');
         b.textContent = label;
         b.className = 'sel-btn';
-        b.style.cssText = 'flex:none;padding:2px 8px;font-size:0.78rem;color:#94a3b8';
+        b.style.cssText = 'flex:none;padding:2px 8px;font-size:0.78rem;color:var(--g-400)';
         b.addEventListener('click', onClick);
         return b;
       };
@@ -4027,11 +4027,11 @@ export function makeCommandHandler(deps) {
       const boxes = [];
       const mkCheckbox = (key, labelHtml, onToggle) => {
         const row = document.createElement('label');
-        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;cursor:pointer';
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--g-300);cursor:pointer';
         const box = document.createElement('input');
         box.type = 'checkbox';
         box.checked = work[key] !== false;
-        box.style.cssText = 'width:15px;height:15px;accent-color:#f472b6;cursor:pointer';
+        box.style.cssText = 'width:15px;height:15px;accent-color:var(--neon-2);cursor:pointer';
         box.addEventListener('change', () => {
           work[key] = box.checked;
           if (onToggle) onToggle(box.checked);
@@ -4044,22 +4044,22 @@ export function makeCommandHandler(deps) {
         return box;
       };
 
-      mkCheckbox('audio', 'Audio <span style="color:#475569">— off asks for a silent clip (soundscape &amp; music sent as N/A)</span>');
+      mkCheckbox('audio', 'Audio <span style="color:var(--g-700)">— off asks for a silent clip (soundscape &amp; music sent as N/A)</span>');
 
       const stepsRow = document.createElement('div');
-      stepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#cbd5e1;margin-top:4px';
+      stepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--g-300);margin-top:4px';
       const stepsLbl = document.createElement('span');
       stepsLbl.textContent = 'Steps:';
-      stepsLbl.style.cssText = 'min-width:92px;color:#94a3b8';
+      stepsLbl.style.cssText = 'min-width:92px;color:var(--g-400)';
       const stepsSlider = document.createElement('input');
       stepsSlider.type = 'range';
       stepsSlider.min = '1'; stepsSlider.max = '100'; stepsSlider.step = '1';
       stepsSlider.value = String(stepsWork.steps);
-      stepsSlider.style.cssText = 'width:130px;accent-color:#f472b6;cursor:pointer';
+      stepsSlider.style.cssText = 'width:130px;accent-color:var(--neon-2);cursor:pointer';
       const stepsInp = document.createElement('input');
       stepsInp.type = 'text';
       stepsInp.value = String(stepsWork.steps);
-      stepsInp.style.cssText = 'width:52px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f1f5f9;padding:2px 4px;font-size:0.85rem;text-align:center';
+      stepsInp.style.cssText = 'width:52px;background:var(--g-900);border:1px solid var(--g-800);border-radius:4px;color:var(--g-100);padding:2px 4px;font-size:0.85rem;text-align:center';
       // Sync all three steps controls from stepsWork. Shared by manual edits, the
       // Turbo checkbox and Reset, so they cannot drift apart.
       const refreshSteps = () => {
@@ -4080,24 +4080,24 @@ export function makeCommandHandler(deps) {
       wrap.appendChild(stepsRow);
 
       const defaultStepsRow = document.createElement('label');
-      defaultStepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:#cbd5e1;cursor:pointer;padding-left:100px';
+      defaultStepsRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--g-300);cursor:pointer;padding-left:100px';
       const defaultStepsBox = document.createElement('input');
       defaultStepsBox.type = 'checkbox';
       defaultStepsBox.checked = stepsWork.useDefault;
-      defaultStepsBox.style.cssText = 'width:14px;height:14px;accent-color:#f472b6;cursor:pointer';
+      defaultStepsBox.style.cssText = 'width:14px;height:14px;accent-color:var(--neon-2);cursor:pointer';
       defaultStepsBox.addEventListener('change', () => { stepsWork.useDefault = defaultStepsBox.checked; });
       const defaultStepsLbl = document.createElement('span');
-      defaultStepsLbl.innerHTML = 'Use workflow default <span style="color:#475569">— ignore the steps above</span>';
+      defaultStepsLbl.innerHTML = 'Use workflow default <span style="color:var(--g-700)">— ignore the steps above</span>';
       defaultStepsRow.appendChild(defaultStepsBox); defaultStepsRow.appendChild(defaultStepsLbl);
       wrap.appendChild(defaultStepsRow);
 
       const optsHdr = document.createElement('div');
-      optsHdr.style.cssText = 'font-size:0.82rem;color:#94a3b8;margin-top:8px';
-      optsHdr.innerHTML = 'Optimisations <span style="color:#475569">— trade quality for speed; the accelerator LoRAs are mutually exclusive</span>';
+      optsHdr.style.cssText = 'font-size:0.82rem;color:var(--g-400);margin-top:8px';
+      optsHdr.innerHTML = 'Optimisations <span style="color:var(--g-700)">— trade quality for speed; the accelerator LoRAs are mutually exclusive</span>';
       wrap.appendChild(optsHdr);
       VIDEO_OPTIMIZATIONS.forEach(({ stateKey, label, steps, hint: optHint }) => {
         const labelHtml = escapeHtml(label) +
-          (optHint ? ` <span style="color:#475569">— ${escapeHtml(optHint)}</span>` : '');
+          (optHint ? ` <span style="color:var(--g-700)">— ${escapeHtml(optHint)}</span>` : '');
         // An accelerator carries its step count with it: the LoRA at the template's
         // baked-in steps is wasted work, and the template's steps without the LoRA
         // is mush. An explicit steps edit afterwards still wins.
@@ -4117,7 +4117,7 @@ export function makeCommandHandler(deps) {
       });
 
       const hint = document.createElement('div');
-      hint.style.cssText = 'font-size:0.78rem;color:#475569;margin-top:2px';
+      hint.style.cssText = 'font-size:0.78rem;color:var(--g-700);margin-top:2px';
       hint.innerHTML = 'Lock one value (🔒), then drag or type the others — the third follows so that <code>frames = duration × fps</code>.';
       wrap.appendChild(hint);
 
@@ -4130,19 +4130,19 @@ export function makeCommandHandler(deps) {
       const resetBtn = document.createElement('button');
       resetBtn.textContent = 'Reset to defaults';
       resetBtn.className = 'sel-btn';
-      resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:#94a3b8';
+      resetBtn.style.cssText = 'flex:none;padding:4px 14px;font-size:0.85rem;color:var(--g-400)';
       applyBtn.addEventListener('click', () => {
         state.currentVideoSettings = { ...work };
         state.videoLock = lockSel;
         state.currentVideoSteps = stepsWork.useDefault ? null : stepsWork.steps;
         const stepsTxt = state.currentVideoSteps !== null
-          ? `<strong style="color:#a78bfa">${state.currentVideoSteps}</strong>`
-          : '<span style="color:#475569">workflow default</span>';
-        addMessage('bot', `Video settings set — Duration <strong style="color:#a78bfa">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:#a78bfa">${work.frames}</strong> · FPS <strong style="color:#a78bfa">${work.fps}</strong> · Resolution <strong style="color:#a78bfa">${work.width}×${work.height}</strong> · Audio <strong style="color:#a78bfa">${work.audio !== false ? 'on' : 'off'}</strong> · Steps ${stepsTxt} <span style="color:#475569">(🔒 ${lockSel})</span>`);
+          ? `<strong style="color:var(--neon)">${state.currentVideoSteps}</strong>`
+          : '<span style="color:var(--g-700)">workflow default</span>';
+        addMessage('bot', `Video settings set — Duration <strong style="color:var(--neon)">${fmtDuration(work.duration)}s</strong> · Frames <strong style="color:var(--neon)">${work.frames}</strong> · FPS <strong style="color:var(--neon)">${work.fps}</strong> · Resolution <strong style="color:var(--neon)">${work.width}×${work.height}</strong> · Audio <strong style="color:var(--neon)">${work.audio !== false ? 'on' : 'off'}</strong> · Steps ${stepsTxt} <span style="color:var(--g-700)">(🔒 ${lockSel})</span>`);
         const off = VIDEO_OPTIMIZATIONS.filter(o => work[o.stateKey] === false);
         addMessage('bot', off.length
-          ? `Optimisations bypassed: <strong style="color:#a78bfa">${off.map(o => escapeHtml(o.label)).join(', ')}</strong>`
-          : `All <strong style="color:#a78bfa">${VIDEO_OPTIMIZATIONS.length}</strong> optimisations on <span style="color:#475569">— fast preview quality</span>`);
+          ? `Optimisations bypassed: <strong style="color:var(--neon)">${off.map(o => escapeHtml(o.label)).join(', ')}</strong>`
+          : `All <strong style="color:var(--neon)">${VIDEO_OPTIMIZATIONS.length}</strong> optimisations on <span style="color:var(--g-700)">— fast preview quality</span>`);
         scrollBottom();
       });
       resetBtn.addEventListener('click', () => {
@@ -4160,7 +4160,7 @@ export function makeCommandHandler(deps) {
       wrap.appendChild(btnRow);
 
       refresh();
-      const bubble = addMessage('bot', '<strong>Video settings</strong> <span style="color:#475569">(image2video)</span>').parentElement.querySelector('.bubble');
+      const bubble = addMessage('bot', '<strong>Video settings</strong> <span style="color:var(--g-700)">(image2video)</span>').parentElement.querySelector('.bubble');
       bubble.appendChild(wrap);
       scrollBottom();
       return;
@@ -4177,7 +4177,7 @@ export function makeCommandHandler(deps) {
       }
       const spaceIdx = argStr.indexOf(' ');
       if (spaceIdx === -1) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Provide both a word and an expansion — e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code></span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Provide both a word and an expansion — e.g. <code>/alias-create prophoto "Professional Photo, Medium format look"</code></span>');
         return;
       }
       const aliasFrom = argStr.slice(0, spaceIdx);
@@ -4189,7 +4189,7 @@ export function makeCommandHandler(deps) {
         aliasTo = aliasTo.slice(1).trim();
       }
       if (!aliasTo) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Expansion cannot be empty.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Expansion cannot be empty.</span>');
         return;
       }
       const bubble = addMessage('bot', '<div class="status-text">Saving alias…</div>').parentElement.querySelector('.bubble');
@@ -4207,7 +4207,7 @@ export function makeCommandHandler(deps) {
         scrollBottom();
       })
       .catch(err => {
-        bubble.innerHTML = `<span style="color:#f87171">⚠ ${escapeHtml(err.message)}</span>`;
+        bubble.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(err.message)}</span>`;
         scrollBottom();
       });
       return;
@@ -4232,7 +4232,7 @@ export function makeCommandHandler(deps) {
         row.className = 'sel-row';
 
         const label = document.createElement('div');
-        label.style.cssText = 'font-size:0.85rem;color:#94a3b8;flex:1;min-width:0;overflow-wrap:break-word';
+        label.style.cssText = 'font-size:0.85rem;color:var(--g-400);flex:1;min-width:0;overflow-wrap:break-word';
         label.innerHTML = `<code>${escapeHtml(k)}</code> → <code>${escapeHtml(v)}</code>`;
 
         const delBtn = document.createElement('button');
@@ -4259,7 +4259,7 @@ export function makeCommandHandler(deps) {
           .catch(err => {
             delBtn.disabled = false;
             delBtn.style.opacity = '';
-            addMessage('bot', `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
+            addMessage('bot', `<span style="color:var(--danger)">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
             scrollBottom();
           });
         });
@@ -4285,7 +4285,7 @@ export function makeCommandHandler(deps) {
         return;
       }
       if (macroName.includes('/')) {
-        addMessage('bot', '<span style="color:#f87171">⚠ Macro name cannot contain slashes.</span>');
+        addMessage('bot', '<span style="color:var(--danger)">⚠ Macro name cannot contain slashes.</span>');
         return;
       }
       const bubble = addMessage('bot', '').parentElement.querySelector('.bubble');
@@ -4312,8 +4312,8 @@ export function makeCommandHandler(deps) {
         row.className = 'sel-row';
 
         const label = document.createElement('div');
-        label.style.cssText = 'font-size:0.85rem;color:#94a3b8;flex:1;min-width:0;overflow-wrap:break-word';
-        label.innerHTML = `<code>#${escapeHtml(name)}</code> <span style="color:#475569">— ${macroStepList.length} step(s)</span>`;
+        label.style.cssText = 'font-size:0.85rem;color:var(--g-400);flex:1;min-width:0;overflow-wrap:break-word';
+        label.innerHTML = `<code>#${escapeHtml(name)}</code> <span style="color:var(--g-700)">— ${macroStepList.length} step(s)</span>`;
 
         const editBtn = document.createElement('button');
         editBtn.className = 'sel-del-btn';
@@ -4344,7 +4344,7 @@ export function makeCommandHandler(deps) {
           inp.type = 'text';
           inp.placeholder = 'New macro name…';
           inp.value = name + '-copy';
-          inp.style.cssText = 'flex:1;min-width:0;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:3px 6px;font-size:0.8rem';
+          inp.style.cssText = 'flex:1;min-width:0;background:var(--g-900);color:var(--g-200);border:1px solid var(--g-800);border-radius:4px;padding:3px 6px;font-size:0.8rem';
           const okBtn = document.createElement('button');
           okBtn.className = 'sel-del-btn';
           okBtn.textContent = 'Clone';
@@ -4357,7 +4357,7 @@ export function makeCommandHandler(deps) {
             const newName = inp.value.trim();
             if (!newName) { inp.focus(); return; }
             if (newName === name) {
-              inp.style.borderColor = '#f87171';
+              inp.style.borderColor = 'var(--danger)';
               inp.title = 'Choose a different name';
               inp.focus();
               return;
@@ -4380,7 +4380,7 @@ export function makeCommandHandler(deps) {
               cloneRow.className = 'sel-row';
               const cloneLabel = document.createElement('div');
               cloneLabel.style.cssText = label.style.cssText;
-              cloneLabel.innerHTML = `<code>#${escapeHtml(newName)}</code> <span style="color:#475569">— ${steps.length} step(s)</span>`;
+              cloneLabel.innerHTML = `<code>#${escapeHtml(newName)}</code> <span style="color:var(--g-700)">— ${steps.length} step(s)</span>`;
               cloneRow.appendChild(cloneLabel);
               cloneRow.appendChild(cloneBtn.cloneNode(true));
               row.insertAdjacentElement('afterend', cloneRow);
@@ -4390,7 +4390,7 @@ export function makeCommandHandler(deps) {
             .catch(err => {
               okBtn.disabled = false;
               cancelClone.disabled = false;
-              inp.style.borderColor = '#f87171';
+              inp.style.borderColor = 'var(--danger)';
               inp.title = escapeHtml(err.message);
             });
           };
@@ -4435,7 +4435,7 @@ export function makeCommandHandler(deps) {
           .catch(err => {
             delBtn.disabled = false;
             delBtn.style.opacity = '';
-            addMessage('bot', `<span style="color:#f87171">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
+            addMessage('bot', `<span style="color:var(--danger)">⚠ Delete failed: ${escapeHtml(err.message)}</span>`);
             scrollBottom();
           });
         });
@@ -4465,7 +4465,7 @@ export function makeCommandHandler(deps) {
       const arg = parts.slice(1).join(' ').replace(/^#/, '').trim();
       if (arg) {
         if (!Object.prototype.hasOwnProperty.call(state.MACROS, arg)) {
-          addMessage('bot', `<span style="color:#f87171">⚠ Macro <code>#${escapeHtml(arg)}</code> does not exist — use <code>/macro-list</code> to see defined macros.</span>`);
+          addMessage('bot', `<span style="color:var(--danger)">⚠ Macro <code>#${escapeHtml(arg)}</code> does not exist — use <code>/macro-list</code> to see defined macros.</span>`);
           return;
         }
         state.defaultMacro = arg;
@@ -4484,7 +4484,7 @@ export function makeCommandHandler(deps) {
         const isCur = name === state.defaultMacro;
         const btn = document.createElement('button');
         btn.className = 'sel-btn' + (isCur ? ' current' : '');
-        btn.innerHTML = `<code>#${escapeHtml(name)}</code> <span style="color:#475569">— ${macroStepList.length} step(s)</span>${isCur ? ' <span style="color:#7c3aed">✓</span>' : ''}`;
+        btn.innerHTML = `<code>#${escapeHtml(name)}</code> <span style="color:var(--g-700)">— ${macroStepList.length} step(s)</span>${isCur ? ' <span style="color:var(--neon)">✓</span>' : ''}`;
         btn.addEventListener('click', () => {
           state.defaultMacro = name;
           persistDefaultMacro(name);
@@ -4497,7 +4497,7 @@ export function makeCommandHandler(deps) {
       if (state.defaultMacro) {
         const clearBtn = document.createElement('button');
         clearBtn.className = 'sel-btn';
-        clearBtn.style.cssText = 'color:#f87171;margin-top:4px';
+        clearBtn.style.cssText = 'color:var(--danger);margin-top:4px';
         clearBtn.textContent = '✕ Clear default macro';
         clearBtn.addEventListener('click', () => {
           state.defaultMacro = null;

@@ -527,6 +527,29 @@ card per catalogue server and can start or stop ComfyUI remotely. See
   asynchronous start), and ComfyTray's API has **no authentication** by design, so this
   is only safe on a trusted network.
 
+### Theming (`theme.css`, cyberpunk)
+
+All colours come from CSS custom properties in `static/css/theme.css`, loaded before
+`chat.css` by both templates. See `ADR/cyberpunk-theme.md`.
+
+- **Use the tokens, never hex literals** — in CSS *and* in JS inline styles
+  (`style="color:var(--danger)"`, `el.style.color = 'var(--g-400)'`). Greys are a
+  neutral scale `--g-950`…`--g-100` that replaced the old slate scale one-for-one; neon
+  is `--neon` (cyan, primary), `--neon-2` (magenta, accent), `--info`, plus status
+  `--ok`/`--warn`/`--danger`/`--orange` and `-light`/`-deep`/`-soft` variants.
+- **Where `var()` does not work, keep hex**: canvas `fillStyle`/`strokeStyle`,
+  `<input type=color>` values, and the data colours `FACE_MULTI_COLOURS`. Never build a
+  colour by appending hex alpha to a token (`${c}55`) — use
+  `color-mix(in srgb, ${c} 33%, transparent)`.
+- **Cyan is a light colour**: text on a solid `--neon` fill is `--g-950`, not white.
+- **Assets**: generated art (krea2) in `static/img/` (`bg-texture`, `header-art`,
+  `login-hero`, `empty-state`, favicons); Rajdhani (OFL, Latin-subset woff2) in
+  `static/fonts/` as `--font-display` for headings/labels/buttons — body text stays on
+  the system font. Served by Flask's unauthenticated `/static` route, which the login page
+  needs.
+- `body::after` draws static scanlines at `z-index: 1`; header and `#bottom` sit at
+  `z-index: 2` above it. Overlays (lightbox 300, menus 400+) are unaffected.
+
 ## Known Pitfalls
 
 ### Curly/smart quote corruption in JS files

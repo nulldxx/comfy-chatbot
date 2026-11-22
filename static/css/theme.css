@@ -1,0 +1,101 @@
+/* =========================================================================
+   Theme tokens — cyberpunk: charcoal base, neon cyan + magenta highlights.
+   Every colour in chat.css, login.html and the JS inline styles reads from
+   here. New UI should use these tokens rather than hex literals. See
+   ADR/cyberpunk-theme.md.
+   ========================================================================= */
+
+@font-face {
+  font-family: "Rajdhani";
+  src: url("../fonts/Rajdhani-Medium.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Rajdhani";
+  src: url("../fonts/Rajdhani-SemiBold.woff2") format("woff2");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Rajdhani";
+  src: url("../fonts/Rajdhani-Bold.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg:        #16171b;   /* page */
+  --bg-elev:   #1a1c21;   /* header, sidebar */
+
+  /* Neutral grey scale (replaces the old slate scale one-for-one, so every
+     existing contrast relationship is kept). */
+  --g-950: #121317;   /* deepest fills: inputs, buttons */
+  --g-900: #1f2126;   /* cards, bot bubbles */
+  --g-850: #272a31;   /* raised surface */
+  --g-800: #33363f;   /* borders */
+  --g-700: #5a5f6b;   /* muted text, strong borders */
+  --g-600: #7a7f8c;   /* secondary text */
+  --g-400: #a3a8b5;   /* body-secondary text */
+  --g-300: #c9cdd6;
+  --g-200: #e6e8ee;   /* body text */
+  --g-100: #f3f4f7;
+
+  /* Neon */
+  --neon:        #00f0ff;               /* primary highlight (cyan) */
+  --neon-light:  #8ff8ff;
+  --neon-deep:   #0b3a40;               /* solid fill behind cyan text */
+  --neon-soft:   rgba(0, 240, 255, 0.12);
+  --neon-2:      #ff2bd6;               /* accent (magenta) */
+  --neon-2-deep: #3a0f33;
+  --neon-2-soft: rgba(255, 43, 214, 0.14);
+  --info:        #6e8bff;               /* electric blue — the old sky-blue role */
+  --info-light:  #a9b9ff;
+
+  /* Status */
+  --ok:           #39ff88;
+  --ok-light:     #9dffc4;
+  --warn:         #f5ff3b;
+  --warn-light:   #faffa0;
+  --orange:       #ff9a3c;
+  --danger:       #ff3860;
+  --danger-light: #ff8aa0;
+  --danger-deep:  #2a0b12;
+
+  /* Effects */
+  --glow:   0 0 4px rgba(0, 240, 255, 0.9), 0 0 14px rgba(0, 240, 255, 0.35);
+  --glow-2: 0 0 4px rgba(255, 43, 214, 0.9), 0 0 14px rgba(255, 43, 214, 0.35);
+  --text-glow:   0 0 6px rgba(0, 240, 255, 0.75), 0 0 18px rgba(0, 240, 255, 0.35);
+  --neon-rule:   linear-gradient(90deg, var(--neon), var(--neon-2));
+  --chamfer: polygon(10px 0, 100% 0, 100% calc(100% - 10px),
+                     calc(100% - 10px) 100%, 0 100%, 0 10px);
+  --chamfer-sm: polygon(6px 0, 100% 0, 100% calc(100% - 6px),
+                        calc(100% - 6px) 100%, 0 100%, 0 6px);
+
+  /* Type */
+  --font-body:    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Rajdhani", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+/* Faint CRT scanlines over everything. Static (no animation), never
+   interactive, and kept below the lightbox/slideshow/menus. */
+body::after {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.025) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+::selection { background: rgba(255, 43, 214, 0.35); color: #fff; }
+
+/* Thin neon scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--g-800) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--g-800); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--neon); box-shadow: var(--glow); }

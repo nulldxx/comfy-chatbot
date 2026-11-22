@@ -933,13 +933,13 @@ describe('workflowLabelHtml', () => {
     const html = workflowLabelHtml('h3/minimax@fp16');
     expect(html).toContain('h3/minimax');
     expect(html).toContain('fp16');
-    expect(html).toContain('color:#64748b');
+    expect(html).toContain('color:var(--g-600)');
   });
 
   test('escapes both halves', () => {
     // Both go through escapeHtml, which covers the markup-significant characters.
     expect(workflowLabelHtml('a<b@c>d')).toBe(
-      'a&lt;b <span style="color:#64748b;font-size:0.85em">@ c&gt;d</span>');
+      'a&lt;b <span style="color:var(--g-600);font-size:0.85em">@ c&gt;d</span>');
   });
 });
 

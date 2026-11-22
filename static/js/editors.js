@@ -402,7 +402,7 @@ export function openMaskEditor(imageUrl, imgWrap, { onInpaint, onRemove }) {
       if (aborted) return;
       applyBtn.disabled = false;
       applyBtn.textContent = removalMode ? 'Apply Removal' : 'Apply Inpaint';
-      addMessage('bot', `<span style="color:#f87171">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
+      addMessage('bot', `<span style="color:var(--danger)">⚠ Mask upload failed: ${escapeHtml(err.message)}</span>`);
     });
   });
 
@@ -451,7 +451,7 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
   actions.id = 'mask-editor-actions';
 
   const hint = document.createElement('div');
-  hint.style.cssText = 'color:#94a3b8;font-size:0.8rem;white-space:normal;flex:1 1 100%;order:-1;margin-bottom:2px';
+  hint.style.cssText = 'color:var(--g-400);font-size:0.8rem;white-space:normal;flex:1 1 100%;order:-1;margin-bottom:2px';
   hint.textContent = 'Paint over the face(s) from ② to keep — unpainted areas will use ①';
 
   const clearBtn = document.createElement('button');
@@ -599,14 +599,14 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
         if (aborted) return;
         applyBtn.disabled = false;
         applyBtn.textContent = 'Apply Composite';
-        addMessage('bot', `<span style="color:#f87171">⚠ Composite failed: ${escapeHtml(err.message)}</span>`);
+        addMessage('bot', `<span style="color:var(--danger)">⚠ Composite failed: ${escapeHtml(err.message)}</span>`);
       });
     };
     img1El.onerror = () => {
       if (aborted) return;
       applyBtn.disabled = false;
       applyBtn.textContent = 'Apply Composite';
-      addMessage('bot', '<span style="color:#f87171">⚠ Failed to load original image for compositing.</span>');
+      addMessage('bot', '<span style="color:var(--danger)">⚠ Failed to load original image for compositing.</span>');
     };
     img1El.src = oldUrl;
   });
@@ -922,7 +922,7 @@ export function openCropEditor(imageUrl) {
     const header = document.createElement('div');
     header.style.cssText = `
       display:flex;align-items:center;gap:6px;flex-wrap:wrap;
-      padding:10px 14px 8px;border-bottom:1px solid #1e293b;flex-shrink:0;
+      padding:10px 14px 8px;border-bottom:1px solid var(--g-900);flex-shrink:0;
     `;
 
     const presetBtns = [];
@@ -930,21 +930,21 @@ export function openCropEditor(imageUrl) {
       const btn = document.createElement('button');
       btn.textContent = p.label;
       btn.style.cssText = `
-        background:rgba(15,23,42,0.9);border:1px solid #334155;
-        color:#cbd5e1;border-radius:6px;padding:4px 10px;
+        background:rgba(18,19,23,0.9);border:1px solid var(--g-800);
+        color:var(--g-300);border-radius:6px;padding:4px 10px;
         font-size:0.8rem;cursor:pointer;transition:border-color 0.15s,color 0.15s;
       `;
-      btn.addEventListener('mouseenter', () => { btn.style.borderColor = '#67e8f9'; btn.style.color = '#67e8f9'; });
+      btn.addEventListener('mouseenter', () => { btn.style.borderColor = 'var(--neon-light)'; btn.style.color = 'var(--neon-light)'; });
       btn.addEventListener('mouseleave', () => {
-        if (lockedRatio !== p.ratio) { btn.style.borderColor = '#334155'; btn.style.color = '#cbd5e1'; }
+        if (lockedRatio !== p.ratio) { btn.style.borderColor = 'var(--g-800)'; btn.style.color = 'var(--g-300)'; }
       });
       btn.addEventListener('click', () => {
         lockedRatio = p.ratio;
         presetBtns.forEach((b, i) => {
           const active = PRESETS[i].ratio === lockedRatio;
-          b.style.borderColor = active ? '#67e8f9' : '#334155';
-          b.style.color = active ? '#67e8f9' : '#cbd5e1';
-          b.style.background = active ? 'rgba(103,232,249,0.12)' : 'rgba(15,23,42,0.9)';
+          b.style.borderColor = active ? 'var(--neon-light)' : 'var(--g-800)';
+          b.style.color = active ? 'var(--neon-light)' : 'var(--g-300)';
+          b.style.background = active ? 'rgba(0,240,255,0.12)' : 'rgba(18,19,23,0.9)';
         });
         if (lockedRatio !== null) applyRatio(lockedRatio);
         repaint();
@@ -953,12 +953,12 @@ export function openCropEditor(imageUrl) {
       header.appendChild(btn);
     });
     // mark Free as active initially
-    presetBtns[0].style.borderColor = '#67e8f9';
-    presetBtns[0].style.color = '#67e8f9';
-    presetBtns[0].style.background = 'rgba(103,232,249,0.12)';
+    presetBtns[0].style.borderColor = 'var(--neon-light)';
+    presetBtns[0].style.color = 'var(--neon-light)';
+    presetBtns[0].style.background = 'rgba(0,240,255,0.12)';
 
     const dimDisplay = document.createElement('span');
-    dimDisplay.style.cssText = 'color:#94a3b8;font-size:0.8rem;margin-left:auto;white-space:nowrap;';
+    dimDisplay.style.cssText = 'color:var(--g-400);font-size:0.8rem;margin-left:auto;white-space:nowrap;';
     header.appendChild(dimDisplay);
 
     // Canvas
@@ -970,20 +970,20 @@ export function openCropEditor(imageUrl) {
     const footer = document.createElement('div');
     footer.style.cssText = `
       display:flex;justify-content:flex-end;gap:10px;
-      padding:10px 14px;border-top:1px solid #1e293b;flex-shrink:0;
+      padding:10px 14px;border-top:1px solid var(--g-900);flex-shrink:0;
     `;
     const cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'Cancel';
     cancelBtn.style.cssText = `
-      background:rgba(15,23,42,0.9);border:1px solid #334155;
-      color:#94a3b8;border-radius:8px;padding:7px 18px;
+      background:rgba(18,19,23,0.9);border:1px solid var(--g-800);
+      color:var(--g-400);border-radius:8px;padding:7px 18px;
       font-size:0.9rem;cursor:pointer;
     `;
     const applyBtn = document.createElement('button');
     applyBtn.textContent = 'Apply Crop';
     applyBtn.style.cssText = `
-      background:rgba(103,232,249,0.15);border:1px solid #67e8f9;
-      color:#67e8f9;border-radius:8px;padding:7px 18px;
+      background:rgba(0,240,255,0.15);border:1px solid var(--neon-light);
+      color:var(--neon-light);border-radius:8px;padding:7px 18px;
       font-size:0.9rem;cursor:pointer;font-weight:600;
     `;
     footer.appendChild(cancelBtn);
