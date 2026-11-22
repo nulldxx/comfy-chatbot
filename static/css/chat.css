@@ -1735,6 +1735,19 @@ body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell, .charsheet-thum
 }
 .charsheet-regen:hover:not(:disabled) { border-color: var(--neon); }
 .charsheet-regen:disabled { opacity: 0.4; cursor: default; }
+/* 👤 face detail: the ↺ button's twin in the opposite corner */
+.charsheet-face { right: auto; left: 5px; font-size: 13px; color: var(--g-300); }
+.charsheet-face:hover:not(:disabled) { border-color: var(--info); color: var(--info); }
+/* The face-detail dialog overlays the whole row (a 200px thumb is too small for it) */
+.charsheet-row { position: relative; }
+.charsheet-row:has(> .img-i2i-dialog) { min-height: 300px; }
+.charsheet-row > .img-i2i-dialog { border-radius: 8px; }
+/* A pending before/after comparison widens its cell */
+.charsheet-row.comparing { grid-template-columns: 1fr minmax(200px, 360px); }
+.charsheet-compare { margin-top: 0; max-width: 100%; }
+.charsheet-compare .ba-slider { width: auto; max-width: 100%; }
+.charsheet-compare .ba-before { width: auto; max-width: 100%; max-height: 360px; }
+.charsheet-compare .ba-actions { flex-wrap: wrap; }
 .charsheet-empty { color: var(--g-700); padding: 24px 0; }
 .charsheet-progress { width: 100%; }
 .charsheet-progress .progress-bar-wrap { margin-top: 0; }
@@ -1756,7 +1769,7 @@ body.privacy-mode :is(.img-wrap, .review-thumb, .composite-cell, .charsheet-thum
 }
 .charsheet-generate:disabled { background: var(--g-800); color: var(--g-400); cursor: default; }
 @media (max-width: 640px) {
-  .charsheet-row { grid-template-columns: 1fr; }
+  .charsheet-row, .charsheet-row.comparing { grid-template-columns: 1fr; }
   .charsheet-source { grid-template-columns: 1fr auto; }
   .charsheet-source .charsheet-label { grid-column: 1 / -1; }
 }

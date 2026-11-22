@@ -104,6 +104,28 @@ cached), the image and the workflow (the i2i allowlist) before starting anything
 - Desktop drops onto the input box set `e.comfyDropHandled`. The page-wide drop handler
   still closes its overlay but no longer also imports the file into the chat.
 
+### Face detail on a panel (👤)
+Each panel thumbnail has a 👤 in the bottom-left corner, opposite ↺. It opens the
+chat's usual Face detail dialog (over the whole row, since a 200px thumb is too small)
+and runs the ordinary `/api/face-detail` job. The result then appears as the usual
+before/after slider **in that panel's cell**, not in the chat.
+
+- `charsheetFaceDetail` (`chat.js`, passed in through `deps`) reuses `showI2IDialog`
+  and `runGeneration`. A new `runGeneration` option, `compareInPlace: {anchor,
+  onResult}`, hands the single result back to the caller instead of building a slider
+  in the chat. The progress bubble sits after the table, as other in-place jobs do.
+- Default prompt: `lastFaceDetailPrompt`, else one derived from the panel's prompt or,
+  failing that, the **source portrait's** (panels have no `imagePrompts` entry of their
+  own). Unlike the chat, an empty default doesn't refuse: the dialog opens blank.
+- **1** keeps the original, **2** keeps the detailed panel and deletes the old file,
+  **🩹** composites the two. There is no **1+2**: a cell holds one image
+  (`buildComparisonSlider` now omits that button when `onBoth` is null).
+- Pending state lives in the module-level `faceJobs` (`dialog` → `running` →
+  `compare`), so a redraw doesn't lose the slider. While any entry exists the sheet is
+  busy: no Generate, ↺, 👤 or source change. If the panel changes underneath it (new
+  chat, session load), the detailed file is deleted rather than orphaned.
+- A pending comparison doesn't survive a reload. The detailed file stays in the gallery.
+
 ### Chat delete
 `session_media_filenames` counts `characterSheet.results`, so deleting the chat deletes
 its panels. The **source** image is treated like a reference instead: another chat's

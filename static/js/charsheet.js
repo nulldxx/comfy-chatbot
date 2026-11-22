@@ -17,12 +17,23 @@ import {
 import { state } from './state.js';
 import { addMessage, scrollBottom, deleteImageFile } from './dom.js';
 import { openLightbox } from './lightbox.js';
+import { buildComparisonSlider } from './editors.js';
 
 // The one job a tab can have running: { jobId, keys:Set (still to come), current,
 // status, tick, error }. Module-level, not per table, so a second table opened while
 // a job runs shows the same progress and can't start a second job.
 let activeJob = null;
 let lastError = null;
+
+// 👤 face-detail per panel key: { phase: 'dialog'|'running'|'compare', oldUrl, newUrl?, slider? }. Also
+// module-level, so a redraw (or a second open table) keeps a pending comparison rather
+// than wiping it. While any entry exists the sheet is "busy": no Generate, ↺ or source
+// change, since either would swap out the panel the comparison is about.
+const faceJobs = {};
+
+function busy() {
+  return !!activeJob || Object.keys(faceJobs).length > 0;
+}
 
 export function notifyCharacterSheetChanged() {
   document.dispatchEvent(new CustomEvent('character-sheet-changed'));
@@ -99,7 +110,7 @@ export function renderCharacterSheetTable(bubble, deps) {
     cell.className = 'charsheet-cell';
     row.append(left, cell);
     root.appendChild(row);
-    rows[panel.key] = { ta, cell };
+    rows[panel.key] = { row, ta, cell };
   }
 
   // ---- footer ------------------------------------------------------------
@@ -151,7 +162,7 @@ export function renderCharacterSheetTable(bubble, deps) {
       .catch(err => flash(err.message || 'Upload failed'));
   }
 
-  zone.addEventListener('click', () => { if (!activeJob) fileInput.click(); });
+  zone.addEventListener('click', () => { if (!busy()) fileInput.click(); });
   fileInput.addEventListener('change', e => { acceptFile(e.target.files[0]); e.target.value = ''; });
   zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
   zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
@@ -161,7 +172,7 @@ export function renderCharacterSheetTable(bubble, deps) {
     // importing the file into the chat as well.
     e.comfyDropHandled = true;
     zone.classList.remove('drag-over');
-    if (activeJob) { flash('Wait for the running job to finish'); return; }
+    if (busy()) { flash('Wait for the running job to finish'); return; }
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length) { acceptFile(files[0]); return; }
     const url = e.dataTransfer.getData(COMFY_URL_DND_TYPE);
@@ -169,7 +180,7 @@ export function renderCharacterSheetTable(bubble, deps) {
     if (isVideoUrl(url) || !url.startsWith('/images/')) { flash('Drop a still image from the chat'); return; }
     setSource(url);
   });
-  clearBtn.addEventListener('click', () => { if (!activeJob) setSource(null); });
+  clearBtn.addEventListener('click', () => { if (!busy()) setSource(null); });
 
   resetBtn.addEventListener('click', () => {
     if (activeJob) return;
@@ -186,6 +197,7 @@ export function renderCharacterSheetTable(bubble, deps) {
   });
 
   genBtn.addEventListener('click', () => {
+    if (busy()) return;
     const s = sheet();
     const panels = characterSheetPanelsPayload(s);
     const missing = panels.find(p => !p.cached && !p.prompt);
@@ -198,7 +210,7 @@ export function renderCharacterSheetTable(bubble, deps) {
   });
 
   function drawCell(key) {
-    const { cell, ta } = rows[key];
+    const { row, cell, ta } = rows[key];
     const s = sheet();
     const url = s.results[key];
     const running = activeJob && activeJob.keys.has(key);
@@ -206,6 +218,22 @@ export function renderCharacterSheetTable(bubble, deps) {
     cell.innerHTML = '';
     if (document.activeElement !== ta && ta.value !== (s.prompts[key] || '')) ta.value = s.prompts[key] || '';
     ta.disabled = !!activeJob;
+
+    let fj = faceJobs[key];
+    // The panel changed underneath a pending comparison (new chat, session load):
+    // the detailed file belongs to nothing now.
+    if (fj && fj.phase === 'compare' && s.results[key] !== fj.oldUrl) {
+      deleteImageFile(fj.newUrl).catch(() => {});
+      delete faceJobs[key];
+      fj = null;
+    }
+    row.classList.toggle('comparing', !!(fj && fj.phase === 'compare'));
+    if (fj && fj.phase === 'compare') {
+      // Moving the one slider element here is fine: it's the same comparison wherever
+      // it's shown, and its ✓/✗ settle it for every table.
+      cell.appendChild(fj.slider);
+      return;
+    }
 
     if (url) {
       const thumb = document.createElement('div');
@@ -230,17 +258,29 @@ export function renderCharacterSheetTable(bubble, deps) {
         }
       });
       thumb.appendChild(img);
-      if (!running) {
+      if (!running && !fj) {
         const regen = document.createElement('button');
         regen.className = 'charsheet-regen';
         regen.textContent = '↺';
         regen.title = 'Regenerate this panel (new seed, current prompt)';
-        regen.disabled = !!activeJob;
+        regen.disabled = busy();
         regen.addEventListener('click', e => { e.stopPropagation(); regenerate(key); });
-        thumb.appendChild(regen);
+        const face = document.createElement('button');
+        face.className = 'charsheet-regen charsheet-face';
+        face.innerHTML = '&#128100;&#xFE0E;';
+        face.title = 'Run face detail on this panel';
+        face.disabled = busy();
+        face.addEventListener('click', e => { e.stopPropagation(); faceDetail(key); });
+        thumb.append(face, regen);
       }
-      if (running) thumb.classList.add('stale');
+      if (running || (fj && fj.phase === 'running')) thumb.classList.add('stale');
       cell.appendChild(thumb);
+      if (fj && fj.phase === 'running') {
+        const cap = document.createElement('div');
+        cap.className = 'progress-caption';
+        cap.textContent = 'Face detailing… (progress below the table)';
+        cell.appendChild(cap);
+      }
     } else if (!running) {
       const empty = document.createElement('div');
       empty.className = 'charsheet-empty';
@@ -272,6 +312,27 @@ export function renderCharacterSheetTable(bubble, deps) {
     }
   }
 
+  // 👤: the chat's face-detail dialog and job, then a before/after slider in this
+  // panel's cell. 2 keeps the detailed panel (the old file is deleted, as a chat
+  // image's slider does), 1 keeps the original, 🩹 composites the two.
+  function faceDetail(key) {
+    if (busy() || !deps.charsheetFaceDetail) return;
+    const s = sheet();
+    const oldUrl = s.results[key];
+    if (!oldUrl) return;
+    faceJobs[key] = { phase: 'dialog', oldUrl };     // locks the sheet while the dialog is up
+    jobChanged();
+    deps.charsheetFaceDetail(oldUrl, {
+      dialogHost: rows[key].row, anchor: root, promptFrom: s.source,
+      onStart: () => { faceJobs[key] = { phase: 'running', oldUrl }; jobChanged(); },
+    })
+      .then(res => {
+        if (res) { showFaceCompare(key, res.oldUrl, res.newUrl); return; }
+        if (faceJobs[key]) { delete faceJobs[key]; jobChanged(); }
+      })
+      .catch(() => { if (faceJobs[key]) { delete faceJobs[key]; jobChanged(); } });
+  }
+
   function regenerate(key) {
     const s = sheet();
     const prompt = (s.prompts[key] || '').trim();
@@ -289,10 +350,10 @@ export function renderCharacterSheetTable(bubble, deps) {
     } else {
       zone.innerHTML = '<span class="charsheet-hint">Drop a head-and-shoulders portrait here — from the chat or your desktop</span>';
     }
-    clearBtn.disabled = !s.source || !!activeJob;
+    clearBtn.disabled = !s.source || busy();
     for (const { key } of CHARACTER_SHEET_PANELS) drawCell(key);
 
-    genBtn.disabled = !s.source || !!activeJob;
+    genBtn.disabled = !s.source || busy();
     resetBtn.disabled = !!activeJob;
     cancelBtn.style.display = activeJob && activeJob.jobId ? '' : 'none';
     const have = CHARACTER_SHEET_PANELS.filter(p => s.results[p.key]).length;
@@ -325,12 +386,42 @@ export function renderCharacterSheetTable(bubble, deps) {
   redraw();
 }
 
+// A finished 👤 run: swap the panel's thumbnail for the usual before/after slider.
+// Settling it writes the kept file back into the sheet (which saves the session).
+function showFaceCompare(key, oldUrl, newUrl) {
+  if (sheet().results[key] !== oldUrl) {
+    deleteImageFile(newUrl).catch(() => {});
+    delete faceJobs[key];
+    jobChanged();
+    return;
+  }
+  const settle = (keep, discard) => {
+    delete faceJobs[key];
+    const cur = sheet();
+    if (cur.results[key] === oldUrl) {
+      cur.results[key] = keep;
+      discard.forEach(u => deleteImageFile(u).catch(() => {}));
+    } else if (keep !== oldUrl) {
+      deleteImageFile(keep).catch(() => {});      // the panel moved on; don't orphan it
+    }
+    notifyCharacterSheetChanged();
+  };
+  const slider = buildComparisonSlider(oldUrl, newUrl,
+    () => settle(newUrl, [oldUrl]),
+    () => settle(oldUrl, [newUrl]),
+    compositeUrl => settle(compositeUrl, [oldUrl, newUrl]),
+    null);
+  slider.classList.add('charsheet-compare');
+  faceJobs[key] = { phase: 'compare', oldUrl, newUrl, slider };
+  jobChanged();
+}
+
 function jobChanged() {
   document.dispatchEvent(new CustomEvent('character-sheet-job'));
 }
 
 function startJob(panels, compose, deps) {
-  if (activeJob) return;
+  if (busy()) return;
   const s = sheet();
   if (!s.source) return;
   const toRun = panels.filter(p => !p.cached).map(p => p.key);

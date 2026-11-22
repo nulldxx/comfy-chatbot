@@ -625,7 +625,8 @@ export function openCompositeEditor(oldUrl, newUrl, onComposite) {
 // Builds a before/after comparison slider for a face-detail or upscale result.
 // `oldUrl` shows on the left, `newUrl` on the right; dragging the handle wipes
 // between them. onAccept/onReject handle the ✓/✗ buttons. The optional
-// onComposite enables a 🩹 button for selective compositing.
+// onComposite enables a 🩹 button for selective compositing; without onBoth there is
+// no 1+2 button (the /character-sheet cell holds exactly one image).
 export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComposite, onBoth) {
   const container = document.createElement('div');
   container.className = 'ba-container';
@@ -822,7 +823,8 @@ export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComp
     mPick2.addEventListener('click', () => { dismiss(); pick2.click(); });
     mPickBoth.addEventListener('click', () => { dismiss(); pickBoth.click(); });
 
-    header.append(mPick1, mPick2, mPickBoth);
+    header.append(mPick1, mPick2);
+    if (onBoth) header.append(mPickBoth);
 
     if (onComposite) {
       const mMaskBtn = document.createElement('button');
@@ -856,7 +858,7 @@ export function buildComparisonSlider(oldUrl, newUrl, onAccept, onReject, onComp
 
   actions.appendChild(pick1);
   actions.appendChild(pick2);
-  actions.appendChild(pickBoth);
+  if (onBoth) actions.appendChild(pickBoth);
 
   if (onComposite) {
     const maskBtn = document.createElement('button');

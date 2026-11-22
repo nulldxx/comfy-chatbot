@@ -924,6 +924,40 @@ function runFaceDetailMulti(faces, image, imgWrap, denoise, margin) {
     .finally(() => { sendBtn.disabled = false; });
 }
 
+// /character-sheet's 👤: the same dialog and face-detail job as a chat image's 👤, but
+// the result comes back to the table, which compares it in the panel's own cell.
+// `dialogHost` hosts the dialog overlay, `anchor` places the progress bubble, and
+// `promptFrom` is a fallback URL whose prompt yields the default face prompt (panels
+// have none of their own; the sheet's source portrait may). Resolves with
+// {oldUrl, newUrl}, or null when cancelled or failed; `onStart` fires once the job is
+// launched (after the dialog's OK).
+function charsheetFaceDetail(url, { dialogHost, anchor, promptFrom, onStart } = {}) {
+  if (sendBtn.disabled) {
+    addMessage('bot', '<span style="color:var(--danger)">Wait for the running job to finish</span>');
+    return Promise.resolve(null);
+  }
+  const genPrompt = state.imagePrompts[url] || (promptFrom ? state.imagePrompts[promptFrom] : null);
+  const prompt = applyReplacements(state.lastFaceDetailPrompt || deriveFaceDetailPrompt(genPrompt) || '', state.faceDetailReplacements);
+  return showI2IDialog(dialogHost, prompt, state.currentDenoise.face, 'Face detail')
+    .then(({ prompt: dlgPrompt, denoise }) => {
+      if (!dlgPrompt) {
+        addMessage('bot', '<span style="color:var(--danger)">Face detail needs a prompt</span>');
+        return null;
+      }
+      state.iterationsFromSequence = false;
+      sendBtn.disabled = true;
+      if (onStart) onStart();
+      return new Promise(resolve => {
+        runGeneration(dlgPrompt, '', null, {
+          face: { image: url, workflow: state.currentFaceWorkflow || DEFAULT_FACE_WORKFLOW, denoiseOverride: denoise },
+          compareInPlace: { anchor, onResult: (oldUrl, newUrl) => resolve({ oldUrl, newUrl }) },
+        })
+          .then(ok => { if (!ok) resolve(null); })
+          .finally(() => { sendBtn.disabled = false; });
+      });
+    }, () => null);
+}
+
 // Super face-detail: run the detailer N times (state.faceSuperN) on the same
 // image and present the variations as a tile picker (superTileReplace) instead
 // of a single before/after slider.
@@ -1739,7 +1773,7 @@ function restoreSession(data) {
   }
   // Likewise the /character-sheet table: only its state is persisted.
   if (state.characterSheet) {
-    renderCharacterSheetTable(addMessage('bot', ''), { appendChatImage });
+    renderCharacterSheetTable(addMessage('bot', ''), { appendChatImage, charsheetFaceDetail });
   }
 
   if (data.recordingName) {
@@ -2426,10 +2460,13 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
   const replaceWrap = opts.replaceWrap || null;
   const sliderReplace = opts.sliderReplace || null;
   const superTileReplace = opts.superTileReplace || null;
+  // {anchor, onResult(oldUrl, newUrl)}: hand a single result back to the caller to
+  // compare wherever it likes (the /character-sheet table) instead of in the chat.
+  const compareInPlace = opts.compareInPlace || null;
   const preserveMtimeFrom = opts.preserveMtimeFrom || null;
   const stepsOverride = opts.stepsOverride != null ? opts.stepsOverride : null;
   const onResult = typeof opts.onResult === 'function' ? opts.onResult : null;
-  const inPlaceWrap = sliderReplace || superTileReplace || replaceWrap;
+  const inPlaceWrap = sliderReplace || superTileReplace || replaceWrap || (compareInPlace && compareInPlace.anchor);
   // text2video counts as a "job" despite having no source image: that keeps the
   // still-image params (width/height/steps/extraPrompt) and the auto-face-detail
   // pass off a video run, exactly as for image2video.
@@ -2553,6 +2590,13 @@ function runGeneration(raw, label, workflowOverride, opts = {}) {
           ? { kind: 'i2v', prompt: raw || '', image: image2video.image,
               ...(image2video.lastFrame ? { lastFrame: image2video.lastFrame } : {}) }
           : text2video ? { kind: 't2v', prompt: raw || '' } : null;
+
+        if (compareInPlace && msg.images.length === 1) {
+          botBubble.parentElement.remove();
+          compareInPlace.onResult(job.image, msg.images[0]);
+          resolve(true);
+          return;
+        }
 
         if (superTileReplace && superTileReplace.parentNode && msg.images.length >= 1) {
           const oldUrl = superTileReplace.querySelector('img').getAttribute('src');
@@ -2787,6 +2831,7 @@ const { handleSlashCommand, runDefaultMacroOnImage, newChat } = makeCommandHandl
   detachActiveSequenceRun,
   newTempSessionName,
   appendChatImage,
+  charsheetFaceDetail,
 });
 
 // Route the header "Sign out" link through /logoff rather than letting it navigate

@@ -390,6 +390,10 @@ expressions. See `ADR/character-sheet.md`.
 - **`state.characterSheet`** is saved with the session (and redrawn on restore, like
   `/video-story`), reset by `newChat`, and not in `/settings-save`. Chat delete removes
   its panels (`session_media_filenames`); its source counts as a reference.
+- **👤 on a panel** runs the chat's face-detail dialog and job, then shows the usual
+  before/after slider in that cell (no 1+2). `runGeneration`'s `compareInPlace` option
+  hands the result back instead of building a chat slider. A pending one is held in
+  `faceJobs` and locks the sheet.
 - A drop zone that handles a desktop file sets `e.comfyDropHandled`, so the page-wide
   drop handler doesn't also import the file into the chat.
 
