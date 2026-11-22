@@ -38,6 +38,7 @@ COPY ComfyServer.py .
 COPY config.py .
 COPY crypto_key.py .
 COPY face_multi.py .
+COPY character_sheet.py .
 COPY generation_service.py .
 COPY grok.py .
 COPY gunicorn.conf.py .

@@ -13,6 +13,7 @@ import { createSlideshow } from './slideshow.js';
 import { renderReviewGrid, renderCompositeGrid, renderSequenceReview } from './grids.js';
 import { renderArchiveBrowser } from './archive.js';
 import { renderVideoStoryTable, notifyVideoStoryChanged } from './story.js';
+import { openCharacterSheet, notifyCharacterSheetChanged } from './charsheet.js';
 import { isPrivacyMode, setPrivacyMode } from './privacy.js';
 
 // Fetch the alternate models a workflow offers. `kind` names its directory family
@@ -1396,6 +1397,8 @@ export function makeCommandHandler(deps) {
     state.lastSequence = null;
     state.videoStory = null;
     document.dispatchEvent(new CustomEvent('video-story-changed'));
+    state.characterSheet = null;
+    notifyCharacterSheetChanged();
     state.fauxFullscreenEls.clear();
     document.body.style.overflow = '';
     state.currentServer = null;
@@ -1931,6 +1934,12 @@ export function makeCommandHandler(deps) {
         await deps.runSequenceRunJob(master, count, { video: true });
         sendBtn.disabled = false;
       })();
+    }
+
+    if (cmd === '/character-sheet') {
+      addMessage('user', escapeHtml(raw), raw);
+      openCharacterSheet(deps);
+      return;
     }
 
     if (cmd === '/video-story') {
@@ -2747,6 +2756,7 @@ export function makeCommandHandler(deps) {
         { sig: '/i2i-replacement-reset', desc: 'clear all image2image replacements' },
         { sig: '/i2i-set-prompt <prompt>', desc: 'override prompt used by <code>/i2i</code> and the 🎨 button instead of each image\'s original prompt (handy after a <code>/review</code>); no args shows it' },
         { sig: '/i2i-set-prompt-reset', desc: 'clear the override prompt' },
+        { sig: '/character-sheet', desc: 'build a 3840×2160 character sheet (portrait, front/side/rear full body, three expressions) from one head-and-shoulders portrait, using the image2image workflow', notes: 'drag a chat image or drop a desktop file into the top box &nbsp;·&nbsp; prompts are editable &nbsp;·&nbsp; ↺ on a panel re-runs just that panel &nbsp;·&nbsp; Generate reuses every panel already made and re-composites the sheet &nbsp;·&nbsp; the i2i template needs <code>&lt;WIDTH&gt;</code>/<code>&lt;HEIGHT&gt;</code> for the panel shapes &nbsp;·&nbsp; saved with the chat' },
         { sig: '/i2i-workflow [name]', desc: 'choose which image2image workflow <code>/i2i</code> uses (no arg = picker)' },
         { sig: '/i2i-workflow-reset', desc: 'reset the image2image workflow to its default' },
         { sig: '/i2v [N]', desc: 'run an image2video workflow over the last N images (default 1), each from its own original prompt or the override prompt if set', notes: 'runs server-side — keeps going and records to the chat if you close the tab &nbsp;·&nbsp; a failed step pauses for ⟳ retry' },

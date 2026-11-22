@@ -367,6 +367,56 @@ export function videoStorySetCursor(story, i) {
 }
 
 // ---------------------------------------------------------------------------
+// /character-sheet — seven image2image panels composited into one 3840×2160 sheet.
+// state.characterSheet is { source, prompts: {key: text}, results: {key: url} }.
+// Keys and default prompts live here; panel sizes and the layout are server-side
+// (character_sheet.py), which validates keys against its own PANELS.
+// ---------------------------------------------------------------------------
+
+export const CHARACTER_SHEET_PANELS = [
+  { key: 'portrait', label: 'Portrait',                    prompt: 'The person, head and shoulders view, white background' },
+  { key: 'front',    label: 'Full body',                   prompt: 'The person, full body view facing forwards, white background' },
+  { key: 'side',     label: 'Side view',                   prompt: 'The person, full body profile view, white background' },
+  { key: 'rear',     label: 'Rear view',                   prompt: 'The person, full body rear view, white background' },
+  { key: 'neutral',  label: 'Facial expression: neutral',  prompt: 'The person, with a neutral facial expression' },
+  { key: 'smile',    label: 'Facial expression: smiling',  prompt: 'The person, with a smiling facial expression' },
+  { key: 'shocked',  label: 'Facial expression: shocked',  prompt: 'The person, with a shocked facial expression' },
+];
+
+export function defaultCharacterSheetPrompts() {
+  const out = {};
+  for (const p of CHARACTER_SHEET_PANELS) out[p.key] = p.prompt;
+  return out;
+}
+
+// A well-formed sheet from whatever a session held (or nothing): unknown keys and
+// non-string values are dropped, missing prompts get their defaults.
+export function normalizeCharacterSheet(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const prompts = defaultCharacterSheetPrompts();
+  const results = {};
+  for (const { key } of CHARACTER_SHEET_PANELS) {
+    const p = src.prompts && src.prompts[key];
+    if (typeof p === 'string') prompts[key] = p;
+    const r = src.results && src.results[key];
+    if (typeof r === 'string' && r) results[key] = r;
+  }
+  return { source: typeof src.source === 'string' && src.source ? src.source : null, prompts, results };
+}
+
+// The /api/character-sheet `panels` list for `keys` (default: every panel). With
+// `useCache`, a panel that already has a result is sent as `cached` so the server
+// reuses it; the per-panel ↺ sends useCache=false to force a fresh run.
+export function characterSheetPanelsPayload(sheet, keys = null, useCache = true) {
+  const want = keys || CHARACTER_SHEET_PANELS.map(p => p.key);
+  return want.map(key => {
+    const entry = { key, prompt: (sheet.prompts[key] || '').trim() };
+    if (useCache && sheet.results[key]) entry.cached = sheet.results[key];
+    return entry;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Server-side batch runs (/api/batch-run)
 // ---------------------------------------------------------------------------
 // /i2v <N>, /face-detail <N> and /face-detail-session post their whole chain as one

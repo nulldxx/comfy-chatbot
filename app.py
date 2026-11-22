@@ -56,6 +56,7 @@ from generation_service import (
     BATCH_STEP_KINDS,
     rename_and_retarget_session, run_generation, start_background_job,
     start_batch_run_job,
+    start_character_sheet_job,
     start_face_detail_multi_job, start_face_detail_super_job, start_generation_job, start_sequence_run_job,
 )
 from image_store import (
@@ -72,6 +73,7 @@ from persistence import (
 )
 import seed_store
 import media_metadata
+import character_sheet
 import auth_store
 import idle_lock
 import archive_browse
@@ -1345,6 +1347,74 @@ def api_face_detail_multi():
         data.get("server_os") or COMFY_SERVER_OS,
         workflow_name,
         workflow_dir=COMFY_FACEDETAILER_DIR, denoise=denoise,
+    )
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/character-sheet", methods=["POST"])
+@login_required
+@requires_output_storage
+def api_character_sheet():
+    """Build a character sheet from one portrait with the image2image workflow.
+
+    Body: ``{image, workflow?, panels: [{key, prompt, cached?}], compose,
+    server?, server_os?}``. Each panel key names a slot in
+    ``character_sheet.PANELS``; a panel with a ``cached`` gallery URL is reused
+    rather than regenerated (a cached file that has since gone is regenerated).
+    ``compose`` composites the sheet at the end; the table's per-panel ↺ sends
+    one uncached panel with ``compose: false``. See ADR/character-sheet.md.
+    """
+    data = request.get_json(force=True) or {}
+    panels_in = data.get("panels")
+    if not isinstance(panels_in, list) or not panels_in:
+        return jsonify({"error": "panels is required"}), 400
+
+    parsed, seen = [], set()
+    for i, panel in enumerate(panels_in, 1):
+        if not isinstance(panel, dict):
+            return jsonify({"error": f"Panel {i} is malformed"}), 400
+        key = panel.get("key")
+        if key not in character_sheet.PANELS:
+            return jsonify({"error": f"Unknown panel {key!r}"}), 400
+        if key in seen:
+            return jsonify({"error": f"Panel {key!r} given twice"}), 400
+        seen.add(key)
+        cached = None
+        cached_url = (panel.get("cached") or "").strip()
+        if cached_url:
+            _, cached, err = resolve_input_image(cached_url)
+            if err:
+                if err[1] != 404:
+                    return err
+                cached = None           # gone since — just regenerate it
+        prompt, loras = parse_loras_from_prompt((panel.get("prompt") or "").strip())
+        if cached is None and not prompt:
+            label = character_sheet.PANELS[key]["label"]
+            return jsonify({"error": f"{label} needs a prompt"}), 400
+        parsed.append({"key": key, "prompt": prompt, "loras": loras, "cached": cached})
+
+    compose = bool(data.get("compose"))
+
+    image_url = (data.get("image") or "").strip()
+    if not image_url:
+        return jsonify({"error": "image is required"}), 400
+    _, image_path, err = resolve_input_image(image_url)
+    if err:
+        return err
+
+    workflow_name, err = resolve_workflow(
+        data.get("workflow") or COMFY_IMAGE2IMAGE_WORKFLOW,
+        list_image2image_workflows(), "image2image",
+    )
+    if err:
+        return err
+
+    job_id = start_character_sheet_job(
+        image_path, parsed, compose,
+        data.get("server") or COMFY_SERVER,
+        data.get("server_os") or COMFY_SERVER_OS,
+        workflow_name,
+        workflow_dir=COMFY_IMAGE2IMAGE_DIR, denoise=1.0,
     )
     return jsonify({"job_id": job_id})
 

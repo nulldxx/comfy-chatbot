@@ -359,6 +359,37 @@ each painted face's mask goes to `/api/upload-mask`, and the tokens are posted t
   `uploadMask`. All three brush editors use it. A fourth should too, rather than
   copying it.
 
+### Character sheet (`/character-sheet`, `charsheet.js`, `character_sheet.py`)
+
+`/character-sheet` turns one head-and-shoulders portrait into a white 3840×2160 sheet for
+reference-to-video models (MiniMax H3 R2V). It runs the **current image2image workflow**
+once per panel: portrait, front/side/rear full body, and neutral/smiling/shocked
+expressions. See `ADR/character-sheet.md`.
+
+- **The table** has an input box (drag from chat, or a desktop file via
+  `/api/import-image`) and seven prompt|result rows, each with ↺ in the corner to re-run
+  that panel. **Generate** posts every panel to `POST /api/character-sheet`, sending
+  existing results as `cached`. The server runs only the missing panels and then
+  composites, so a regenerated panel gets folded into a fresh sheet.
+- **Layout lives in `character_sheet.PANELS`**: generation size and sheet box per key.
+  The client knows only keys, labels and default prompts (`CHARACTER_SHEET_PANELS` in
+  `utils.js`). Keep the keys in step.
+- **`<WIDTH>`/`<HEIGHT>`**: new optional bare-numeric tokens for i2i templates, filled
+  from `out_width`/`out_height`. With no explicit size they fall back to the source
+  scaled to 1 MP, snapped to 16, so plain ✨ i2i is unchanged. Both `width`/`height`
+  pairs in `klein9b-image-edit.json` (latent and `Flux2Scheduler`) use them. A template
+  without them still works, but the panels come out squarish and letterboxed.
+- **Denoise is fixed at 1.0.** Panel files are **kept**, because they are the cache.
+  Full-body panels are trimmed of near-white borders before fitting, so the three
+  figures are the same scale.
+- **New SSE events**: `panel_start {key}` and `panel {key, url}`. `done`, `error` and
+  `cancelled` carry `panels`.
+- **`state.characterSheet`** is saved with the session (and redrawn on restore, like
+  `/video-story`), reset by `newChat`, and not in `/settings-save`. Chat delete removes
+  its panels (`session_media_filenames`); its source counts as a reference.
+- A drop zone that handles a desktop file sets `e.comfyDropHandled`, so the page-wide
+  drop handler doesn't also import the file into the chat.
+
 ### Privacy mode (`/privacy`, `privacy.js`)
 
 `/privacy` toggles a `privacy-mode` class on `<body>`; CSS in `chat.css` then covers every
@@ -639,6 +670,7 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 | `<FPS>` | Video frames per second (int); image2video workflows. Set via `/video-settings` |
 | `<VIDEO_WIDTH>` | Video output width in px (int); image2video workflows. Set via `/video-settings`, kept distinct from the still-image resolution in `/image-settings` |
 | `<VIDEO_HEIGHT>` | Video output height in px (int); image2video workflows. Set via `/video-settings`, kept distinct from the still-image resolution in `/image-settings` |
+| `<WIDTH>` / `<HEIGHT>` | Output size in px (int) for image2image edit graphs. Set per panel by `/character-sheet`; otherwise the source image at 1 MP, snapped to 16. Optional — a template without them is unaffected |
 
 ### LoRA handling detail
 

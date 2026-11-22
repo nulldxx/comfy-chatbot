@@ -3,7 +3,7 @@ import {
   deriveFaceDetailPrompt, isVideoUrl, DEFAULT_VIDEO_SETTINGS,
   buildVideoPrompt, i2vTooltip, normalizeVideoMeta, videoPromptOpts, COMFY_URL_DND_TYPE, videoOptsPayload,
   progressPercent, progressCaption, runStagePrefix, videoStoryNext, shouldAutoStoryNext,
-  normalizeFaceMultiPrompts, clampFaceMultiMargin,
+  normalizeFaceMultiPrompts, clampFaceMultiMargin, normalizeCharacterSheet,
 } from './utils.js';
 import { state, DEFAULT_DENOISE, newReferences, cloneReferences, referenceSlotEnabled } from './state.js';
 import {
@@ -23,6 +23,7 @@ import { initSidebar } from './sidebar.js';
 import { initMediaMenu } from './mediamenu.js';
 import { initPrivacyMode, isPrivacyMode } from './privacy.js';
 import { renderVideoStoryTable } from './story.js';
+import { renderCharacterSheetTable } from './charsheet.js';
 
 // ---------------------------------------------------------------------------
 // LoRA catalogue and alias catalogue — populated from server on load
@@ -333,6 +334,9 @@ messagesEl.addEventListener('click', e => {
     e.preventDefault();
     dragDepth = 0;
     overlay.classList.remove('open');
+    // A drop zone that already took the file (the /character-sheet input box) marks
+    // the event so it isn't imported into the chat a second time.
+    if (e.comfyDropHandled) return;
     const all = Array.from(e.dataTransfer.files || []);
     all.filter(f => f.type.startsWith('image/')).forEach(importDroppedImage);
     all.filter(isSettingsFile).forEach(importSettingsFile);
@@ -517,6 +521,10 @@ document.addEventListener('video-story-changed', () => {
   refreshStoryNextButtons();
   scheduleRecordSave();
 });
+
+// /character-sheet: a structural change (new panel, source, reset) or a prompt edit.
+document.addEventListener('character-sheet-changed', () => scheduleRecordSave());
+document.addEventListener('character-sheet-edited', () => scheduleRecordSave());
 
 async function runStoryNext(videoUrl, btn) {
   if (sendBtn.disabled) {
@@ -1620,6 +1628,7 @@ function doRecordSave() {
       videoSources: Object.assign({}, state.videoSources),
       lastSequence: state.lastSequence,
       videoStory: state.videoStory,
+      characterSheet: state.characterSheet,
       promptHistory: state.history.slice(),
       messages: captureSessionMessages(),
     }),
@@ -1645,6 +1654,7 @@ function restoreSession(data) {
   for (const k of Object.keys(state.videoSources)) delete state.videoSources[k];
   state.lastSequence = null;
   state.videoStory = null;
+  state.characterSheet = null;
   state.references = newReferences();
   state.reuseSeed = null;
   state.fauxFullscreenEls.clear();
@@ -1703,6 +1713,7 @@ function restoreSession(data) {
   Object.assign(state.videoSources, data.videoSources || {});
   state.lastSequence = data.lastSequence || null;
   state.videoStory = data.videoStory || null;
+  state.characterSheet = data.characterSheet ? normalizeCharacterSheet(data.characterSheet) : null;
   for (const entry of (data.promptHistory || [])) state.history.push(entry);
 
   const validImages = new Set(data.sessionImages || []);
@@ -1725,6 +1736,10 @@ function restoreSession(data) {
   // redraw it at the end of the restored chat rather than leaving the story invisible.
   if (state.videoStory && Array.isArray(state.videoStory.items)) {
     renderVideoStoryTable(addMessage('bot', ''));
+  }
+  // Likewise the /character-sheet table: only its state is persisted.
+  if (state.characterSheet) {
+    renderCharacterSheetTable(addMessage('bot', ''), { appendChatImage });
   }
 
   if (data.recordingName) {

@@ -43,6 +43,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/i2v-replacement-reset',        desc: 'clear all image2video replacements',                                                args: ''  },
   { cmd: '/i2v-set-prompt',               desc: 'set an override prompt for prompt-less /i2v',                                        args: ' ' },
   { cmd: '/i2v-set-prompt-reset',         desc: 'clear the image2video override prompt',                                              args: ''  },
+  { cmd: '/character-sheet',              desc: 'turn a portrait into a 3840×2160 character sheet with the image2image workflow',      args: ''  },
   { cmd: '/references',                   desc: 'open the reference-asset table (images/video/audio for image2video & text2video)', args: ''  },
   { cmd: '/i2v-workflow',                 desc: 'choose an image2video workflow (no arg = picker)',                                   args: ' ' },
   { cmd: '/i2v-workflow-reset',           desc: 'reset the image2video workflow to its default',                                       args: ''  },

@@ -11,7 +11,9 @@ import { escapeHtml, fuzzyScore, parseJsonResponse, expandAliases, applyReplacem
          videoClipSeconds, videoStoryCount, videoStoryNext, shouldAutoStoryNext, VIDEO_STORY_DEFAULT_COUNT,
          videoStoryInsert, videoStoryDelete, videoStorySetCursor,
          faceMultiPayload, normalizeFaceMultiPrompts, clampFaceMultiMargin,
-         FACE_MULTI_DEFAULT_MARGIN, FACE_MULTI_COLOURS } from '../../static/js/utils.js';
+         FACE_MULTI_DEFAULT_MARGIN, FACE_MULTI_COLOURS,
+         CHARACTER_SHEET_PANELS, defaultCharacterSheetPrompts, normalizeCharacterSheet,
+         characterSheetPanelsPayload } from '../../static/js/utils.js';
 
 // ---------------------------------------------------------------------------
 // computeDiffBox — locates the changed (face) region for the super tile picker
@@ -1476,5 +1478,43 @@ describe('multi-face face-detail helpers', () => {
 
   test('one overlay colour per slot', () => {
     expect(FACE_MULTI_COLOURS).toHaveLength(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /character-sheet helpers
+// ---------------------------------------------------------------------------
+
+describe('character sheet', () => {
+  test('seven panels with unique keys, matching the server layout', () => {
+    const keys = CHARACTER_SHEET_PANELS.map(p => p.key);
+    expect(keys).toEqual(['portrait', 'front', 'side', 'rear', 'neutral', 'smile', 'shocked']);
+    expect(defaultCharacterSheetPrompts().side).toMatch(/profile/);
+  });
+
+  test('normalize fills defaults and drops junk', () => {
+    const s = normalizeCharacterSheet({
+      source: '/images/a.png',
+      prompts: { front: 'custom', bogus: 'x', side: 7 },
+      results: { front: '/images/f.png', bogus: '/images/b.png', rear: '' },
+    });
+    expect(s.source).toBe('/images/a.png');
+    expect(s.prompts.front).toBe('custom');
+    expect(s.prompts.side).toBe(defaultCharacterSheetPrompts().side);
+    expect(s.prompts.bogus).toBeUndefined();
+    expect(s.results).toEqual({ front: '/images/f.png' });
+    expect(normalizeCharacterSheet(null)).toEqual({
+      source: null, prompts: defaultCharacterSheetPrompts(), results: {},
+    });
+  });
+
+  test('payload attaches cached results unless forced fresh', () => {
+    const s = normalizeCharacterSheet({ results: { front: '/images/f.png' } });
+    s.prompts.front = '  trimmed  ';
+    const all = characterSheetPanelsPayload(s);
+    expect(all).toHaveLength(7);
+    expect(all[1]).toEqual({ key: 'front', prompt: 'trimmed', cached: '/images/f.png' });
+    expect(all[0].cached).toBeUndefined();
+    expect(characterSheetPanelsPayload(s, ['front'], false)).toEqual([{ key: 'front', prompt: 'trimmed' }]);
   });
 });

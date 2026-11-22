@@ -209,6 +209,10 @@ export const state = {
   // also hides the ⏭ next-clip button on videos. Chat content, like lastSequence.
   videoStory:                  null,
   videoStoryAuto:              false,   // /video-story-auto: press ⏭ automatically while rows remain
+  // /character-sheet table: { source, prompts: {key}, results: {key: url} } (see
+  // normalizeCharacterSheet in utils.js). null = never opened in this chat. Chat content,
+  // like videoStory: saved with the session, reset by newChat, not in /settings-save.
+  characterSheet:              null,
   image2imageReplacements:     [],
   image2imageOverridePrompt:   null,
   image2videoReplacements:     [],

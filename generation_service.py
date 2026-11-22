@@ -320,7 +320,8 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
                          preserve_mtime_from=None,
                          cleanup_input_image=False, duration=None, frames=None, fps=None,
                          video_width=None, video_height=None, retry_event=None,
-                         seed=None, track_seed=False, disabled_optimizations=None):
+                         seed=None, track_seed=False, disabled_optimizations=None,
+                         out_width=None, out_height=None):
     """Core generation pipeline shared by run_generation and run_sequence_run.
 
     Runs everything from placeholder substitution through downloading the output,
@@ -394,6 +395,26 @@ def _run_generation_core(job_id, channel, cancel_event, prompt, loras,
             mapping["VIDEO_HEIGHT"] = video_height
         if video_width is not None and video_height is not None:
             send("progress", message=f"Video resolution {video_width}×{video_height}")
+
+        # Output size placeholders (<WIDTH>/<HEIGHT>) for image2image edit graphs —
+        # /character-sheet asks for a specific panel size. Filled only when the
+        # template has them; with no explicit size they fall back to the source image
+        # scaled to 1 MP (what an edit graph renders at by default), so the plain ✨
+        # i2i button keeps working against a template that carries the tokens.
+        if "<WIDTH>" in template or "<HEIGHT>" in template:
+            if not (out_width and out_height):
+                out_width, out_height = 1024, 1024
+                if input_image is not None:
+                    try:
+                        from PIL import Image
+                        from character_sheet import default_output_size
+                        with Image.open(input_image) as im:
+                            out_width, out_height = default_output_size(*im.size)
+                    except Exception as e:            # unreadable: keep the 1 MP square
+                        print(f"[generation] could not size from source image: {e}")
+            mapping["WIDTH"] = int(out_width)
+            mapping["HEIGHT"] = int(out_height)
+            send("progress", message=f"Output size {out_width}×{out_height}")
 
         if input_image is not None:
             send("progress", message="Uploading source image to ComfyUI...")
@@ -993,6 +1014,124 @@ def start_face_detail_multi_job(faces, image_path, margin, server_address,
     t = threading.Thread(
         target=run_face_detail_multi,
         args=(job_id, faces, image_path, margin, server_address, server_os, workflow_name),
+        kwargs=kwargs,
+        daemon=True,
+    )
+    t.start()
+    return job_id
+
+
+# ---------------------------------------------------------------------------
+# Character sheet (/character-sheet)
+# ---------------------------------------------------------------------------
+#
+# Up to seven image2image runs over one portrait, each at its own panel size
+# (<WIDTH>/<HEIGHT>), composited onto a white 3840×2160 sheet. Panels the client
+# already has (``cached``) are reused, so a regenerated panel can be folded into
+# a fresh sheet without re-running the rest. Unlike face-multi, the per-panel
+# outputs are KEPT: they are the cache. See ADR/character-sheet.md.
+
+def run_character_sheet(job_id, source, panels, compose, server_address,
+                        server_os, workflow_name, **kwargs):
+    """Generate the uncached ``panels`` (``[{key, prompt, loras, cached}]``)
+    from ``source``, emitting a ``panel`` event for each, then composite the
+    sheet when ``compose`` is set."""
+    import character_sheet
+
+    with jobs_lock:
+        channel = jobs[job_id]["channel"]
+        cancel_event = jobs[job_id]["cancel"]
+        jobs[job_id]["status"] = "running"
+
+    def send(msg_type, **kwargs2):
+        channel.send(json.dumps({"type": msg_type, **kwargs2}))
+
+    results = {}            # key -> /images/ URL, cached and new
+    try:
+        todo = [p for p in panels if p.get("cached") is None]
+        for p in panels:
+            if p.get("cached") is not None:
+                results[p["key"]] = f"/images/{Path(p['cached']).name}"
+        total = len(todo)
+        for i, p in enumerate(todo, 1):
+            if cancel_event.is_set():
+                raise JobCancelled()
+            spec = character_sheet.PANELS[p["key"]]
+            send("progress", message=f"Panel {i}/{total} — {spec['label']}…")
+            send("panel_start", key=p["key"])
+            w, h = spec["size"]
+            urls = _run_generation_core(
+                job_id, channel, cancel_event, p["prompt"], p["loras"],
+                server_address, server_os, workflow_name,
+                input_image=source, out_width=w, out_height=h, **kwargs,
+            )
+            stills = [u for u in urls if not _is_video_url(u)]
+            if not stills:
+                raise RuntimeError(f"{spec['label']}: the workflow returned no image")
+            for extra in urls:              # a multi-output graph: keep only the first still
+                if extra != stills[0]:
+                    _discard_gallery_file(extra)
+            results[p["key"]] = stills[0]
+            with jobs_lock:
+                jobs[job_id]["assets"].append(stills[0])
+            send("panel", key=p["key"], url=stills[0])
+
+        final = []
+        if compose:
+            if cancel_event.is_set():
+                raise JobCancelled()
+            send("progress", message="Compositing character sheet…")
+            sheet = character_sheet.compose_sheet(
+                {k: _gallery_path(u) for k, u in results.items()})
+            name = (f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    f"_charsheet_{uuid.uuid4().hex[:8]}.png")
+            sheet.save(IMAGES_DIR / name)
+            final = [f"/images/{name}"]
+        with jobs_lock:
+            assets = jobs[job_id]["assets"] + final
+            _mark_terminal_locked(job_id, "done", images=final, assets=assets)
+        send("done", images=final, panels=results)
+    except JobCancelled:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "cancelled")
+        send("cancelled", message="Cancelled", panels=results)
+    except Exception as e:
+        with jobs_lock:
+            _mark_terminal_locked(job_id, "error", error=str(e))
+        send("error", message=str(e), panels=results)
+    finally:
+        channel.close()
+
+
+def start_character_sheet_job(source, panels, compose, server_address,
+                              server_os, workflow_name, **kwargs):
+    """Create a tracked character-sheet job; return its job_id."""
+    job_id = str(uuid.uuid4())
+    label = "Character sheet" if compose else \
+        "Character sheet panel: " + ", ".join(p["key"] for p in panels)
+    summary = _build_summary(workflow_name, label, "image")
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "channel": _JobChannel(),
+            "images": [],
+            "assets": [],
+            "cancel": threading.Event(),
+            "server": server_address,
+            "prompt_id": None,
+            "kind": "image",
+            "workflow_name": workflow_name,
+            "prompt": label,
+            "summary": summary,
+            "started_at": time.time(),
+            "finished_at": None,
+            "error": None,
+        }
+        _evict_old_jobs_locked()
+
+    t = threading.Thread(
+        target=run_character_sheet,
+        args=(job_id, source, panels, compose, server_address, server_os, workflow_name),
         kwargs=kwargs,
         daemon=True,
     )
