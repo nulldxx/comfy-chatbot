@@ -105,8 +105,8 @@ class DefaultOutputSizeTests(unittest.TestCase):
 
     def test_aspect_kept_and_snapped(self):
         w, h = cs.default_output_size(3000, 2000)
-        self.assertEqual((w % 16, h % 16), (0, 0))
-        self.assertAlmostEqual(w / h, 1.5, delta=0.03)
+        self.assertEqual((w % 32, h % 32), (0, 0))
+        self.assertAlmostEqual(w / h, 1.5, delta=0.05)   # coarse 32px snapping
         self.assertAlmostEqual(w * h / 1e6, 1.0, delta=0.05)
 
     def test_validation_filler_parses_size_tokens(self):

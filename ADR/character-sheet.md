@@ -45,7 +45,7 @@ the input image, so two new optional **bare numeric** tokens were added.
 - `_run_generation_core(out_width=, out_height=)` fills the tokens only when the template
   contains them.
 - With no explicit size (the plain ✨ i2i button), they fall back to the source image
-  scaled to **1 MP** and snapped to a multiple of 16. That is what the Klein template's
+  scaled to **1 MP** and snapped to a multiple of 32 (the MiniMax H3 image graph needs 32; Klein is fine with it). That is what the Klein template's
   `ImageScaleToTotalPixels(megapixels=1)` → `GetImageSize` chain produced before, so
   adding the tokens doesn't change ordinary i2i.
 - A template without the tokens still works: the size is ignored and the fit absorbs the
@@ -54,6 +54,17 @@ the input image, so two new optional **bare numeric** tokens were added.
   node, which in an edit graph includes nodes that resize the input image.
 - `klein9b-image-edit.json`: the `EmptyFlux2LatentImage` (`75:66`) and `Flux2Scheduler`
   (`75:62`) width/height now read `<WIDTH>`/`<HEIGHT>`.
+- `minimax-h3-image-edit.json`, derived from ComfyUI's MiniMax H3 image-edit example:
+  - `LoadImage` holds `<INPUT_IMAGE>` and the user-prompt primitive holds `<PROMPT>`.
+  - `MiniMaxH3ImageConditioning` (`32`), which also makes the latent, takes
+    `<WIDTH>`/`<HEIGHT>`.
+  - The prompt-enhancer task prompt gains `User Aspect Ratio Selection:
+    <WIDTH>:<HEIGHT>`. Its instructions read that line, and without it the enhancer falls
+    back to "adaptive", the source portrait's ratio.
+  - The UI-only `ImageCompare` node was removed.
+  - The reference image is still scaled to 2 MP for conditioning; only the output size is
+    driven by the tokens.
+  - Because this graph needs multiples of 32, the fallback snaps to 32.
 
 ### Server job
 `run_character_sheet` (`generation_service.py`) follows the `run_face_detail_multi` job

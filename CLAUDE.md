@@ -376,8 +376,11 @@ expressions. See `ADR/character-sheet.md`.
   `utils.js`). Keep the keys in step.
 - **`<WIDTH>`/`<HEIGHT>`**: new optional bare-numeric tokens for i2i templates, filled
   from `out_width`/`out_height`. With no explicit size they fall back to the source
-  scaled to 1 MP, snapped to 16, so plain ✨ i2i is unchanged. Both `width`/`height`
-  pairs in `klein9b-image-edit.json` (latent and `Flux2Scheduler`) use them. A template
+  scaled to 1 MP, snapped to 32 (MiniMax H3 image needs 32), so plain ✨ i2i is unchanged. Both `width`/`height`
+  pairs in `klein9b-image-edit.json` (latent and `Flux2Scheduler`) use them.
+  `minimax-h3-image-edit.json` feeds them to `MiniMaxH3ImageConditioning`, and also
+  tells its prompt-enhancer `User Aspect Ratio Selection: <WIDTH>:<HEIGHT>` (a string use
+  of the tokens) so the expanded caption frames for the panel shape, not the source. A template
   without them still works, but the panels come out squarish and letterboxed.
 - **Denoise is fixed at 1.0.** Panel files are **kept**, because they are the cache.
   Full-body panels are trimmed of near-white borders before fitting, so the three
@@ -670,7 +673,7 @@ Workflows stored in `~/dot-files/comfyui/` (and mounted at `/app/workflows`) are
 | `<FPS>` | Video frames per second (int); image2video workflows. Set via `/video-settings` |
 | `<VIDEO_WIDTH>` | Video output width in px (int); image2video workflows. Set via `/video-settings`, kept distinct from the still-image resolution in `/image-settings` |
 | `<VIDEO_HEIGHT>` | Video output height in px (int); image2video workflows. Set via `/video-settings`, kept distinct from the still-image resolution in `/image-settings` |
-| `<WIDTH>` / `<HEIGHT>` | Output size in px (int) for image2image edit graphs. Set per panel by `/character-sheet`; otherwise the source image at 1 MP, snapped to 16. Optional — a template without them is unaffected |
+| `<WIDTH>` / `<HEIGHT>` | Output size in px (int) for image2image edit graphs. Set per panel by `/character-sheet`; otherwise the source image at 1 MP, snapped to 32. Optional — a template without them is unaffected |
 
 ### LoRA handling detail
 

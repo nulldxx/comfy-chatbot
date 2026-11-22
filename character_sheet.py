@@ -80,7 +80,7 @@ def compose_sheet(panel_paths):
     return canvas
 
 
-def default_output_size(width, height, megapixels=1.0, multiple=16):
+def default_output_size(width, height, megapixels=1.0, multiple=32):
     """The size an edit workflow would render ``width``×``height`` at when no
     explicit size is given: scaled to ``megapixels`` and snapped to ``multiple``.
 
