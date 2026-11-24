@@ -1169,6 +1169,44 @@ def case_preserving_replace(text, src, dst):
     return re.sub(re.escape(src), repl, text, flags=re.IGNORECASE)
 
 
+# An angle-bracket tag (<lora:name:0.8>, <PROMPT> …) plus the whitespace and at
+# most one comma separating it from what came before, so dropping a duplicate
+# doesn't leave ", ," or a double space behind.
+_ANGLE_TAG_RE = re.compile(r"(\s*,?\s*)(<[^<>]+>)")
+
+
+def dedupe_angle_tags(text):
+    """Drop every repeat of a ``<…>`` tag, keeping its first occurrence.
+
+    Tags match when their contents are equal ignoring case and surrounding
+    whitespace — ``<lora:a:1>`` and ``<LORA:a:1>`` are the same tag, but
+    ``<lora:a:1>`` and ``<lora:a:0.8>`` are not. A /sequence-replacement whose
+    "to" carries a LoRA tag adds it on every match, and Grok often repeats the
+    subject several times per prompt."""
+    if not text or "<" not in text:
+        return text
+    seen = set()
+
+    def repl(m):
+        key = m.group(2)[1:-1].strip().lower()
+        if key in seen:
+            return ""
+        seen.add(key)
+        return m.group(0)
+
+    return _ANGLE_TAG_RE.sub(repl, text)
+
+
+def apply_sequence_replacements(text, replacements):
+    """/sequence-replacement: every pair via case_preserving_replace, then a
+    dedupe pass so a tag the replacements introduced appears only once."""
+    if not replacements:
+        return text
+    for src, dst in replacements:
+        text = case_preserving_replace(text, src, dst)
+    return dedupe_angle_tags(text)
+
+
 # ---------------------------------------------------------------------------
 # Server-side sequence runs
 # ---------------------------------------------------------------------------
@@ -1444,19 +1482,15 @@ def run_sequence_run(job_id, master, count, replacements, video, gen_settings, a
                 master, count, cancel_event=run.cancel_event, session=session
             )
             for shot in shots:
-                item = {key: shot.get(key, "") for key in VIDEO_SHOT_KEYS}
-                for src, dst in replacements:
-                    for key in VIDEO_SHOT_KEYS:
-                        item[key] = case_preserving_replace(item[key], src, dst)
+                item = {key: apply_sequence_replacements(shot.get(key, ""), replacements)
+                        for key in VIDEO_SHOT_KEYS}
                 out.append(item)
         else:
             prompts = generate_prompt_sequence(
                 master, count, cancel_event=run.cancel_event, session=session
             )
             for p in prompts:
-                for src, dst in replacements:
-                    p = case_preserving_replace(p, src, dst)
-                out.append(p)
+                out.append(apply_sequence_replacements(p, replacements))
 
         # Let a connected browser render the plan (also drives /sequence-review).
         send("prompts", prompts=out, video=video)

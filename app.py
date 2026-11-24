@@ -52,7 +52,7 @@ from config import (
 )
 from generation_service import (
     TERMINAL_STATUSES,
-    cancel_auto_purge, case_preserving_replace, get_last_seed, get_last_sent_workflow, jobs, jobs_lock,
+    cancel_auto_purge, apply_sequence_replacements, get_last_seed, get_last_sent_workflow, jobs, jobs_lock,
     BATCH_STEP_KINDS,
     rename_and_retarget_session, run_generation, start_background_job,
     start_batch_run_job,
@@ -2066,9 +2066,8 @@ def api_video_story():
         # /sequence-replacement applies here exactly as it does to /video-sequence
         # shots (run_sequence_run). Music is always N/A, so only these two fields.
         for item in items:
-            for src, dst in replacements:
-                for key in ("description", "soundscape"):
-                    item[key] = case_preserving_replace(item.get(key, ""), src, dst)
+            for key in ("description", "soundscape"):
+                item[key] = apply_sequence_replacements(item.get(key, ""), replacements)
         return {"items": items, "master": master, "clip_seconds": clip_seconds}
 
     summary = "Video story: " + (master[:60] + ("…" if len(master) > 60 else ""))

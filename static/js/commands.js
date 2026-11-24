@@ -2063,7 +2063,7 @@ export function makeCommandHandler(deps) {
       addMessage('user', escapeHtml(raw), raw);
       if (!parts[1]) {
         if (!state.sequenceReplacements.length) {
-          addMessage('bot', `No sequence replacements set.<br>Usage: <code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Matching is case-insensitive and preserves the matched case (<code>bird</code>→<code>dog</code>, <code>Bird</code>→<code>Dog</code>). Applied to every prompt <code>/sequence</code>, <code>/video-sequence</code> and <code>/video-story</code> get back from Grok.<br><code>/sequence-replacement-reset</code> removes them all.`);
+          addMessage('bot', `No sequence replacements set.<br>Usage: <code>/sequence-replacement &lt;from&gt; &lt;to&gt;</code> — the first word is the text to find, the rest is what to replace it with. Matching is case-insensitive and preserves the matched case (<code>bird</code>→<code>dog</code>, <code>Bird</code>→<code>Dog</code>). Applied to every prompt <code>/sequence</code>, <code>/video-sequence</code> and <code>/video-story</code> get back from Grok. Afterwards any repeated <code>&lt;…&gt;</code> tag (e.g. a LoRA tag the replacement added on every match) is kept only at its first occurrence.<br><code>/sequence-replacement-reset</code> removes them all.`);
         } else {
           const list = state.sequenceReplacements.map(([f, t]) => `<code>${escapeHtml(f)}</code> → <code>${escapeHtml(t)}</code>`).join('<br>');
           addMessage('bot', `<strong>Sequence replacements:</strong><br>${list}<br><br><code>/sequence-replacement-reset</code> removes them all.`);

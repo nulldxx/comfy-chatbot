@@ -885,6 +885,16 @@ currentVideoSettings)`. No stills — the user brings the opening image. See
 - `/video-story-review` re-shows the table (it isn't persisted as a chat message);
   `/video-story-reset` clears the story.
 
+### Sequence replacements (`/sequence-replacement`)
+
+Find→replace pairs applied server-side to every prompt Grok returns for `/sequence`,
+`/video-sequence` (each shot field) and `/video-story` (description + soundscape), all via
+`apply_sequence_replacements` (`generation_service.py`): `case_preserving_replace` per
+pair, then **`dedupe_angle_tags`**, which keeps only the first occurrence of each `<…>`
+tag (contents compared case-insensitively; a different LoRA strength is a different tag)
+and drops later ones with their leading whitespace/comma. It exists because a pair like
+`woman → woman <lora:jane:0.9>` adds the tag on every mention. No pairs = text untouched.
+
 ### Regenerating a video (↺ on a video)
 
 Videos get a ↺ beside ⏭ in `.img-topleft` (5px gap from the holder). It opens the same
