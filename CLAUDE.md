@@ -1338,6 +1338,22 @@ The `docker-compose.yml` in this repo is an **example only**. The live deploymen
 - **Docker Compose file**: `~/dot-files/docker-compose/comfy-chatbot.yml`
 - **ComfyUI workflows**: `~/comfy-workflows/` on the host `$PROD_SERVER` (bind-mounted into the container at `/app/workflows` per that compose file; image2video templates live in `~/comfy-workflows/image2video/`)
 
+**Ask the user's permission before accessing the prod server (`$PROD_SERVER`) in any
+way**: ssh, scp, or reading or writing `~/comfy-workflows/`. It is the live
+deployment. If permission is refused or blocked, hand the user the exact command to run
+with `!` instead.
+
+## Adapting a ComfyUI workflow (the `adapt-workflow` skill)
+
+To turn a workflow exported from the ComfyUI editor into a template this app can use,
+run the **`adapt-workflow`** skill (`.claude/skills/adapt-workflow/`). It covers: adding
+`<PROMPT>`, a LoRA chain and the other tokens from "Workflow Template Parameters";
+removing nodes the app replaces, such as resolution helpers; which `~/comfy-workflows/`
+folder each kind goes in; and installing the result on the prod server (with
+permission, as above). Its `scripts/validate_template.py` runs a template through
+`workflow.py` (placeholder fill, LoRA strip, dangling links, `apply_resolution`, seeds)
+and should pass before anything is installed.
+
 ## Releasing & deploying (the `push-to-portainer` skill)
 
 After **successfully completing a feature** (change implemented, tests/build passing),
